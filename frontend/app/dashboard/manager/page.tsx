@@ -845,8 +845,15 @@ function StandingsSection({ standings, activeTeam }: Parameters<typeof SectionVi
   );
 }
 
-function MessagesSection({ messages }: Parameters<typeof SectionView>[0]) {
+function MessagesSection({ messages, onRefresh }: Parameters<typeof SectionView>[0]) {
   const [selected, setSelected] = useState<MessageRecord | null>(messages[0] ?? null);
+  async function openMessage(item: MessageRecord) {
+    setSelected(item);
+    if (!item.read_at) {
+      await api(`/manager/messages/${item.id}/read`, { method: "PATCH" });
+      onRefresh();
+    }
+  }
   return (
     <div className="space-y-6">
       <PageTitle title="Messages" subtitle="Admin notices for teams, players, lineups, and matches." />
@@ -856,8 +863,11 @@ function MessagesSection({ messages }: Parameters<typeof SectionView>[0]) {
           <Panel title="Inbox">
             <div className="space-y-2">
               {messages.map((item) => (
-                <button key={item.id} className={`w-full rounded-2xl p-3 text-left text-sm transition hover:bg-purple-50 ${selected?.id === item.id ? "bg-purple-50" : "bg-slate-50"}`} onClick={() => setSelected(item)}>
-                  <p className="font-bold">{item.related_type.replaceAll("_", " ")}</p>
+                <button key={item.id} className={`w-full rounded-2xl p-3 text-left text-sm transition hover:bg-purple-50 ${selected?.id === item.id ? "bg-purple-50" : "bg-slate-50"}`} onClick={() => void openMessage(item)}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-bold">{item.related_type.replaceAll("_", " ")}</p>
+                    {!item.read_at ? <span className="h-2.5 w-2.5 rounded-full bg-red-500" /> : null}
+                  </div>
                   <p className="mt-1 truncate text-slate-500">{item.message}</p>
                 </button>
               ))}

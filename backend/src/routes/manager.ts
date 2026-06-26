@@ -97,9 +97,10 @@ function relatedOne<T>(value: T | T[] | null | undefined): T | null {
 }
 
 function statusCounts(players: Array<{ status?: string | null; player_status?: string | null }>) {
+  const squadPlayers = players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED);
   return {
-    total: players.length,
-    approved: players.filter((player) => player.status === RegistrationStatus.APPROVED).length,
+    total: squadPlayers.length,
+    approved: players.filter((player) => player.status === RegistrationStatus.APPROVED && player.player_status !== PlayerLifecycleStatus.REMOVED).length,
     pending: players.filter((player) => player.status === RegistrationStatus.PENDING).length,
     draft: players.filter((player) => player.status === RegistrationStatus.DRAFT).length,
     rejected: players.filter((player) => player.status === RegistrationStatus.REJECTED).length,
@@ -285,7 +286,7 @@ managerRouter.get(
       squad_summary: {
         ...counts,
         max_squad_size: maxPlayers,
-        remaining_slots: Math.max(0, maxPlayers - players.length)
+    remaining_slots: Math.max(0, maxPlayers - players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length)
       },
       fixtures: fixtures ?? [],
       results: results ?? [],
@@ -332,7 +333,7 @@ managerRouter.get(
       squad_summary: {
         ...counts,
         max_squad_size: maxSquadSize(team),
-        remaining_slots: Math.max(0, maxSquadSize(team) - players.length),
+        remaining_slots: Math.max(0, maxSquadSize(team) - players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length),
         distribution: currentDistribution(players)
       },
       season
@@ -390,7 +391,7 @@ managerRouter.post(
       }
     }
 
-    const currentSize = existingPlayers.length;
+    const currentSize = existingPlayers.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length;
     const availableSlots = Math.max(0, maxPlayers - currentSize);
     const targetSize = Math.min(requestedTotalSize ?? currentSize + (requestedGenerateCount ?? availableSlots), maxPlayers);
     const generateCount = Math.max(0, Math.min(availableSlots, requestedGenerateCount ?? targetSize - currentSize));
@@ -401,7 +402,7 @@ managerRouter.post(
         squad_summary: {
           ...statusCounts(existingPlayers),
           max_squad_size: maxPlayers,
-          remaining_slots: Math.max(0, maxPlayers - currentSize),
+          remaining_slots: Math.max(0, maxPlayers - existingPlayers.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length),
           distribution: currentDistribution(existingPlayers)
         }
       });
@@ -513,7 +514,7 @@ managerRouter.post(
       squad_summary: {
         ...statusCounts(refreshedPlayers),
         max_squad_size: maxPlayers,
-        remaining_slots: Math.max(0, maxPlayers - refreshedPlayers.length),
+        remaining_slots: Math.max(0, maxPlayers - refreshedPlayers.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length),
         distribution: currentDistribution(refreshedPlayers)
       }
     });
@@ -933,7 +934,7 @@ managerRouter.post(
 
     const { data: players, error: playersError } = await supabaseAdmin
       .from("player_season_registrations")
-      .select("id,team_registration_id,season_id,status")
+      .select("id,team_registration_id,season_id,status,player_status")
       .eq("season_id", fixture.season_id)
       .eq("team_registration_id", input.team_registration_id);
     if (playersError) throw playersError;
@@ -1105,7 +1106,7 @@ managerRouter.post(
 
     const { data: players, error: playersError } = await supabaseAdmin
       .from("player_season_registrations")
-      .select("id,team_registration_id,season_id,status")
+      .select("id,team_registration_id,season_id,status,player_status")
       .eq("season_id", fixture.season_id)
       .eq("team_registration_id", input.team_registration_id);
     if (playersError) throw playersError;

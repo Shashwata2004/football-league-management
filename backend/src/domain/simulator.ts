@@ -562,12 +562,13 @@ export function generateAbilityScores(tier: PlayerAbilityRating, position: Footb
     ability.defending = boost(strong(), 5);
     ability.physical = boost(strong(), 4);
     ability.shooting = weak();
-    ability.dribbling = position === FootballPosition.CB ? weak() : secondary();
+    ability.dribbling = position === FootballPosition.CB ? roll(Math.max(30, min - 10), Math.min(65, max - 4)) : secondary();
   } else if (position === FootballPosition.LB || position === FootballPosition.RB) {
     ability.pace = boost(strong(), 4);
     ability.stamina = boost(strong(), 4);
     ability.defending = boost(strong(), 3);
-    ability.shooting = weak();
+    ability.dribbling = roll(min, Math.min(76, tierMax));
+    ability.shooting = roll(Math.max(35, min - 6), Math.min(70, max));
   }
   const overall_rating = clamp(Object.values(ability).reduce((sum, value) => sum + value, 0) / outfieldKeys.length, min, 92);
   return { position, rating_tier: tier, ...ability, overall_rating, is_hidden_from_manager: true };

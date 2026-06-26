@@ -6,6 +6,7 @@ export interface RegisteredPlayerForValidation {
   team_registration_id: string;
   season_id: string;
   status: string;
+  player_status?: string | null;
 }
 
 export function validateLineupSubmission(
@@ -15,7 +16,7 @@ export function validateLineupSubmission(
 ) {
   const approvedIds = new Set(
     registeredPlayers
-      .filter((player) => player.status === "APPROVED" && player.team_registration_id === input.team_registration_id)
+      .filter((player) => player.status === "APPROVED" && player.team_registration_id === input.team_registration_id && player.player_status !== "REMOVED" && player.player_status !== "SUSPENDED")
       .map((player) => player.id)
   );
   const seen = new Set<string>();

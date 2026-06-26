@@ -7,6 +7,7 @@ import {
   FootballPosition,
   generateFixturesSchema,
   playerAbilityDecisionSchema,
+  PlayerLifecycleStatus,
   RegistrationStatus,
   registrationDecisionSchema,
   roleRequestDecisionSchema,
@@ -79,6 +80,70 @@ adminRouter.post(
     }
     if (error) throw error;
     res.status(201).json({ season: data });
+  })
+);
+
+adminRouter.patch(
+  "/leagues/:id",
+  asyncHandler(async (req, res) => {
+    const allowed = ["name", "short_name", "logo_url", "organizer_name", "country", "description"] as const;
+    const updates = Object.fromEntries(
+      allowed
+        .filter((key) => Object.prototype.hasOwnProperty.call(req.body, key))
+        .map((key) => [key, req.body[key] === "" ? null : req.body[key]])
+    );
+    if (Object.keys(updates).length === 0) throw new AppError(400, "No league settings provided");
+    const { data, error } = await supabaseAdmin.from("leagues").update(updates).eq("id", req.params.id).select("*").single();
+    if (error) throw error;
+    res.json({ league: data });
+  })
+);
+
+adminRouter.patch(
+  "/seasons/:id",
+  asyncHandler(async (req, res) => {
+    const allowed = [
+      "format",
+      "phase",
+      "registration_start_date",
+      "registration_deadline",
+      "start_date",
+      "end_date",
+      "total_teams",
+      "min_players_per_team",
+      "max_players_per_team",
+      "lineup_size",
+      "substitute_limit",
+      "lineup_submission_deadline_hours",
+      "group_count",
+      "teams_per_group",
+      "qualifiers_per_group",
+      "best_third_place_teams",
+      "total_knockout_teams"
+    ] as const;
+    const numberFields = new Set([
+      "total_teams",
+      "min_players_per_team",
+      "max_players_per_team",
+      "lineup_size",
+      "substitute_limit",
+      "lineup_submission_deadline_hours",
+      "group_count",
+      "teams_per_group",
+      "qualifiers_per_group",
+      "best_third_place_teams",
+      "total_knockout_teams"
+    ]);
+    const updates: Record<string, unknown> = {};
+    for (const key of allowed) {
+      if (!Object.prototype.hasOwnProperty.call(req.body, key)) continue;
+      const value = req.body[key];
+      updates[key] = value === "" ? null : numberFields.has(key) && value !== null && value !== undefined ? Number(value) : value;
+    }
+    if (Object.keys(updates).length === 0) throw new AppError(400, "No season settings provided");
+    const { data, error } = await supabaseAdmin.from("seasons").update(updates).eq("id", req.params.id).select("*").single();
+    if (error) throw error;
+    res.json({ season: data });
   })
 );
 
@@ -233,6 +298,122 @@ adminRouter.patch(
           { onConflict: "season_id,player_registration_id" }
         );
     }
+    res.json({ player_registration: data });
+  })
+);
+
+adminRouter.patch(
+  "/player-registrations/:id/reject",
+  asyncHandler(async (req, res) => {
+    const registrationId = routeParam(req.params.id, "Player registration id");
+    const reason = requiredBodyText(req.body?.reason, "Rejection reason");
+    const allowResubmission = Boolean(req.body?.allow_resubmission);
+    const registration = await getPlayerRegistrationForAction(registrationId);
+    const { data, error } = await supabaseAdmin
+      .from("player_season_registrations")
+      .update({
+        status: RegistrationStatus.REJECTED,
+        player_status: PlayerLifecycleStatus.REJECTED,
+        rejection_reason: reason,
+        allow_resubmission: allowResubmission,
+        reviewed_by: req.auth!.userId,
+        reviewed_at: new Date().toISOString()
+      })
+      .eq("id", registrationId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    await notifyManager(registration, "PLAYER_REJECTION", reason, req.auth!.userId);
+    res.json({ player_registration: data });
+  })
+);
+
+adminRouter.patch(
+  "/player-registrations/:id/remove",
+  asyncHandler(async (req, res) => {
+    const registrationId = routeParam(req.params.id, "Player registration id");
+    const reason = requiredBodyText(req.body?.reason, "Removal reason");
+    const registration = await getPlayerRegistrationForAction(registrationId);
+    const { data, error } = await supabaseAdmin
+      .from("player_season_registrations")
+      .update({
+        player_status: PlayerLifecycleStatus.REMOVED,
+        removed_by: req.auth!.userId,
+        removed_at: new Date().toISOString(),
+        removal_reason: reason,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", registrationId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    await markLineupsForResubmission(registrationId, reason, req.auth!.userId);
+    await notifyManager(registration, "PLAYER_REMOVAL", reason, req.auth!.userId);
+    res.json({ player_registration: data });
+  })
+);
+
+adminRouter.patch(
+  "/player-registrations/:id/suspend",
+  asyncHandler(async (req, res) => {
+    const registrationId = routeParam(req.params.id, "Player registration id");
+    const reason = requiredBodyText(req.body?.reason, "Suspension reason");
+    const suspensionType = requiredBodyText(req.body?.suspension_type, "Suspension type");
+    const suspensionUntil = req.body?.suspension_until ? String(req.body.suspension_until) : null;
+    const suspensionMatchesRemaining = req.body?.suspension_matches_remaining === undefined || req.body.suspension_matches_remaining === null || req.body.suspension_matches_remaining === ""
+      ? null
+      : Number(req.body.suspension_matches_remaining);
+    if (!["UNTIL_ADMIN_UNSUSPENDS", "UNTIL_DATE", "NEXT_MATCHES"].includes(suspensionType)) {
+      throw new AppError(400, "Invalid suspension type.");
+    }
+    if (suspensionType === "UNTIL_DATE" && !suspensionUntil) throw new AppError(400, "Suspension date is required.");
+    if (suspensionType === "NEXT_MATCHES" && (!Number.isInteger(suspensionMatchesRemaining) || Number(suspensionMatchesRemaining) < 1)) {
+      throw new AppError(400, "Next match count must be a positive number.");
+    }
+    const registration = await getPlayerRegistrationForAction(registrationId);
+    const { data, error } = await supabaseAdmin
+      .from("player_season_registrations")
+      .update({
+        player_status: PlayerLifecycleStatus.SUSPENDED,
+        suspended_by: req.auth!.userId,
+        suspended_at: new Date().toISOString(),
+        suspension_reason: reason,
+        suspension_type: suspensionType,
+        suspension_until: suspensionUntil,
+        suspension_matches_remaining: suspensionType === "NEXT_MATCHES" ? suspensionMatchesRemaining : null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", registrationId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    await markLineupsForResubmission(registrationId, reason, req.auth!.userId);
+    await notifyManager(registration, "GENERAL_NOTICE", `Player suspended: ${reason}`, req.auth!.userId);
+    res.json({ player_registration: data });
+  })
+);
+
+adminRouter.patch(
+  "/player-registrations/:id/unsuspend",
+  asyncHandler(async (req, res) => {
+    const registrationId = routeParam(req.params.id, "Player registration id");
+    const message = typeof req.body?.message === "string" && req.body.message.trim() ? req.body.message.trim().slice(0, 500) : "Player suspension has been lifted.";
+    const registration = await getPlayerRegistrationForAction(registrationId);
+    const { data, error } = await supabaseAdmin
+      .from("player_season_registrations")
+      .update({
+        player_status: PlayerLifecycleStatus.ACTIVE,
+        suspension_reason: null,
+        suspension_type: null,
+        suspension_until: null,
+        suspension_matches_remaining: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", registrationId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    await notifyManager(registration, "GENERAL_NOTICE", message, req.auth!.userId);
     res.json({ player_registration: data });
   })
 );
@@ -660,6 +841,70 @@ adminRouter.post(
     res.json({ fixture: data });
   })
 );
+
+function requiredBodyText(value: unknown, label: string) {
+  if (typeof value !== "string" || !value.trim()) throw new AppError(400, `${label} is required.`);
+  return value.trim().slice(0, 500);
+}
+
+function routeParam(value: string | string[] | undefined, label: string) {
+  if (typeof value !== "string" || !value.trim()) throw new AppError(400, `${label} is required.`);
+  return value;
+}
+
+async function getPlayerRegistrationForAction(playerRegistrationId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("player_season_registrations")
+    .select("id,season_id,team_registration_id,manager:team_registrations(manager_id)")
+    .eq("id", playerRegistrationId)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function notifyManager(registration: any, relatedType: "PLAYER_REJECTION" | "PLAYER_REMOVAL" | "GENERAL_NOTICE", message: string, adminId: string) {
+  const manager = Array.isArray(registration.manager) ? registration.manager[0] : registration.manager;
+  if (!manager?.manager_id) return;
+  const { error } = await supabaseAdmin.from("manager_messages").insert({
+    season_id: registration.season_id,
+    manager_id: manager.manager_id,
+    team_registration_id: registration.team_registration_id,
+    player_registration_id: registration.id,
+    related_type: relatedType,
+    message,
+    created_by: adminId
+  });
+  if (error) throw error;
+}
+
+async function markLineupsForResubmission(playerRegistrationId: string, reason: string, adminId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("lineup_players")
+    .select("lineup_id,lineups(id,status,fixture_id,team_registration_id,fixtures(status,season_id))")
+    .eq("player_registration_id", playerRegistrationId);
+  if (error) throw error;
+  const affectedLineups = (data ?? [])
+    .map((row) => (Array.isArray(row.lineups) ? row.lineups[0] : row.lineups))
+    .filter((lineup): lineup is NonNullable<typeof lineup> => Boolean(lineup))
+    .filter((lineup) => ["PENDING", "CONFIRMED"].includes(lineup.status))
+    .filter((lineup) => {
+      const fixture = Array.isArray(lineup.fixtures) ? lineup.fixtures[0] : lineup.fixtures;
+      return fixture && fixture.status !== FixtureStatus.FINAL && fixture.status !== FixtureStatus.CANCELLED;
+    });
+  for (const lineup of affectedLineups) {
+    const { error: lineupError } = await supabaseAdmin
+      .from("lineups")
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: new Date().toISOString(),
+        rejection_reason: `Resubmission required: ${reason}`
+      })
+      .eq("id", lineup.id);
+    if (lineupError) throw lineupError;
+    await updateFixtureLineupStatus(lineup.fixture_id);
+  }
+}
 
 function emptyStandingForSeason(seasonId: string, teamRegistrationId: string) {
   return { ...emptyStanding(teamRegistrationId), season_id: seasonId };

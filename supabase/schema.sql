@@ -380,6 +380,10 @@ create table if not exists public.player_season_registrations (
   suspended_by uuid references public.profiles(id),
   suspended_at timestamptz,
   suspension_reason text,
+  suspension_type text,
+  suspension_until date,
+  suspension_matches_remaining integer,
+  allow_resubmission boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint shirt_number_range check (shirt_number is null or shirt_number between 1 and 99),
@@ -415,6 +419,10 @@ alter table public.player_season_registrations add column if not exists removal_
 alter table public.player_season_registrations add column if not exists suspended_by uuid references public.profiles(id);
 alter table public.player_season_registrations add column if not exists suspended_at timestamptz;
 alter table public.player_season_registrations add column if not exists suspension_reason text;
+alter table public.player_season_registrations add column if not exists suspension_type text;
+alter table public.player_season_registrations add column if not exists suspension_until date;
+alter table public.player_season_registrations add column if not exists suspension_matches_remaining integer;
+alter table public.player_season_registrations add column if not exists allow_resubmission boolean not null default false;
 
 create unique index if not exists player_regs_unique_player_code
   on public.player_season_registrations(player_code)

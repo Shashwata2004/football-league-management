@@ -17,7 +17,6 @@ import {
   GitBranch,
   Home,
   Mail,
-  Menu,
   LogOut,
   MessageSquare,
   PlayCircle,
@@ -156,6 +155,9 @@ interface AdminTeam {
   id: string;
   logo: string;
   logoUrl?: string | null;
+  primaryColor?: string | null;
+  secondaryColor?: string | null;
+  accentColor?: string | null;
   name: string;
   managerName: string;
   managerEmail: string;
@@ -253,10 +255,14 @@ type TeamRegistrationApiRow = {
     logo_url?: string | null;
     city?: string | null;
     primary_color?: string | null;
+    secondary_color?: string | null;
+    accent_color?: string | null;
   } | null;
   seasons?: { name?: string | null } | null;
   manager?: { full_name?: string | null; email?: string | null } | { full_name?: string | null; email?: string | null }[] | null;
 };
+
+type PlayerLifecycleAction = "reject" | "remove" | "suspend" | "unsuspend";
 
 type PlayerRegistrationApiRow = {
   id: string;
@@ -539,12 +545,15 @@ function buildAdminSeasonData(input: {
         id: row.id,
 	        logo: row.teams?.short_name ?? row.teams?.name ?? "TM",
 	        logoUrl: row.teams?.logo_url ?? null,
+	        primaryColor: row.teams?.primary_color ?? null,
+	        secondaryColor: row.teams?.secondary_color ?? null,
+	        accentColor: row.teams?.accent_color ?? null,
 	        name: row.teams?.name ?? "Unnamed team",
 	        managerName: manager?.full_name ?? manager?.email ?? "Manager",
 	        managerEmail: manager?.email ?? "Not connected",
         managerPhone: "Not connected",
-        squadCount: players.length,
-        approvedPlayers: players.filter((player) => player.approvalStatus === "Approved").length,
+        squadCount: players.filter((player) => player.playerStatus !== "Removed" && player.approvalStatus !== "Rejected").length,
+        approvedPlayers: players.filter((player) => player.approvalStatus === "Approved" && player.playerStatus !== "Removed").length,
         pendingPlayers: players.filter((player) => player.approvalStatus === "Pending").length,
         status: "Approved",
         players: activePlayers,
@@ -686,6 +695,7 @@ export default function AdminLeagueSeasonDashboard() {
   const [season, setSeason] = useState<SeasonDto | null>(null);
   const [adminData, setAdminData] = useState<AdminSeasonData>(emptyAdminSeasonData);
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
+  const [playerAction, setPlayerAction] = useState<{ action: PlayerLifecycleAction; player: AdminPlayer } | null>(null);
   const [error, setError] = useState("");
 
   async function loadDashboardData() {
@@ -754,6 +764,37 @@ export default function AdminLeagueSeasonDashboard() {
       method: "PATCH",
       body: JSON.stringify(scores)
     });
+    await loadDashboardData();
+  }
+
+  async function submitPlayerLifecycleAction(input: {
+    action: PlayerLifecycleAction;
+    playerId: string;
+    reason: string;
+    allowResubmission?: boolean;
+    suspensionType?: string;
+    suspensionUntil?: string;
+    suspensionMatchesRemaining?: number;
+  }) {
+    const actionPath = input.action === "reject" ? "reject" : input.action === "remove" ? "remove" : input.action === "suspend" ? "suspend" : "unsuspend";
+    const body =
+      input.action === "reject"
+        ? { reason: input.reason, allow_resubmission: Boolean(input.allowResubmission) }
+        : input.action === "suspend"
+          ? {
+              reason: input.reason,
+              suspension_type: input.suspensionType,
+              suspension_until: input.suspensionUntil || null,
+              suspension_matches_remaining: input.suspensionMatchesRemaining ?? null
+            }
+          : input.action === "unsuspend"
+            ? { message: input.reason }
+            : { reason: input.reason };
+    await api(`/admin/player-registrations/${input.playerId}/${actionPath}`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    });
+    setPlayerAction(null);
     await loadDashboardData();
   }
 
@@ -863,6 +904,8 @@ export default function AdminLeagueSeasonDashboard() {
     );
   }
 
+  const adminNotificationCount = adminData.teamRequests.length + adminData.playerRequests.length + adminData.pendingLineups + adminData.readyMatches.length;
+
   return (
     <div className="fixed inset-0 z-50 flex overflow-hidden bg-[#f6f8fb] text-[#0f172a]">
       <aside className="flex w-[272px] shrink-0 flex-col overflow-y-auto bg-[#0d2035] bg-[radial-gradient(circle_at_top_left,rgba(58,122,255,0.2),transparent_18rem)] text-white shadow-2xl">
@@ -875,7 +918,7 @@ export default function AdminLeagueSeasonDashboard() {
 
         <div className="mx-3 mb-5 rounded-xl bg-white/7 p-4">
           <div className="flex items-center gap-3">
-            <TeamBadge name={league.short_name || league.name} size="lg" />
+            <TeamBadge name={league.short_name || league.name} logoUrl={league.logo_url} size="lg" />
             <div className="min-w-0">
               <p className="truncate text-sm font-bold">{league.name}</p>
               <p className="mt-1 flex items-center gap-1 text-sm text-slate-300">
@@ -921,9 +964,7 @@ export default function AdminLeagueSeasonDashboard() {
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-[74px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
           <div className="flex items-center gap-5">
-            <button className="rounded-lg p-2 text-slate-600 transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-100 hover:text-indigo-700 active:translate-y-0 active:scale-[0.96]">
-              <Menu size={24} />
-            </button>
+            <TeamBadge name={league.short_name || league.name} logoUrl={league.logo_url} />
             <div>
               <div className="flex items-center gap-2 text-base font-black">
                 {league.name}
@@ -945,9 +986,11 @@ export default function AdminLeagueSeasonDashboard() {
             </Link>
             <div className="relative text-slate-700">
               <Bell size={23} />
-              <span className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full bg-indigo-600 text-xs font-bold text-white">
-                3
-              </span>
+              {adminNotificationCount > 0 ? (
+                <span className="absolute -right-2 -top-2 grid h-5 min-w-5 place-items-center rounded-full bg-indigo-600 px-1 text-xs font-bold text-white">
+                  {adminNotificationCount}
+                </span>
+              ) : null}
             </div>
             <div className="flex items-center gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-sm font-black text-slate-600">
@@ -964,9 +1007,9 @@ export default function AdminLeagueSeasonDashboard() {
 
         <main className="min-h-0 flex-1 overflow-y-auto p-8">
 	          {activeTab === "dashboard" ? <DashboardView league={league} season={season} data={adminData} onNavigate={setActiveTab} /> : null}
-		          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onAbilityScoresUpdate={updateAbilityScores} /> : null}
+		          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} onAbilityScoresUpdate={updateAbilityScores} /> : null}
 	          {activeTab === "team-requests" ? <TeamRequestsView teamRequests={adminData.teamRequests} onDecision={decideTeamRequest} /> : null}
-	          {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} /> : null}
+	          {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} /> : null}
           {activeTab === "fixtures" ? <FixturesView fixtures={adminData.fixtures} teams={adminData.teams} onGenerateFixtures={generateFixtures} onScheduleFixture={scheduleFixture} onPostponeFixture={postponeFixture} onCancelFixture={cancelFixture} /> : null}
           {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} /> : null}
           {activeTab === "standings" ? <StandingsView groupMode={isGroupKnockout} teams={adminData.standings} /> : null}
@@ -974,9 +1017,17 @@ export default function AdminLeagueSeasonDashboard() {
           {activeTab === "messages" ? <MessagesView messages={adminData.messages} /> : null}
           {activeTab === "groups" ? <GroupsView teams={adminData.teams} /> : null}
           {activeTab === "knockout" ? <KnockoutView /> : null}
-          {activeTab === "settings" ? <SettingsView season={season} /> : null}
+          {activeTab === "settings" ? <SettingsView league={league} season={season} onSaved={loadDashboardData} /> : null}
         </main>
       </section>
+      {playerAction ? (
+        <PlayerLifecycleModal
+          action={playerAction.action}
+          player={playerAction.player}
+          onClose={() => setPlayerAction(null)}
+          onSubmit={submitPlayerLifecycleAction}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1071,6 +1122,7 @@ function TeamsView({
   onSendTeamMessage,
   onPlayerDecision,
   onPlayerAbility,
+  onPlayerAction,
   onAbilityScoresUpdate
 }: {
   season: SeasonDto;
@@ -1079,6 +1131,7 @@ function TeamsView({
   onSendTeamMessage: (id: string) => Promise<void>;
   onPlayerDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onPlayerAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
 }) {
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -1099,6 +1152,7 @@ function TeamsView({
 	        onTabChange={setPlayerTab}
 	        onDecision={onPlayerDecision}
 	        onAbility={onPlayerAbility}
+	        onPlayerAction={onPlayerAction}
 	        onAbilityScoresUpdate={onAbilityScoresUpdate}
 	        onMessageManager={() => onSendTeamMessage(selectedTeam.id)}
 	        onBack={() => {
@@ -1119,6 +1173,7 @@ function TeamsView({
 		        onSendMessage={() => onSendTeamMessage(selectedTeam.id)}
 		        onPlayerDecision={onPlayerDecision}
 		        onPlayerAbility={onPlayerAbility}
+		        onPlayerAction={onPlayerAction}
 		        onAbilityScoresUpdate={onAbilityScoresUpdate}
 		        onOpenPlayer={(playerId) => {
           setSelectedPlayerId(playerId);
@@ -1172,6 +1227,7 @@ function TeamDetailView({
   onSendMessage,
   onPlayerDecision,
   onPlayerAbility,
+  onPlayerAction,
   onAbilityScoresUpdate,
   onOpenPlayer
 }: {
@@ -1182,6 +1238,7 @@ function TeamDetailView({
   onSendMessage: () => Promise<void>;
   onPlayerDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onPlayerAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
   onOpenPlayer: (playerId: string) => void;
 }) {
@@ -1200,17 +1257,28 @@ function TeamDetailView({
         Back to Teams
       </button>
 
-      <div className="mb-7 flex flex-col justify-between gap-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm md:flex-row md:items-center">
+      <div
+        className="mb-7 flex flex-col justify-between gap-5 rounded-xl border border-white/40 p-6 text-white shadow-xl md:flex-row md:items-center"
+        style={{
+          background: `linear-gradient(110deg, ${team.accentColor ?? "#F59E0B"} 0%, ${team.primaryColor ?? "#6D28D9"} 48%, ${team.secondaryColor ?? "#0B1626"} 100%)`
+        }}
+      >
         <div className="flex items-center gap-5">
           <TeamBadge name={team.logo || team.name} logoUrl={team.logoUrl} size="lg" />
           <div>
             <h1 className="text-3xl font-black">{team.name}</h1>
-            <p className="text-slate-600">{season.name} team profile and squad control.</p>
+            <p className="text-white/85">{season.name} team profile and squad control.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <DangerButton icon={<Ban size={15} />} label="Kick Out Team" onClick={onKickOutTeam} />
-          <AdminActionButton icon={<MessageSquare size={15} />} label="Send Message" onClick={onSendMessage} />
+          <button type="button" onClick={onKickOutTeam} className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/25">
+            <Ban size={15} />
+            Kick Out Team
+          </button>
+          <button type="button" onClick={onSendMessage} className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/25">
+            <MessageSquare size={15} />
+            Send Message
+          </button>
         </div>
       </div>
 
@@ -1250,17 +1318,17 @@ function TeamDetailView({
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
         <Panel title="Approved Players" action="View all" onAction={() => setPlayerPanel("approved")}>
-          <PlayerMiniTable players={approvedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} />
+          <PlayerMiniTable players={approvedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} />
         </Panel>
 
         <Panel title="Pending Player Requests" action="Review all" onAction={() => setPlayerPanel("pending")}>
-          <PlayerMiniTable players={pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} pending />
+          <PlayerMiniTable players={pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending />
         </Panel>
       </div>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
         <Panel title="Removed / Suspended Players">
-            <PlayerMiniTable players={team.suspendedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} />
+            <PlayerMiniTable players={team.suspendedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} />
         </Panel>
 
         <Panel title="Team Fixtures">
@@ -1286,7 +1354,7 @@ function TeamDetailView({
                 Close
               </button>
             </div>
-            <PlayerMiniTable players={playerPanel === "approved" ? approvedPlayers : pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} pending={playerPanel === "pending"} />
+            <PlayerMiniTable players={playerPanel === "approved" ? approvedPlayers : pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending={playerPanel === "pending"} />
           </div>
         </div>
       ) : null}
@@ -1302,6 +1370,7 @@ function PlayerDetailView({
   onTabChange,
   onDecision,
   onAbility,
+  onPlayerAction,
   onAbilityScoresUpdate,
   onMessageManager,
   onBack
@@ -1313,6 +1382,7 @@ function PlayerDetailView({
   onTabChange: (tab: "personal" | "stats") => void;
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
   onMessageManager: () => Promise<void>;
   onBack: () => void;
@@ -1355,7 +1425,7 @@ function PlayerDetailView({
         </div>
       </div>
 
-      {activeTab === "personal" ? <PlayerPersonalData team={team} season={season} player={player} onDecision={onDecision} onAbility={onAbility} onAbilityScoresUpdate={onAbilityScoresUpdate} onMessageManager={onMessageManager} /> : <PlayerLeagueStats player={player} />}
+      {activeTab === "personal" ? <PlayerPersonalData team={team} season={season} player={player} onDecision={onDecision} onAbility={onAbility} onPlayerAction={onPlayerAction} onAbilityScoresUpdate={onAbilityScoresUpdate} onMessageManager={onMessageManager} /> : <PlayerLeagueStats player={player} />}
     </div>
   );
 }
@@ -1366,6 +1436,7 @@ function PlayerPersonalData({
   player,
   onDecision,
   onAbility,
+  onPlayerAction,
   onAbilityScoresUpdate,
   onMessageManager
 }: {
@@ -1374,13 +1445,18 @@ function PlayerPersonalData({
   player: AdminPlayer;
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
   onMessageManager: () => Promise<void>;
 }) {
   const [editingAbility, setEditingAbility] = useState(false);
   const [abilityDraft, setAbilityDraft] = useState<Record<string, string>>({});
   const isApproved = player.approvalStatus === "Approved";
-  const canApprove = !isApproved && player.abilityRating !== "Not rated";
+  const isPending = player.approvalStatus === "Pending";
+  const isSuspended = player.playerStatus === "Suspended";
+  const isRemoved = player.playerStatus === "Removed";
+  const canApprove = isPending && player.abilityRating !== "Not rated";
+  const canRate = isPending;
   const editableAbilityRows = player.abilityDetails.filter((ability) => ability.label !== "Tier" && ability.label !== "Overall");
   function startAbilityEdit() {
     setAbilityDraft(Object.fromEntries(editableAbilityRows.map((ability) => [ability.label, ability.value])));
@@ -1436,19 +1512,33 @@ function PlayerPersonalData({
           </div>
         </Panel>
 
-        <Panel title="Admin Actions">
-          <div className="grid gap-2">
-            <AdminActionButton label="Approve Player" disabled={!canApprove} onClick={() => onDecision(player.id, "APPROVED")} />
-            <DangerButton label="Reject Player" disabled={isApproved} onClick={() => onDecision(player.id, "REJECTED")} />
-            <DangerButton label="Remove Player" onClick={() => onDecision(player.id, "REJECTED")} />
-            <DangerButton label="Suspend Player" onClick={() => onDecision(player.id, "REJECTED")} />
-            <AdminActionButton label="Send Message to Manager" onClick={onMessageManager} />
-            <div className="grid grid-cols-3 gap-2">
-              <AdminActionButton label="Low" selected={player.abilityRating === "Low"} disabled={isApproved} onClick={() => onAbility(player.id, "LOW")} />
-              <AdminActionButton label="Moderate" selected={player.abilityRating === "Moderate"} disabled={isApproved} onClick={() => onAbility(player.id, "MODERATE")} />
-              <AdminActionButton label="High" selected={player.abilityRating === "High"} disabled={isApproved} onClick={() => onAbility(player.id, "HIGH")} />
-            </div>
-          </div>
+	        <Panel title="Admin Actions">
+	          <div className="grid gap-2">
+	            {isPending ? (
+	              <>
+	                <AdminActionButton label="Approve Player" disabled={!canApprove} onClick={() => onDecision(player.id, "APPROVED")} />
+	                <DangerButton label="Reject Player" onClick={() => onPlayerAction("reject", player)} />
+	              </>
+	            ) : null}
+	            {isApproved && !isSuspended && !isRemoved ? (
+	              <>
+	                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
+	                <DangerButton label="Suspend Player" onClick={() => onPlayerAction("suspend", player)} />
+	              </>
+	            ) : null}
+	            {isSuspended ? (
+	              <>
+	                <AdminActionButton label="Unsuspend Player" onClick={() => onPlayerAction("unsuspend", player)} />
+	                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
+	              </>
+	            ) : null}
+	            <AdminActionButton label="Send Message to Manager" onClick={onMessageManager} />
+	            <div className="grid grid-cols-3 gap-2">
+	              <AdminActionButton label="Low" selected={player.abilityRating === "Low"} disabled={!canRate} onClick={() => onAbility(player.id, "LOW")} />
+	              <AdminActionButton label="Moderate" selected={player.abilityRating === "Moderate"} disabled={!canRate} onClick={() => onAbility(player.id, "MODERATE")} />
+	              <AdminActionButton label="High" selected={player.abilityRating === "High"} disabled={!canRate} onClick={() => onAbility(player.id, "HIGH")} />
+	            </div>
+	          </div>
           <p className="mt-3 text-xs text-slate-500">
             Ability scores stay hidden from managers and public users. Approval is blocked until Low, Moderate, or High is assigned.
           </p>
@@ -1569,12 +1659,14 @@ function PlayerMiniTable({
   onOpenPlayer,
   onDecision,
   onAbility,
+  onPlayerAction,
   pending = false
 }: {
   players: AdminPlayer[];
   onOpenPlayer: (playerId: string) => void;
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   pending?: boolean;
 }) {
   if (players.length === 0) return <p className="text-sm text-slate-500">No players in this section.</p>;
@@ -1606,23 +1698,9 @@ function PlayerMiniTable({
               <td className="px-4 py-3">#{player.jerseyNumber}</td>
               <td className="px-4 py-3"><StatusPill tone={player.approvalStatus === "Approved" ? "green" : "orange"}>{player.approvalStatus}</StatusPill></td>
 	              <td className="px-4 py-3">
-	                <ActionGroup
-	                  actions={
-	                    pending
-	                      ? [
-	                          { label: "Low", onClick: () => void onAbility(player.id, "LOW"), selected: player.abilityRating === "Low" },
-	                          { label: "Moderate", onClick: () => void onAbility(player.id, "MODERATE"), selected: player.abilityRating === "Moderate" },
-	                          { label: "High", onClick: () => void onAbility(player.id, "HIGH"), selected: player.abilityRating === "High" },
-	                          { label: "Approve", onClick: () => void onDecision(player.id, "APPROVED"), disabled: player.abilityRating === "Not rated" },
-	                          { label: "Reject", onClick: () => void onDecision(player.id, "REJECTED"), danger: true }
-	                        ]
-	                      : [
-	                          { label: "Open", onClick: () => onOpenPlayer(player.id) },
-	                          { label: "Remove", onClick: () => void onDecision(player.id, "REJECTED"), danger: true },
-	                          { label: "Suspend", onClick: () => void onDecision(player.id, "REJECTED"), danger: true }
-	                        ]
-	                  }
-	                />
+		                <ActionGroup
+		                  actions={playerMiniActions(player, pending, onOpenPlayer, onDecision, onAbility, onPlayerAction)}
+		                />
 	              </td>
             </tr>
           ))}
@@ -1630,6 +1708,40 @@ function PlayerMiniTable({
       </table>
     </div>
   );
+}
+
+function playerMiniActions(
+  player: AdminPlayer,
+  pending: boolean,
+  onOpenPlayer: (playerId: string) => void,
+  onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>,
+  onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>,
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void
+): ActionItem[] {
+  if (pending || player.approvalStatus === "Pending") {
+    return [
+      { label: "Low", onClick: () => void onAbility(player.id, "LOW"), selected: player.abilityRating === "Low" },
+      { label: "Moderate", onClick: () => void onAbility(player.id, "MODERATE"), selected: player.abilityRating === "Moderate" },
+      { label: "High", onClick: () => void onAbility(player.id, "HIGH"), selected: player.abilityRating === "High" },
+      { label: "Approve", onClick: () => void onDecision(player.id, "APPROVED"), disabled: player.abilityRating === "Not rated" },
+      { label: "Reject", onClick: () => onPlayerAction("reject", player), danger: true }
+    ];
+  }
+  if (player.playerStatus === "Suspended") {
+    return [
+      { label: "Open", onClick: () => onOpenPlayer(player.id) },
+      { label: "Unsuspend", onClick: () => onPlayerAction("unsuspend", player) },
+      { label: "Remove", onClick: () => onPlayerAction("remove", player), danger: true }
+    ];
+  }
+  if (player.playerStatus === "Removed" || player.playerStatus === "Rejected") {
+    return [{ label: "Open", onClick: () => onOpenPlayer(player.id) }];
+  }
+  return [
+    { label: "Open", onClick: () => onOpenPlayer(player.id) },
+    { label: "Remove", onClick: () => onPlayerAction("remove", player), danger: true },
+    { label: "Suspend", onClick: () => onPlayerAction("suspend", player), danger: true }
+  ];
 }
 
 function SimpleRows({ rows }: { rows: Array<Array<string>> }) {
@@ -1742,11 +1854,13 @@ function TeamRequestsView({
 function PlayerRequestsView({
   playerRequests,
   onDecision,
-  onAbility
+  onAbility,
+  onPlayerAction
 }: {
   playerRequests: PlayerRequest[];
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
 }) {
   const [selectedPlayer, setSelectedPlayer] = useState<AdminPlayer | null>(null);
   return (
@@ -1784,7 +1898,7 @@ function PlayerRequestsView({
                 { label: "Moderate", onClick: () => void onAbility(row.id, "MODERATE"), disabled: !canRate, selected: row.abilityRating === "Moderate" },
                 { label: "High", onClick: () => void onAbility(row.id, "HIGH"), disabled: !canRate, selected: row.abilityRating === "High" },
                 { label: "Approve", onClick: () => void onDecision(row.id, "APPROVED"), disabled: !canApprove },
-                { label: "Reject", onClick: () => void onDecision(row.id, "REJECTED"), danger: true }
+                { label: "Reject", onClick: () => row.player && onPlayerAction("reject", row.player), disabled: !row.player, danger: true }
               ]}
             />
           ];
@@ -1953,6 +2067,126 @@ function PlayerRequestDetailModal({ player, onClose }: { player: AdminPlayer; on
   );
 }
 
+function PlayerLifecycleModal({
+  action,
+  player,
+  onClose,
+  onSubmit
+}: {
+  action: PlayerLifecycleAction;
+  player: AdminPlayer;
+  onClose: () => void;
+  onSubmit: (input: {
+    action: PlayerLifecycleAction;
+    playerId: string;
+    reason: string;
+    allowResubmission?: boolean;
+    suspensionType?: string;
+    suspensionUntil?: string;
+    suspensionMatchesRemaining?: number;
+  }) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [allowResubmission, setAllowResubmission] = useState(false);
+  const [suspensionType, setSuspensionType] = useState("UNTIL_ADMIN_UNSUSPENDS");
+  const [suspensionUntil, setSuspensionUntil] = useState("");
+  const [suspensionMatchesRemaining, setSuspensionMatchesRemaining] = useState("1");
+  const [submitting, setSubmitting] = useState(false);
+  const title =
+    action === "reject" ? "Reject Player" : action === "remove" ? "Remove Player" : action === "suspend" ? "Suspend Player" : "Unsuspend Player";
+  const description =
+    action === "reject"
+      ? "Rejected players cannot be used in lineups and free a squad slot. Add a reason for the manager."
+      : action === "remove"
+        ? "Removed players cannot be used in future lineups, free a squad slot, and keep past stats."
+        : action === "suspend"
+          ? "Suspended players cannot be selected in lineups but still count in squad size."
+          : "Unsuspending returns this player to active approved status.";
+  async function submit() {
+    if (!reason.trim()) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        action,
+        playerId: player.id,
+        reason: reason.trim(),
+        allowResubmission,
+        suspensionType,
+        suspensionUntil,
+        suspensionMatchesRemaining: Number(suspensionMatchesRemaining)
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/55 p-5 backdrop-blur-sm">
+      <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">Player Action</p>
+            <h2 className="mt-1 text-3xl font-black">{title}</h2>
+            <p className="mt-2 text-sm text-slate-600">{player.fullName} · #{player.jerseyNumber} · {player.footballPosition}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black transition hover:bg-slate-200">Close</button>
+        </div>
+        <p className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">{description}</p>
+        {action === "suspend" ? (
+          <div className="mt-5 grid gap-4">
+            <label className="grid gap-2">
+              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Suspension Type</span>
+              <select value={suspensionType} onChange={(event) => setSuspensionType(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-bold">
+                <option value="UNTIL_ADMIN_UNSUSPENDS">Until Admin Unsuspends</option>
+                <option value="UNTIL_DATE">Until Specific Date</option>
+                <option value="NEXT_MATCHES">For Next X Matches</option>
+              </select>
+            </label>
+            {suspensionType === "UNTIL_DATE" ? (
+              <label className="grid gap-2">
+                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Suspended Until</span>
+                <input type="date" value={suspensionUntil} onChange={(event) => setSuspensionUntil(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-bold" />
+              </label>
+            ) : null}
+            {suspensionType === "NEXT_MATCHES" ? (
+              <label className="grid gap-2">
+                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Match Count</span>
+                <input type="number" min={1} value={suspensionMatchesRemaining} onChange={(event) => setSuspensionMatchesRemaining(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-bold" />
+              </label>
+            ) : null}
+          </div>
+        ) : null}
+        {action === "reject" ? (
+          <label className="mt-5 flex items-center gap-3 rounded-2xl bg-indigo-50 p-4 text-sm font-bold text-indigo-900">
+            <input type="checkbox" checked={allowResubmission} onChange={(event) => setAllowResubmission(event.target.checked)} />
+            Allow manager to edit and resubmit this player
+          </label>
+        ) : null}
+        <label className="mt-5 grid gap-2">
+          <span className="text-xs font-black uppercase tracking-wide text-slate-500">Required Message / Reason</span>
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={4}
+            className="rounded-xl border border-slate-200 px-4 py-3 font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+            placeholder="Write a clear reason for the manager..."
+          />
+        </label>
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Cancel</button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={!reason.trim() || submitting || (action === "suspend" && suspensionType === "UNTIL_DATE" && !suspensionUntil)}
+            className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+          >
+            {submitting ? "Saving..." : title}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MatchesReadyView({ matches }: { matches: ReadyMatchRow[] }) {
   return (
     <div>
@@ -2081,19 +2315,117 @@ function KnockoutView() {
   );
 }
 
-function SettingsView({ season }: { season: SeasonDto }) {
+function SettingsView({ league, season, onSaved }: { league: LeagueDto; season: SeasonDto; onSaved: () => Promise<void> }) {
+  const [leagueDraft, setLeagueDraft] = useState({
+    name: league.name,
+    short_name: league.short_name ?? "",
+    logo_url: league.logo_url ?? "",
+    organizer_name: league.organizer_name ?? "",
+    country: league.country ?? "",
+    description: league.description ?? ""
+  });
+  const [seasonDraft, setSeasonDraft] = useState({
+    format: season.format,
+    phase: season.phase,
+    total_teams: String(season.total_teams ?? ""),
+    lineup_size: String(season.lineup_size ?? ""),
+    substitute_limit: String(season.substitute_limit ?? ""),
+    registration_start_date: season.registration_start_date ?? "",
+    registration_deadline: season.registration_deadline ?? "",
+    start_date: season.start_date ?? "",
+    end_date: season.end_date ?? ""
+  });
+  const [saving, setSaving] = useState(false);
+  async function saveSettings() {
+    setSaving(true);
+    try {
+      await Promise.all([
+        api(`/admin/leagues/${league.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(leagueDraft)
+        }),
+        api(`/admin/seasons/${season.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(seasonDraft)
+        })
+      ]);
+      await onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <div>
-      <PageTitle title="Settings" subtitle="Selected season configuration." />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <InfoBox label="Format" value={formatLabel(season.format)} />
-        <InfoBox label="Total Teams" value={String(season.total_teams ?? 16)} />
-        <InfoBox label="Lineup Size" value={String(season.lineup_size ?? 11)} />
-        <InfoBox label="Substitute Limit" value={String(season.substitute_limit ?? 5)} />
-        <InfoBox label="Registration Deadline" value={season.registration_deadline ?? "Not set"} />
-        <InfoBox label="Season Start" value={season.start_date ?? "Not set"} />
+      <PageTitle title="Settings" subtitle="Edit selected league and season configuration." />
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Panel title="League Settings">
+          <div className="grid gap-4">
+            <EditableField label="League Name" value={leagueDraft.name} onChange={(value) => setLeagueDraft((current) => ({ ...current, name: value }))} />
+            <EditableField label="Short Name" value={leagueDraft.short_name} onChange={(value) => setLeagueDraft((current) => ({ ...current, short_name: value }))} />
+            <EditableField label="League Logo URL" value={leagueDraft.logo_url} onChange={(value) => setLeagueDraft((current) => ({ ...current, logo_url: value }))} />
+            <EditableField label="Organizer Name" value={leagueDraft.organizer_name} onChange={(value) => setLeagueDraft((current) => ({ ...current, organizer_name: value }))} />
+            <EditableField label="Country / Category" value={leagueDraft.country} onChange={(value) => setLeagueDraft((current) => ({ ...current, country: value }))} />
+            <EditableField label="Description" value={leagueDraft.description} onChange={(value) => setLeagueDraft((current) => ({ ...current, description: value }))} textarea />
+          </div>
+        </Panel>
+        <Panel title="Season Settings">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="grid gap-2">
+              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Format</span>
+              <select value={seasonDraft.format} onChange={(event) => setSeasonDraft((current) => ({ ...current, format: event.target.value as SeasonFormat }))} className="rounded-xl border border-slate-200 px-4 py-3 font-bold">
+                {Object.values(SeasonFormat).map((format) => <option key={format} value={format}>{formatLabel(format)}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-2">
+              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Phase</span>
+              <select value={seasonDraft.phase} onChange={(event) => setSeasonDraft((current) => ({ ...current, phase: event.target.value as SeasonPhase }))} className="rounded-xl border border-slate-200 px-4 py-3 font-bold">
+                {Object.values(SeasonPhase).map((phase) => <option key={phase} value={phase}>{formatPhase(phase)}</option>)}
+              </select>
+            </label>
+            <EditableField label="Total Teams" value={seasonDraft.total_teams} type="number" onChange={(value) => setSeasonDraft((current) => ({ ...current, total_teams: value }))} />
+            <EditableField label="Lineup Size" value={seasonDraft.lineup_size} type="number" onChange={(value) => setSeasonDraft((current) => ({ ...current, lineup_size: value }))} />
+            <EditableField label="Substitute Limit" value={seasonDraft.substitute_limit} type="number" onChange={(value) => setSeasonDraft((current) => ({ ...current, substitute_limit: value }))} />
+            <EditableField label="Registration Start" value={seasonDraft.registration_start_date} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, registration_start_date: value }))} />
+            <EditableField label="Registration Deadline" value={seasonDraft.registration_deadline} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, registration_deadline: value }))} />
+            <EditableField label="Season Start" value={seasonDraft.start_date} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, start_date: value }))} />
+            <EditableField label="Season End" value={seasonDraft.end_date} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, end_date: value }))} />
+          </div>
+        </Panel>
       </div>
+      <button
+        type="button"
+        onClick={() => void saveSettings()}
+        disabled={saving}
+        className="mt-5 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+      >
+        {saving ? "Saving..." : "Save Settings"}
+      </button>
     </div>
+  );
+}
+
+function EditableField({
+  label,
+  value,
+  onChange,
+  type = "text",
+  textarea = false
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  textarea?: boolean;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</span>
+      {textarea ? (
+        <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={4} className="rounded-xl border border-slate-200 px-4 py-3 font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+      ) : (
+        <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+      )}
+    </label>
   );
 }
 
