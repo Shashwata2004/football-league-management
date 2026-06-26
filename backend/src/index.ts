@@ -12,7 +12,30 @@ import { publicRouter } from "./routes/public.js";
 const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: env.FRONTEND_ORIGIN, credentials: true }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      const allowed = new Set([
+        env.FRONTEND_ORIGIN,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://0.0.0.0:3000"
+      ]);
+      if (allowed.has(origin)) return callback(null, true);
+      try {
+        const url = new URL(origin);
+        const isLocalDevHost = ["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname);
+        const isDevPort = Number(url.port) >= 3000 && Number(url.port) <= 3010;
+        if (isLocalDevHost && isDevPort) return callback(null, true);
+      } catch {
+        return callback(null, false);
+      }
+      return callback(null, false);
+    },
+    credentials: true
+  })
+);
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 

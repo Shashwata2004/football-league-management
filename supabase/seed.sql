@@ -1,13 +1,4 @@
--- Seed data. Replace the UUID below with an existing Supabase Auth user ID.
-
--- Example:
--- update public.profiles
--- set role = 'ADMIN'
--- where id = '00000000-0000-0000-0000-000000000000';
-
-insert into public.leagues (name, country, description)
-values ('Demo Custom Football League', 'Bangladesh', 'Seed league for local MVP verification')
-on conflict do nothing;
+-- Seed data for Scoreline.
 
 with admin_account as (
   insert into public.app_admins (email, full_name, password_hash)

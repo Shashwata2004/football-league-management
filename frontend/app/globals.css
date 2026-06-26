@@ -21,3 +21,9 @@ body {
   color: hsl(var(--foreground));
   font-family: "Inter", sans-serif;
 }
+
+@layer components {
+  .manager-input {
+    @apply w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#6D28D9] focus:ring-4 focus:ring-purple-100;
+  }
+}

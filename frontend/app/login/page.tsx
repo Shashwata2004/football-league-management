@@ -122,10 +122,10 @@ function RolePills({ selected, onChange }: { selected: Role; onChange: (role: Ro
           key={id}
           type="button"
           onClick={() => onChange(id)}
-          className={`scoreline-condensed rounded-lg border px-1 py-2 text-xs font-black uppercase tracking-[0.2em] transition ${
+          className={`scoreline-condensed rounded-lg border px-1 py-2 text-xs font-black uppercase tracking-[0.2em] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] ${
             selected === id
-              ? "border-[#b3ff00] bg-[#b3ff00] text-[#081008] shadow shadow-[#b3ff00]/25"
-              : "border-[#b3ff00]/15 bg-[#182418]/45 text-[#82a982] hover:border-[#b3ff00]/40 hover:text-[#f0f5f0]"
+              ? "border-[#b3ff00] bg-[#b3ff00] text-[#081008] shadow-[0_0_22px_rgba(179,255,0,0.25)]"
+              : "border-[#b3ff00]/15 bg-[#182418]/45 text-[#82a982] hover:border-[#b3ff00]/55 hover:bg-[#b3ff00]/10 hover:text-[#f0f5f0] hover:shadow-[0_0_18px_rgba(179,255,0,0.12)]"
           }`}
         >
           {label}
@@ -242,7 +242,7 @@ function AuthForm({
         />
       ) : (
         <div className="flex justify-end">
-          <button type="button" className="scoreline-mono text-xs text-[#b3ff00] hover:underline">
+          <button type="button" className="scoreline-mono text-xs text-[#b3ff00] transition hover:text-[#d7ff72] hover:drop-shadow-[0_0_8px_rgba(179,255,0,0.55)]">
             Forgot password?
           </button>
         </div>
@@ -253,10 +253,10 @@ function AuthForm({
       <button
         type="submit"
         disabled={loading}
-        className="scoreline-condensed mt-1 flex w-full items-center justify-center gap-2 rounded-lg bg-[#b3ff00] py-3.5 text-base font-black uppercase tracking-[0.18em] text-[#081008] shadow-lg shadow-[#b3ff00]/20 transition hover:bg-[#a5f000] active:scale-[0.99] disabled:opacity-60"
+        className="scoreline-condensed group mt-1 flex w-full items-center justify-center gap-2 rounded-lg bg-[#b3ff00] py-3.5 text-base font-black uppercase tracking-[0.18em] text-[#081008] shadow-[0_10px_26px_rgba(179,255,0,0.18)] transition-all duration-200 hover:-translate-y-1 hover:bg-[#c6ff34] hover:shadow-[0_16px_42px_rgba(179,255,0,0.34)] active:translate-y-0 active:scale-[0.98] disabled:translate-y-0 disabled:opacity-60 disabled:shadow-none"
       >
         {loading ? "Please wait" : view === "login" ? "Sign In" : "Create Account"}
-        <ChevronRight size={18} />
+        <ChevronRight className="transition-transform duration-200 group-hover:translate-x-1" size={18} />
       </button>
     </form>
   );
@@ -265,7 +265,6 @@ function AuthForm({
 export default function LoginPage() {
   const [view, setView] = useState<View>("login");
   const [role, setRole] = useState<Role>("fan");
-  const [success, setSuccess] = useState<{ profile: ProfileDto; view: View } | null>(null);
   const heading =
     view === "login" ? (
       <>
@@ -286,35 +285,6 @@ export default function LoginPage() {
     if (nextView === "signup" && role === "admin") {
       setRole("manager");
     }
-  }
-
-  if (success) {
-    return (
-      <div className="fixed inset-0 z-50 flex min-h-screen items-center justify-center bg-[#080d08] p-4 text-[#f0f5f0]">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full border border-[#b3ff00]/30 bg-[#b3ff00]/10 text-[#b3ff00]">
-            <Trophy size={28} />
-          </div>
-          <h2 className="scoreline-condensed text-5xl font-black uppercase tracking-widest">
-            {success.view === "login" ? "Welcome Back!" : "Account Created!"}
-          </h2>
-          <p className="text-sm text-[#82a982]">
-            {success.view === "login" ? "Signed in as" : "Registered as"}{" "}
-            <span className="font-semibold text-[#b3ff00]">{success.profile.role}</span>
-          </p>
-          <button
-            onClick={() => {
-              if (success.profile.role === "ADMIN") window.location.href = "/dashboard/admin";
-              else if (success.profile.role === "MANAGER") window.location.href = "/dashboard/manager";
-              else window.location.href = "/public";
-            }}
-            className="scoreline-condensed mt-2 rounded-lg bg-[#b3ff00] px-6 py-2 font-black uppercase tracking-widest text-[#081008]"
-          >
-            Continue
-          </button>
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -390,10 +360,10 @@ export default function LoginPage() {
                   key={id}
                   type="button"
                   onClick={() => setRole(id)}
-                  className={`scoreline-condensed rounded-lg border px-1 py-2 text-xs font-black uppercase tracking-[0.2em] transition ${
+                  className={`scoreline-condensed rounded-lg border px-1 py-2 text-xs font-black uppercase tracking-[0.2em] transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98] ${
                     role === id
-                      ? "border-[#b3ff00] bg-[#b3ff00] text-[#081008] shadow shadow-[#b3ff00]/25"
-                      : "border-[#b3ff00]/15 bg-[#182418]/45 text-[#82a982] hover:border-[#b3ff00]/40 hover:text-[#f0f5f0]"
+                      ? "border-[#b3ff00] bg-[#b3ff00] text-[#081008] shadow-[0_0_22px_rgba(179,255,0,0.25)]"
+                      : "border-[#b3ff00]/15 bg-[#182418]/45 text-[#82a982] hover:border-[#b3ff00]/55 hover:bg-[#b3ff00]/10 hover:text-[#f0f5f0] hover:shadow-[0_0_18px_rgba(179,255,0,0.12)]"
                   }`}
                 >
                   {label}
@@ -406,7 +376,11 @@ export default function LoginPage() {
           key={`${view}-${role}`}
           view={view}
           role={role}
-          onSuccess={(profile) => setSuccess({ profile, view })}
+          onSuccess={(profile) => {
+            if (profile.role === "ADMIN") window.location.href = "/dashboard/admin";
+            else if (profile.role === "MANAGER") window.location.href = "/dashboard/manager";
+            else window.location.href = "/public";
+          }}
         />
 
         <p className="mt-6 text-center text-xs text-[#82a982]">
@@ -414,7 +388,7 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={() => changeView(view === "login" ? "signup" : "login")}
-            className="font-semibold text-[#b3ff00] hover:underline"
+            className="font-semibold text-[#b3ff00] transition hover:text-[#d7ff72] hover:drop-shadow-[0_0_8px_rgba(179,255,0,0.55)]"
           >
             {view === "login" ? "Register here" : "Sign in"}
           </button>

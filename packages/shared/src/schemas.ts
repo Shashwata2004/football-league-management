@@ -1,10 +1,15 @@
 import { z } from "zod";
 import {
+  FootballPosition,
   IdType,
+  PlayerAbilityRating,
+  PlayerLifecycleStatus,
   PlayerPosition,
+  PreferredFoot,
   RegistrationStatus,
   RoleRequestStatus,
   SeasonFormat,
+  SeasonPhase,
   VenueSide
 } from "./enums.js";
 
@@ -17,6 +22,9 @@ export const roleRequestDecisionSchema = z.object({
 
 export const createLeagueSchema = z.object({
   name: z.string().trim().min(2).max(120),
+  short_name: z.string().trim().min(2).max(20).optional(),
+  logo_url: z.string().trim().max(500).optional(),
+  organizer_name: z.string().trim().min(2).max(120).optional(),
   country: z.string().trim().max(80).optional(),
   description: z.string().trim().max(1000).optional()
 });
@@ -25,6 +33,9 @@ export const createSeasonSchema = z
   .object({
     league_id: uuidSchema,
     name: z.string().trim().min(2).max(120),
+    season_year: z.number().int().min(1900).max(2200).optional(),
+    registration_start_date: z.string().date().optional(),
+    registration_deadline: z.string().date().optional(),
     format: z.enum([
       SeasonFormat.SINGLE_ROUND_ROBIN,
       SeasonFormat.DOUBLE_ROUND_ROBIN,
@@ -32,19 +43,66 @@ export const createSeasonSchema = z
     ]),
     start_date: z.string().date().optional(),
     end_date: z.string().date().optional(),
+    total_teams: z.number().int().min(2).max(128).optional(),
+    min_players_per_team: z.number().int().min(1).max(60).optional(),
+    max_players_per_team: z.number().int().min(1).max(60).optional(),
+    lineup_size: z.number().int().min(1).max(22).optional(),
+    substitute_limit: z.number().int().min(0).max(15).optional(),
+    lineup_submission_deadline_hours: z.number().int().min(1).max(168).optional(),
     group_count: z.number().int().min(1).max(16).optional(),
-    qualifiers_per_group: z.number().int().min(1).max(4).optional()
+    teams_per_group: z.number().int().min(2).max(16).optional(),
+    qualifiers_per_group: z.number().int().min(1).max(4).optional(),
+    best_third_place_teams: z.number().int().min(0).max(16).optional(),
+    total_knockout_teams: z.number().int().min(0).max(64).optional()
   })
   .superRefine((value, ctx) => {
+    if (
+      value.min_players_per_team &&
+      value.max_players_per_team &&
+      value.min_players_per_team > value.max_players_per_team
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Minimum players cannot be greater than maximum players",
+        path: ["min_players_per_team"]
+      });
+    }
+    if (value.registration_start_date && value.registration_deadline && value.registration_start_date > value.registration_deadline) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Registration start date cannot be after registration deadline",
+        path: ["registration_start_date"]
+      });
+    }
+    if (value.start_date && value.end_date && value.start_date > value.end_date) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Season start date cannot be after season end date",
+        path: ["start_date"]
+      });
+    }
     if (value.format === SeasonFormat.GROUP_STAGE_KNOCKOUT) {
-      if (!value.group_count || !value.qualifiers_per_group) {
+      if (
+        !value.group_count ||
+        !value.teams_per_group ||
+        !value.qualifiers_per_group ||
+        value.best_third_place_teams === undefined ||
+        !value.total_knockout_teams
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "group_count and qualifiers_per_group are required for group + knockout seasons"
+          message: "Group, team, qualifier, best third-place, and total knockout team settings are required"
         });
         return;
       }
-      const total = value.group_count * value.qualifiers_per_group;
+      const total = value.group_count * value.qualifiers_per_group + value.best_third_place_teams;
+      if (total !== value.total_knockout_teams) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Total knockout teams must equal group qualifiers plus best third-place teams",
+          path: ["total_knockout_teams"]
+        });
+      }
       if (![4, 8, 16, 32, 64].includes(total)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -59,16 +117,133 @@ export const updateSeasonScheduleSchema = z.object({
   venue: z.string().trim().max(160).nullable().optional()
 });
 
+export const updateSeasonPhaseSchema = z.object({
+  phase: z.enum([
+    SeasonPhase.REGISTRATION_OPEN,
+    SeasonPhase.REGISTRATION_CLOSED,
+    SeasonPhase.ACTIVE,
+    SeasonPhase.COMPLETED
+  ])
+});
+
 export const teamRegistrationSchema = z.object({
   season_id: uuidSchema,
   name: z.string().trim().min(2).max(120),
   short_name: z.string().trim().min(2).max(12),
-  city: z.string().trim().max(80).optional(),
-  primary_color: z.string().trim().max(30).optional()
+  logo_url: z.string().trim().max(500).optional(),
+  primary_color: z.string().trim().max(30).optional(),
+  secondary_color: z.string().trim().max(30).optional(),
+  accent_color: z.string().trim().max(30).optional()
 });
 
 export const registrationDecisionSchema = z.object({
   status: z.enum([RegistrationStatus.APPROVED, RegistrationStatus.REJECTED]),
+  reason: z.string().trim().max(500).optional()
+});
+
+export const positionBreakdownSchema = z.object({
+  GK: z.number().int().min(0).max(60).default(0),
+  CB: z.number().int().min(0).max(60).default(0),
+  LB: z.number().int().min(0).max(60).default(0),
+  RB: z.number().int().min(0).max(60).default(0),
+  DM: z.number().int().min(0).max(60).default(0),
+  CM: z.number().int().min(0).max(60).default(0),
+  AM: z.number().int().min(0).max(60).default(0),
+  LW: z.number().int().min(0).max(60).default(0),
+  RW: z.number().int().min(0).max(60).default(0),
+  ST: z.number().int().min(0).max(60).default(0)
+});
+
+export const generateSquadSchema = z
+  .object({
+    targetSquadSize: z.number().int().min(1).max(60).optional(),
+    targetGenerateCount: z.number().int().min(1).max(60).optional(),
+    positionBreakdown: positionBreakdownSchema.optional(),
+    identityTypeMode: z.enum(["mixed_generated", "generated_nid", "generated_birth_id"]).optional().default("mixed_generated"),
+    overwriteDraftPlayers: z.boolean().optional().default(false)
+  })
+  .superRefine((value, ctx) => {
+    const target = value.targetGenerateCount ?? value.targetSquadSize;
+    if (!target) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Target squad size or target generate count is required" });
+    }
+    if (value.positionBreakdown) {
+      const total = Object.values(value.positionBreakdown).reduce((sum, count) => sum + count, 0);
+      if (target && total !== target) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["positionBreakdown"],
+          message: `Total selected players must equal ${target}.`
+        });
+      }
+      if (target && target >= 11 && value.positionBreakdown.GK < 1) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["positionBreakdown", "GK"], message: "You need at least 1 goalkeeper." });
+      }
+    }
+  });
+
+export const submitPlayersSchema = z.object({
+  playerIds: z.array(uuidSchema).min(1).max(60)
+});
+
+export const updateDraftPlayerSchema = z.object({
+  full_name: z.string().trim().min(2).max(160).optional(),
+  position: z.enum([
+    FootballPosition.GK,
+    FootballPosition.CB,
+    FootballPosition.LB,
+    FootballPosition.RB,
+    FootballPosition.DM,
+    FootballPosition.CM,
+    FootballPosition.AM,
+    FootballPosition.LW,
+    FootballPosition.RW,
+    FootballPosition.ST
+  ]).optional(),
+  football_position: z.enum([
+    FootballPosition.GK,
+    FootballPosition.CB,
+    FootballPosition.LB,
+    FootballPosition.RB,
+    FootballPosition.DM,
+    FootballPosition.CM,
+    FootballPosition.AM,
+    FootballPosition.LW,
+    FootballPosition.RW,
+    FootballPosition.ST
+  ]).optional(),
+  shirt_number: z.number().int().min(1).max(99).optional(),
+  preferred_foot: z.enum([PreferredFoot.LEFT, PreferredFoot.RIGHT, PreferredFoot.BOTH, PreferredFoot.UNKNOWN]).optional(),
+  avatar_url: z.string().trim().max(500).nullable().optional(),
+  id_type: z.enum([IdType.NID, IdType.BIRTH_ID]).optional(),
+  generated_identity_number: z.string().trim().min(6).max(80).optional()
+});
+
+export const playerAbilityDecisionSchema = z.object({
+  ability_rating: z.enum([PlayerAbilityRating.LOW, PlayerAbilityRating.MODERATE, PlayerAbilityRating.HIGH]),
+  football_position: z.enum([
+    FootballPosition.GK,
+    FootballPosition.CB,
+    FootballPosition.LB,
+    FootballPosition.RB,
+    FootballPosition.DM,
+    FootballPosition.CM,
+    FootballPosition.AM,
+    FootballPosition.LW,
+    FootballPosition.RW,
+    FootballPosition.ST
+  ]).optional()
+});
+
+export const playerLifecycleDecisionSchema = z.object({
+  player_status: z.enum([
+    PlayerLifecycleStatus.ACTIVE,
+    PlayerLifecycleStatus.PENDING,
+    PlayerLifecycleStatus.APPROVED,
+    PlayerLifecycleStatus.REJECTED,
+    PlayerLifecycleStatus.REMOVED,
+    PlayerLifecycleStatus.SUSPENDED
+  ]),
   reason: z.string().trim().max(500).optional()
 });
 
@@ -78,7 +253,21 @@ export const playerSubmissionSchema = z.object({
   date_of_birth: z.string().date(),
   nationality: z.string().trim().max(80).optional(),
   position: z.enum([PlayerPosition.GK, PlayerPosition.DEF, PlayerPosition.MID, PlayerPosition.FWD]),
+  football_position: z.enum([
+    FootballPosition.GK,
+    FootballPosition.CB,
+    FootballPosition.LB,
+    FootballPosition.RB,
+    FootballPosition.DM,
+    FootballPosition.CM,
+    FootballPosition.AM,
+    FootballPosition.LW,
+    FootballPosition.RW,
+    FootballPosition.ST
+  ]).optional(),
+  preferred_foot: z.enum([PreferredFoot.LEFT, PreferredFoot.RIGHT, PreferredFoot.BOTH, PreferredFoot.UNKNOWN]).optional(),
   shirt_number: z.number().int().min(1).max(99).optional(),
+  avatar_url: z.string().trim().max(500).optional(),
   id_type: z.enum([IdType.NID, IdType.BIRTH_ID]),
   id_number: z.string().trim().min(6).max(40),
   proof_storage_path: z.string().trim().max(500).optional()
@@ -141,8 +330,11 @@ export const editSimulationSchema = z.object({
 
 export type CreateLeagueInput = z.infer<typeof createLeagueSchema>;
 export type CreateSeasonInput = z.infer<typeof createSeasonSchema>;
+export type UpdateSeasonPhaseInput = z.infer<typeof updateSeasonPhaseSchema>;
 export type TeamRegistrationInput = z.infer<typeof teamRegistrationSchema>;
 export type PlayerSubmissionInput = z.infer<typeof playerSubmissionSchema>;
+export type PlayerAbilityDecisionInput = z.infer<typeof playerAbilityDecisionSchema>;
+export type PlayerLifecycleDecisionInput = z.infer<typeof playerLifecycleDecisionSchema>;
 export type HiddenAttributesInput = z.infer<typeof hiddenAttributesSchema>;
 export type LineupSubmissionInput = z.infer<typeof lineupSubmissionSchema>;
 export type EditSimulationInput = z.infer<typeof editSimulationSchema>;

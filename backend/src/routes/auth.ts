@@ -77,31 +77,6 @@ authRouter.post(
   })
 );
 
-authRouter.post(
-  "/demo-signup",
-  asyncHandler(async (req, res) => {
-    const input = signupSchema.parse(req.body);
-    const { data: existing } = await supabaseAdmin.from("app_users").select("id,email,full_name").eq("email", input.email).maybeSingle();
-    if (existing) {
-      const token = signAppToken({ sub: existing.id, email: existing.email, role: UserRole.USER });
-      return res.json({ token, profile: { ...existing, role: UserRole.USER }, existed: true });
-    }
-    const { data: account, error } = await supabaseAdmin
-      .from("app_users")
-      .insert({
-      email: input.email,
-        password_hash: hashPassword(input.password),
-        full_name: input.email.split("@")[0]
-      })
-      .select("id,email,full_name")
-      .single();
-    if (error) throw error;
-    await ensureProfile(account.id, account.email, UserRole.USER, account.full_name);
-    const token = signAppToken({ sub: account.id, email: account.email, role: UserRole.USER });
-    res.status(201).json({ token, profile: { ...account, role: UserRole.USER }, existed: false });
-  })
-);
-
 authRouter.get(
   "/me",
   requireAuth,

@@ -7,10 +7,11 @@ DBMS course MVP for managing custom football leagues, team/player approvals, fix
 - pnpm monorepo
 - Frontend: Next.js, React, Tailwind, shadcn-style local UI primitives
 - Backend: Node.js, Express, TypeScript
-- Database/Auth/Storage: Supabase PostgreSQL/Auth/private Storage
+- Database/Storage: Supabase PostgreSQL/private Storage
+- Auth: custom Express auth stored in PostgreSQL tables
 - Shared package: TypeScript enums, DTOs, and Zod validation schemas
 
-The frontend uses Supabase Auth only for user sessions. All tournament/domain reads and writes go through the Express API.
+All authentication and tournament/domain reads/writes go through the Express API. The browser does not use Supabase Auth or directly query tournament tables.
 
 ## Run locally
 
@@ -31,7 +32,7 @@ Supabase CLI is not required for the initial setup. Run these files in the Supab
 1. `supabase/schema.sql`
 2. `supabase/seed.sql`
 
-Then create at least one Auth user in Supabase, copy the user's UUID, and update/run the admin seed statement in `supabase/seed.sql`.
+The seed file creates the fixed admin account automatically.
 
 ## Security notes
 

@@ -1,4 +1,14 @@
-import type { FixtureStatus, PlayerPosition, RegistrationStatus, SeasonFormat, UserRole } from "./enums.js";
+import type {
+  FixtureStatus,
+  PlayerAbilityRating,
+  PlayerLifecycleStatus,
+  PlayerPosition,
+  PreferredFoot,
+  RegistrationStatus,
+  SeasonFormat,
+  SeasonPhase,
+  UserRole
+} from "./enums.js";
 
 export interface ProfileDto {
   id: string;
@@ -10,6 +20,9 @@ export interface ProfileDto {
 export interface LeagueDto {
   id: string;
   name: string;
+  short_name: string | null;
+  logo_url: string | null;
+  organizer_name: string | null;
   country: string | null;
   description: string | null;
 }
@@ -18,9 +31,24 @@ export interface SeasonDto {
   id: string;
   league_id: string;
   name: string;
+  season_year: number | null;
+  registration_start_date: string | null;
+  registration_deadline: string | null;
   format: SeasonFormat;
+  phase: SeasonPhase;
+  start_date: string | null;
+  end_date: string | null;
+  total_teams: number | null;
+  min_players_per_team: number | null;
+  max_players_per_team: number | null;
+  lineup_size: number | null;
+  substitute_limit: number | null;
+  lineup_submission_deadline_hours: number | null;
   group_count: number | null;
+  teams_per_group: number | null;
   qualifiers_per_group: number | null;
+  best_third_place_teams: number | null;
+  total_knockout_teams: number | null;
   champion_team_registration_id: string | null;
 }
 
@@ -39,6 +67,9 @@ export interface PublicPlayerDto {
   full_name: string;
   position: PlayerPosition;
   shirt_number: number | null;
+  ability_rating?: PlayerAbilityRating | null;
+  preferred_foot?: PreferredFoot | null;
+  player_status?: PlayerLifecycleStatus | null;
 }
 
 export interface FixtureDto {

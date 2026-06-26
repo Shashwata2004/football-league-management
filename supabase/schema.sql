@@ -8,11 +8,54 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type public.request_status as enum ('PENDING', 'APPROVED', 'REJECTED');
+  create type public.request_status as enum ('DRAFT', 'PENDING', 'APPROVED', 'REJECTED');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type public.season_format as enum ('SINGLE_ROUND_ROBIN', 'DOUBLE_ROUND_ROBIN', 'GROUP_STAGE_KNOCKOUT');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.season_phase as enum ('REGISTRATION_OPEN', 'REGISTRATION_CLOSED', 'ACTIVE', 'COMPLETED');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.player_ability_rating as enum ('LOW', 'MODERATE', 'HIGH');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.preferred_foot as enum ('LEFT', 'RIGHT', 'BOTH', 'UNKNOWN');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.player_lifecycle_status as enum ('ACTIVE', 'PENDING', 'APPROVED', 'REJECTED', 'REMOVED', 'SUSPENDED');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.identity_mode as enum ('GENERATED', 'VERIFIED');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.position_category as enum ('GOALKEEPER', 'DEFENDER', 'MIDFIELDER', 'FORWARD');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.manager_message_type as enum (
+    'TEAM_REJECTION',
+    'PLAYER_REJECTION',
+    'PLAYER_REMOVAL',
+    'LINEUP_BLOCK',
+    'TEAM_REMOVAL',
+    'GENERAL_NOTICE'
+  );
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.group_team_status as enum ('PENDING', 'QUALIFIED', 'ELIMINATED');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  create type public.knockout_round_status as enum ('PENDING', 'GENERATED', 'COMPLETED');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -39,7 +82,11 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type public.id_type as enum ('NID', 'BIRTH_ID');
+  create type public.football_position as enum ('GK', 'CB', 'LB', 'RB', 'DM', 'CM', 'AM', 'LW', 'RW', 'ST');
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+create type public.id_type as enum ('NID', 'BIRTH_ID');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -104,6 +151,9 @@ create unique index if not exists role_requests_one_pending_manager
 create table if not exists public.leagues (
   id uuid primary key default gen_random_uuid(),
   name text not null,
+  short_name text,
+  logo_url text,
+  organizer_name text,
   country text,
   description text,
   created_at timestamptz not null default now(),
@@ -114,36 +164,142 @@ create table if not exists public.seasons (
   id uuid primary key default gen_random_uuid(),
   league_id uuid not null references public.leagues(id) on delete cascade,
   name text not null,
+  season_year integer,
+  registration_start_date date,
+  registration_deadline date,
+  phase public.season_phase not null default 'REGISTRATION_OPEN',
   format public.season_format not null,
   start_date date,
   end_date date,
+  total_teams integer,
+  min_players_per_team integer,
+  max_players_per_team integer,
+  lineup_size integer,
+  substitute_limit integer,
+  lineup_submission_deadline_hours integer,
   group_count integer,
+  teams_per_group integer,
   qualifiers_per_group integer,
+  best_third_place_teams integer,
+  total_knockout_teams integer,
   champion_team_registration_id uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint valid_total_teams check (total_teams is null or total_teams >= 2),
+  constraint valid_player_limits check (
+    min_players_per_team is null
+    or max_players_per_team is null
+    or min_players_per_team <= max_players_per_team
+  ),
+  constraint valid_registration_dates check (
+    registration_start_date is null
+    or registration_deadline is null
+    or registration_start_date <= registration_deadline
+  ),
+  constraint valid_season_dates check (start_date is null or end_date is null or start_date <= end_date),
   constraint valid_group_knockout_config check (
     format <> 'GROUP_STAGE_KNOCKOUT'
     or (
       group_count is not null
+      and teams_per_group is not null
       and qualifiers_per_group is not null
+      and best_third_place_teams is not null
+      and total_knockout_teams is not null
       and group_count > 0
+      and teams_per_group > 0
       and qualifiers_per_group > 0
-      and group_count * qualifiers_per_group in (4, 8, 16, 32, 64)
+      and best_third_place_teams >= 0
+      and group_count * qualifiers_per_group + best_third_place_teams = total_knockout_teams
+      and total_knockout_teams in (4, 8, 16, 32, 64)
     )
   )
 );
+
+alter table public.leagues add column if not exists short_name text;
+alter table public.leagues add column if not exists logo_url text;
+alter table public.leagues add column if not exists organizer_name text;
+
+alter table public.seasons add column if not exists season_year integer;
+alter table public.seasons add column if not exists registration_start_date date;
+alter table public.seasons add column if not exists registration_deadline date;
+alter table public.seasons add column if not exists phase public.season_phase not null default 'REGISTRATION_OPEN';
+alter table public.seasons add column if not exists total_teams integer;
+alter table public.seasons add column if not exists min_players_per_team integer;
+alter table public.seasons add column if not exists max_players_per_team integer;
+alter table public.seasons add column if not exists lineup_size integer;
+alter table public.seasons add column if not exists substitute_limit integer;
+alter table public.seasons add column if not exists lineup_submission_deadline_hours integer;
+alter table public.seasons add column if not exists teams_per_group integer;
+alter table public.seasons add column if not exists best_third_place_teams integer;
+alter table public.seasons add column if not exists total_knockout_teams integer;
+
+alter table public.seasons drop constraint if exists valid_team_limits;
+alter table public.seasons drop constraint if exists valid_total_teams;
+alter table public.seasons add constraint valid_total_teams
+  check (total_teams is null or total_teams >= 2);
+
+alter table public.seasons drop column if exists min_teams;
+alter table public.seasons drop column if exists max_teams;
+alter table public.seasons drop column if exists allow_draw;
+alter table public.seasons drop column if exists status;
+drop type if exists public.season_status;
+
+alter table public.seasons drop constraint if exists valid_player_limits;
+alter table public.seasons add constraint valid_player_limits
+  check (
+    min_players_per_team is null
+    or max_players_per_team is null
+    or min_players_per_team <= max_players_per_team
+  );
+
+alter table public.seasons drop constraint if exists valid_registration_dates;
+alter table public.seasons add constraint valid_registration_dates
+  check (
+    registration_start_date is null
+    or registration_deadline is null
+    or registration_start_date <= registration_deadline
+  );
+
+alter table public.seasons drop constraint if exists valid_season_dates;
+alter table public.seasons add constraint valid_season_dates
+  check (start_date is null or end_date is null or start_date <= end_date);
+
+alter table public.seasons drop constraint if exists valid_group_knockout_config;
+alter table public.seasons add constraint valid_group_knockout_config
+  check (
+    format <> 'GROUP_STAGE_KNOCKOUT'
+    or (
+      group_count is not null
+      and teams_per_group is not null
+      and qualifiers_per_group is not null
+      and best_third_place_teams is not null
+      and total_knockout_teams is not null
+      and group_count > 0
+      and teams_per_group > 0
+      and qualifiers_per_group > 0
+      and best_third_place_teams >= 0
+      and group_count * qualifiers_per_group + best_third_place_teams = total_knockout_teams
+      and total_knockout_teams in (4, 8, 16, 32, 64)
+    )
+  );
 
 create table if not exists public.teams (
   id uuid primary key default gen_random_uuid(),
   manager_id uuid not null references public.profiles(id),
   name text not null,
   short_name text not null,
+  logo_url text,
   city text,
   primary_color text,
+  secondary_color text,
+  accent_color text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.teams add column if not exists logo_url text;
+alter table public.teams add column if not exists secondary_color text;
+alter table public.teams add column if not exists accent_color text;
 
 create table if not exists public.team_registrations (
   id uuid primary key default gen_random_uuid(),
@@ -154,21 +310,37 @@ create table if not exists public.team_registrations (
   reviewed_by uuid references public.profiles(id),
   reviewed_at timestamptz,
   rejection_reason text,
+  removed_by uuid references public.profiles(id),
+  removed_at timestamptz,
+  removal_reason text,
   created_at timestamptz not null default now(),
   unique (season_id, team_id)
 );
 
+alter table public.team_registrations add column if not exists removed_by uuid references public.profiles(id);
+alter table public.team_registrations add column if not exists removed_at timestamptz;
+alter table public.team_registrations add column if not exists removal_reason text;
+
 create table if not exists public.players (
   id uuid primary key default gen_random_uuid(),
   full_name text not null,
-  date_of_birth date not null,
+  date_of_birth date,
   nationality text,
-  id_type public.id_type not null,
-  id_number_hash text not null unique,
-  id_number_last4 text not null,
+  id_type public.id_type,
+  id_number_hash text unique,
+  id_number_last4 text,
+  generated_identity_number text,
+  avatar_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.players add column if not exists avatar_url text;
+alter table public.players add column if not exists generated_identity_number text;
+alter table public.players alter column date_of_birth drop not null;
+alter table public.players alter column id_type drop not null;
+alter table public.players alter column id_number_hash drop not null;
+alter table public.players alter column id_number_last4 drop not null;
 
 create table if not exists public.identity_proofs (
   id uuid primary key default gen_random_uuid(),
@@ -186,17 +358,79 @@ create table if not exists public.player_season_registrations (
   player_id uuid not null references public.players(id) on delete cascade,
   season_id uuid not null references public.seasons(id) on delete cascade,
   team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  player_code text,
   position public.player_position not null,
+  football_position public.football_position,
+  position_category public.position_category,
   shirt_number integer,
   status public.request_status not null default 'PENDING',
+  ability_rating public.player_ability_rating,
+  preferred_foot public.preferred_foot not null default 'UNKNOWN',
+  player_status public.player_lifecycle_status not null default 'ACTIVE',
+  identity_mode public.identity_mode not null default 'VERIFIED',
+  is_generated boolean not null default false,
+  created_by_manager_id uuid references public.profiles(id),
+  submitted_at timestamptz,
   reviewed_by uuid references public.profiles(id),
   reviewed_at timestamptz,
   rejection_reason text,
+  removed_by uuid references public.profiles(id),
+  removed_at timestamptz,
+  removal_reason text,
+  suspended_by uuid references public.profiles(id),
+  suspended_at timestamptz,
+  suspension_reason text,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   constraint shirt_number_range check (shirt_number is null or shirt_number between 1 and 99),
-  unique (season_id, player_id),
-  unique (team_registration_id, shirt_number)
+  constraint player_registrations_generated_identity_check check (
+    (identity_mode = 'GENERATED' and is_generated = true)
+    or identity_mode = 'VERIFIED'
+  ),
+  unique (season_id, player_id)
 );
+
+alter table public.player_season_registrations add column if not exists player_code text;
+alter table public.player_season_registrations
+  add column if not exists ability_rating public.player_ability_rating;
+alter table public.player_season_registrations
+  add column if not exists football_position public.football_position;
+alter table public.player_season_registrations
+  add column if not exists position_category public.position_category;
+alter table public.player_season_registrations
+  add column if not exists preferred_foot public.preferred_foot not null default 'UNKNOWN';
+alter table public.player_season_registrations
+  add column if not exists player_status public.player_lifecycle_status not null default 'PENDING';
+alter table public.player_season_registrations
+  add column if not exists identity_mode public.identity_mode not null default 'VERIFIED';
+alter table public.player_season_registrations
+  add column if not exists is_generated boolean not null default false;
+alter table public.player_season_registrations
+  add column if not exists created_by_manager_id uuid references public.profiles(id);
+alter table public.player_season_registrations add column if not exists submitted_at timestamptz;
+alter table public.player_season_registrations add column if not exists updated_at timestamptz not null default now();
+alter table public.player_season_registrations add column if not exists removed_by uuid references public.profiles(id);
+alter table public.player_season_registrations add column if not exists removed_at timestamptz;
+alter table public.player_season_registrations add column if not exists removal_reason text;
+alter table public.player_season_registrations add column if not exists suspended_by uuid references public.profiles(id);
+alter table public.player_season_registrations add column if not exists suspended_at timestamptz;
+alter table public.player_season_registrations add column if not exists suspension_reason text;
+
+create unique index if not exists player_regs_unique_player_code
+  on public.player_season_registrations(player_code)
+  where player_code is not null;
+
+alter table public.player_season_registrations drop constraint if exists player_season_registrations_team_registration_id_shirt_number_key;
+
+create unique index if not exists player_regs_unique_active_squad_jersey
+  on public.player_season_registrations(team_registration_id, shirt_number)
+  where shirt_number is not null
+    and player_status <> 'REMOVED'
+    and (status in ('DRAFT', 'PENDING', 'APPROVED') or player_status = 'SUSPENDED');
+
+create unique index if not exists players_unique_generated_identity_number
+  on public.players(generated_identity_number)
+  where generated_identity_number is not null;
 
 create table if not exists public.player_hidden_attributes (
   id uuid primary key default gen_random_uuid(),
@@ -209,6 +443,36 @@ create table if not exists public.player_hidden_attributes (
   defending integer not null check (defending between 1 and 99),
   physical integer not null check (physical between 1 and 99),
   goalkeeping integer not null check (goalkeeping between 1 and 99),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.player_abilities (
+  id uuid primary key default gen_random_uuid(),
+  player_registration_id uuid not null unique references public.player_season_registrations(id) on delete cascade,
+  player_id uuid not null references public.players(id) on delete cascade,
+  season_id uuid not null references public.seasons(id) on delete cascade,
+  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  position public.football_position not null,
+  rating_tier public.player_ability_rating not null,
+  shooting integer check (shooting is null or shooting between 1 and 92),
+  passing integer check (passing is null or passing between 1 and 92),
+  dribbling integer check (dribbling is null or dribbling between 1 and 92),
+  defending integer check (defending is null or defending between 1 and 92),
+  physical integer check (physical is null or physical between 1 and 92),
+  pace integer check (pace is null or pace between 1 and 92),
+  stamina integer check (stamina is null or stamina between 1 and 92),
+  shot_stopping integer check (shot_stopping is null or shot_stopping between 1 and 92),
+  reflexes integer check (reflexes is null or reflexes between 1 and 92),
+  positioning integer check (positioning is null or positioning between 1 and 92),
+  handling integer check (handling is null or handling between 1 and 92),
+  diving integer check (diving is null or diving between 1 and 92),
+  distribution integer check (distribution is null or distribution between 1 and 92),
+  communication integer check (communication is null or communication between 1 and 92),
+  overall_rating integer not null check (overall_rating between 1 and 92),
+  generated_by_admin_id uuid references public.profiles(id),
+  generated_at timestamptz not null default now(),
+  is_hidden_from_manager boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -226,6 +490,12 @@ create table if not exists public.fixtures (
   status public.fixture_status not null default 'SCHEDULED',
   home_score integer,
   away_score integer,
+  simulation_seed text,
+  simulated_at timestamptz,
+  extra_time_played boolean not null default false,
+  penalty_winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
+  penalties_home integer check (penalties_home is null or penalties_home >= 0),
+  penalties_away integer check (penalties_away is null or penalties_away >= 0),
   finalized_by uuid references public.profiles(id),
   finalized_at timestamptz,
   created_at timestamptz not null default now(),
@@ -256,6 +526,9 @@ create table if not exists public.lineup_players (
   player_registration_id uuid not null references public.player_season_registrations(id) on delete cascade,
   is_starter boolean not null,
   position public.player_position not null,
+  football_position public.football_position,
+  shirt_number integer,
+  is_captain boolean not null default false,
   created_at timestamptz not null default now(),
   unique (lineup_id, player_registration_id)
 );
@@ -271,6 +544,7 @@ create table if not exists public.team_match_stats (
   big_chances_missed integer not null check (big_chances_missed between 0 and big_chances),
   passes integer not null check (passes >= 0),
   accurate_passes integer not null check (accurate_passes between 0 and passes),
+  offsides integer not null default 0 check (offsides >= 0),
   fouls integer not null check (fouls >= 0),
   yellow_cards integer not null check (yellow_cards >= 0),
   red_cards integer not null check (red_cards between 0 and 3),
@@ -287,12 +561,25 @@ create table if not exists public.player_match_stats (
   goals integer not null check (goals >= 0),
   assists integer not null check (assists >= 0),
   shots integer not null check (shots >= 0),
+  shots_on_target integer not null default 0 check (shots_on_target between 0 and shots),
+  chances_created integer not null default 0 check (chances_created >= 0),
+  big_chances_missed integer not null default 0 check (big_chances_missed >= 0),
   passes integer not null check (passes >= 0),
   accurate_passes integer not null check (accurate_passes between 0 and passes),
   tackles integer not null check (tackles >= 0),
+  interceptions integer not null default 0 check (interceptions >= 0),
+  clearances integer not null default 0 check (clearances >= 0),
+  blocks integer not null default 0 check (blocks >= 0),
+  fouls_committed integer not null default 0 check (fouls_committed >= 0),
   saves integer not null check (saves >= 0),
   dribbles_attempted integer not null check (dribbles_attempted >= 0),
   successful_dribbles integer not null check (successful_dribbles between 0 and dribbles_attempted),
+  dispossessed integer not null default 0 check (dispossessed >= 0),
+  position_played public.football_position,
+  goals_conceded integer check (goals_conceded is null or goals_conceded >= 0),
+  accurate_long_balls integer check (accurate_long_balls is null or accurate_long_balls >= 0),
+  diving_saves integer check (diving_saves is null or diving_saves between 0 and saves),
+  saves_inside_box integer check (saves_inside_box is null or saves_inside_box between 0 and saves),
   yellow_cards integer not null check (yellow_cards between 0 and 2),
   red_cards integer not null check (red_cards between 0 and 1),
   rating numeric(3,1) not null check (rating between 5.5 and 9.5),
@@ -309,6 +596,18 @@ create table if not exists public.match_events (
   player_registration_id uuid not null references public.player_season_registrations(id),
   related_player_registration_id uuid references public.player_season_registrations(id),
   created_at timestamptz not null default now()
+);
+
+create table if not exists public.match_substitutions (
+  id uuid primary key default gen_random_uuid(),
+  fixture_id uuid not null references public.fixtures(id) on delete cascade,
+  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  minute integer not null check (minute between 1 and 130),
+  player_out_registration_id uuid not null references public.player_season_registrations(id),
+  player_in_registration_id uuid not null references public.player_season_registrations(id),
+  reason text not null check (reason in ('LOW_RATING', 'FATIGUE', 'TACTICAL_CHANGE', 'YELLOW_CARD_RISK', 'INJURY_PLACEHOLDER')),
+  created_at timestamptz not null default now(),
+  constraint match_substitutions_distinct_players check (player_out_registration_id <> player_in_registration_id)
 );
 
 create table if not exists public.standings (
@@ -334,14 +633,71 @@ create table if not exists public.player_season_stats (
   season_id uuid not null references public.seasons(id) on delete cascade,
   player_registration_id uuid not null references public.player_season_registrations(id) on delete cascade,
   appearances integer not null default 0,
+  starts integer not null default 0,
+  minutes_played integer not null default 0,
   goals integer not null default 0,
   assists integer not null default 0,
+  shots integer not null default 0,
+  shots_on_target integer not null default 0,
+  chances_created integer not null default 0,
+  total_passes integer not null default 0,
+  accurate_passes integer not null default 0,
+  dribbles_attempted integer not null default 0,
+  successful_dribbles integer not null default 0,
+  dispossessed integer not null default 0,
+  tackles integer not null default 0,
+  interceptions integer not null default 0,
   yellow_cards integer not null default 0,
   red_cards integer not null default 0,
   average_rating numeric(4,2),
+  best_match_rating numeric(3,1),
+  lowest_match_rating numeric(3,1),
+  player_of_match_count integer not null default 0,
   updated_at timestamptz not null default now(),
   unique (season_id, player_registration_id)
 );
+
+alter table public.player_season_stats add column if not exists starts integer not null default 0;
+alter table public.player_season_stats add column if not exists minutes_played integer not null default 0;
+alter table public.player_season_stats add column if not exists shots integer not null default 0;
+alter table public.player_season_stats add column if not exists shots_on_target integer not null default 0;
+alter table public.player_season_stats add column if not exists chances_created integer not null default 0;
+alter table public.player_season_stats add column if not exists total_passes integer not null default 0;
+alter table public.player_season_stats add column if not exists accurate_passes integer not null default 0;
+alter table public.player_season_stats add column if not exists dribbles_attempted integer not null default 0;
+alter table public.player_season_stats add column if not exists successful_dribbles integer not null default 0;
+alter table public.player_season_stats add column if not exists dispossessed integer not null default 0;
+alter table public.player_season_stats add column if not exists tackles integer not null default 0;
+alter table public.player_season_stats add column if not exists interceptions integer not null default 0;
+alter table public.player_season_stats add column if not exists best_match_rating numeric(3,1);
+alter table public.player_season_stats add column if not exists lowest_match_rating numeric(3,1);
+alter table public.player_season_stats add column if not exists player_of_match_count integer not null default 0;
+
+alter table public.player_season_stats
+  drop constraint if exists player_season_stats_non_negative_dashboard_stats;
+
+alter table public.player_season_stats
+  add constraint player_season_stats_non_negative_dashboard_stats
+  check (
+    starts >= 0
+    and minutes_played >= 0
+    and shots >= 0
+    and shots_on_target >= 0
+    and shots_on_target <= shots
+    and chances_created >= 0
+    and total_passes >= 0
+    and accurate_passes >= 0
+    and accurate_passes <= total_passes
+    and dribbles_attempted >= 0
+    and successful_dribbles >= 0
+    and successful_dribbles <= dribbles_attempted
+    and dispossessed >= 0
+    and tackles >= 0
+    and interceptions >= 0
+    and player_of_match_count >= 0
+    and (best_match_rating is null or best_match_rating between 5.5 and 9.5)
+    and (lowest_match_rating is null or lowest_match_rating between 5.5 and 9.5)
+  );
 
 create table if not exists public.notifications (
   id uuid primary key default gen_random_uuid(),
@@ -350,6 +706,74 @@ create table if not exists public.notifications (
   body text,
   read_at timestamptz,
   created_at timestamptz not null default now()
+);
+
+create table if not exists public.manager_messages (
+  id uuid primary key default gen_random_uuid(),
+  season_id uuid not null references public.seasons(id) on delete cascade,
+  manager_id uuid not null references public.profiles(id) on delete cascade,
+  team_registration_id uuid references public.team_registrations(id) on delete set null,
+  player_registration_id uuid references public.player_season_registrations(id) on delete set null,
+  fixture_id uuid references public.fixtures(id) on delete set null,
+  related_type public.manager_message_type not null,
+  message text not null,
+  created_by uuid references public.profiles(id),
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+alter table public.manager_messages add column if not exists player_registration_id uuid references public.player_season_registrations(id) on delete set null;
+alter table public.manager_messages add column if not exists fixture_id uuid references public.fixtures(id) on delete set null;
+
+create table if not exists public.season_groups (
+  id uuid primary key default gen_random_uuid(),
+  season_id uuid not null references public.seasons(id) on delete cascade,
+  name text not null,
+  locked boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (season_id, name)
+);
+
+create table if not exists public.season_group_teams (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.season_groups(id) on delete cascade,
+  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  seed_no integer,
+  status public.group_team_status not null default 'PENDING',
+  created_at timestamptz not null default now(),
+  unique (group_id, team_registration_id),
+  unique (team_registration_id)
+);
+
+create table if not exists public.knockout_brackets (
+  id uuid primary key default gen_random_uuid(),
+  season_id uuid not null references public.seasons(id) on delete cascade,
+  name text not null default 'Main Bracket',
+  locked boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (season_id, name)
+);
+
+create table if not exists public.knockout_matches (
+  id uuid primary key default gen_random_uuid(),
+  bracket_id uuid not null references public.knockout_brackets(id) on delete cascade,
+  fixture_id uuid references public.fixtures(id) on delete set null,
+  round_name text not null,
+  round_no integer not null,
+  match_no integer not null,
+  home_source text,
+  away_source text,
+  winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
+  extra_time_played boolean not null default false,
+  penalty_winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
+  penalties_home integer check (penalties_home is null or penalties_home >= 0),
+  penalties_away integer check (penalties_away is null or penalties_away >= 0),
+  status public.knockout_round_status not null default 'PENDING',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (bracket_id, round_no, match_no)
 );
 
 alter table public.seasons
@@ -361,12 +785,23 @@ alter table public.seasons
   references public.team_registrations(id);
 
 create index if not exists idx_seasons_league on public.seasons(league_id);
+create index if not exists idx_seasons_phase on public.seasons(phase);
 create index if not exists idx_team_registrations_season_status on public.team_registrations(season_id, status);
+create index if not exists idx_team_registrations_removed on public.team_registrations(season_id, removed_at);
 create index if not exists idx_player_regs_team_status on public.player_season_registrations(team_registration_id, status);
+create index if not exists idx_player_regs_lifecycle on public.player_season_registrations(team_registration_id, player_status);
 create index if not exists idx_fixtures_season_round on public.fixtures(season_id, round_no);
 create index if not exists idx_lineups_fixture on public.lineups(fixture_id);
 create index if not exists idx_standings_season_sort on public.standings(season_id, points desc, goal_difference desc, goals_for desc, fair_play_score asc);
 create index if not exists idx_player_stats_season_goals on public.player_season_stats(season_id, goals desc);
+create index if not exists idx_manager_messages_season on public.manager_messages(season_id, created_at desc);
+create index if not exists idx_manager_messages_manager_read on public.manager_messages(manager_id, read_at);
+create index if not exists idx_manager_messages_player on public.manager_messages(player_registration_id);
+create index if not exists idx_manager_messages_fixture on public.manager_messages(fixture_id);
+create index if not exists idx_season_groups_season on public.season_groups(season_id);
+create index if not exists idx_group_teams_group on public.season_group_teams(group_id);
+create index if not exists idx_knockout_brackets_season on public.knockout_brackets(season_id);
+create index if not exists idx_knockout_matches_bracket_round on public.knockout_matches(bracket_id, round_no, match_no);
 
 create or replace function app_private.handle_new_user()
 returns trigger
@@ -416,10 +851,15 @@ alter table public.match_events enable row level security;
 alter table public.standings enable row level security;
 alter table public.player_season_stats enable row level security;
 alter table public.notifications enable row level security;
+alter table public.manager_messages enable row level security;
+alter table public.season_groups enable row level security;
+alter table public.season_group_teams enable row level security;
+alter table public.knockout_brackets enable row level security;
+alter table public.knockout_matches enable row level security;
 
 grant usage on schema public to anon, authenticated, service_role;
 revoke all on all tables in schema public from anon, authenticated;
-grant select on public.leagues, public.seasons, public.fixtures, public.standings, public.player_season_stats to anon, authenticated;
+grant select on public.leagues, public.seasons, public.fixtures, public.standings, public.player_season_stats, public.season_groups, public.season_group_teams, public.knockout_brackets, public.knockout_matches to anon, authenticated;
 grant select on public.profiles to authenticated;
 grant select, insert on public.role_requests to authenticated;
 grant select, update on public.notifications to authenticated;
@@ -478,6 +918,36 @@ using (true);
 drop policy if exists "player_season_stats_public_read" on public.player_season_stats;
 create policy "player_season_stats_public_read"
 on public.player_season_stats for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "manager_messages_service_only" on public.manager_messages;
+create policy "manager_messages_service_only"
+on public.manager_messages for all
+using (false)
+with check (false);
+
+drop policy if exists "season_groups_public_read" on public.season_groups;
+create policy "season_groups_public_read"
+on public.season_groups for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "season_group_teams_public_read" on public.season_group_teams;
+create policy "season_group_teams_public_read"
+on public.season_group_teams for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "knockout_brackets_public_read" on public.knockout_brackets;
+create policy "knockout_brackets_public_read"
+on public.knockout_brackets for select
+to anon, authenticated
+using (true);
+
+drop policy if exists "knockout_matches_public_read" on public.knockout_matches;
+create policy "knockout_matches_public_read"
+on public.knockout_matches for select
 to anon, authenticated
 using (true);
 

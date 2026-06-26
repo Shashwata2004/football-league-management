@@ -24,7 +24,7 @@ export default function PublicPage() {
   }, []);
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
       <section className="rounded-2xl bg-slate-950 p-8 text-white">
         <p className="text-sm uppercase tracking-wide text-green-300">DBMS Course Project</p>
         <h1 className="mt-2 text-4xl font-bold">Custom Football League Management System</h1>

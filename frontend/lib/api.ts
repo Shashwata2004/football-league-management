@@ -4,27 +4,53 @@ import { getAuthToken } from "./auth";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
+function errorMessage(payload: { error?: string; details?: unknown }, status: number) {
+  if (
+    payload.details &&
+    typeof payload.details === "object" &&
+    "fieldErrors" in payload.details &&
+    payload.details.fieldErrors &&
+    typeof payload.details.fieldErrors === "object"
+  ) {
+    const messages = Object.entries(payload.details.fieldErrors)
+      .flatMap(([field, errors]) => (Array.isArray(errors) ? errors.map((error) => `${field}: ${error}`) : []))
+      .join("; ");
+    if (messages) return messages;
+  }
+  return payload.error ?? `Request failed: ${status}`;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   const token = getAuthToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...init,
-    headers,
-    cache: "no-store"
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, {
+      ...init,
+      headers,
+      cache: "no-store"
+    });
+  } catch {
+    throw new Error("Backend is not reachable. Restart pnpm dev and use http://localhost:3000.");
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error ?? `Request failed: ${response.status}`);
+    throw new Error(errorMessage(payload, response.status));
   }
   return payload as T;
 }
 
 export async function publicApi<T>(path: string): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, { cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}${path}`, { cache: "no-store" });
+  } catch {
+    throw new Error("Backend is not reachable. Restart pnpm dev and use http://localhost:3000.");
+  }
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error ?? `Request failed: ${response.status}`);
+  if (!response.ok) throw new Error(errorMessage(payload, response.status));
   return payload as T;
 }

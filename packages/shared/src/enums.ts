@@ -19,12 +19,52 @@ export const SeasonFormat = {
 } as const;
 export type SeasonFormat = (typeof SeasonFormat)[keyof typeof SeasonFormat];
 
+export const SeasonPhase = {
+  REGISTRATION_OPEN: "REGISTRATION_OPEN",
+  REGISTRATION_CLOSED: "REGISTRATION_CLOSED",
+  ACTIVE: "ACTIVE",
+  COMPLETED: "COMPLETED"
+} as const;
+export type SeasonPhase = (typeof SeasonPhase)[keyof typeof SeasonPhase];
+
+export const PlayerAbilityRating = {
+  LOW: "LOW",
+  MODERATE: "MODERATE",
+  HIGH: "HIGH"
+} as const;
+export type PlayerAbilityRating = (typeof PlayerAbilityRating)[keyof typeof PlayerAbilityRating];
+
+export const PreferredFoot = {
+  LEFT: "LEFT",
+  RIGHT: "RIGHT",
+  BOTH: "BOTH",
+  UNKNOWN: "UNKNOWN"
+} as const;
+export type PreferredFoot = (typeof PreferredFoot)[keyof typeof PreferredFoot];
+
+export const PlayerLifecycleStatus = {
+  ACTIVE: "ACTIVE",
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+  REMOVED: "REMOVED",
+  SUSPENDED: "SUSPENDED"
+} as const;
+export type PlayerLifecycleStatus = (typeof PlayerLifecycleStatus)[keyof typeof PlayerLifecycleStatus];
+
 export const RegistrationStatus = {
+  DRAFT: "DRAFT",
   PENDING: "PENDING",
   APPROVED: "APPROVED",
   REJECTED: "REJECTED"
 } as const;
 export type RegistrationStatus = (typeof RegistrationStatus)[keyof typeof RegistrationStatus];
+
+export const IdentityMode = {
+  GENERATED: "GENERATED",
+  VERIFIED: "VERIFIED"
+} as const;
+export type IdentityMode = (typeof IdentityMode)[keyof typeof IdentityMode];
 
 export const FixtureStatus = {
   SCHEDULED: "SCHEDULED",
@@ -49,6 +89,20 @@ export const PlayerPosition = {
   FWD: "FWD"
 } as const;
 export type PlayerPosition = (typeof PlayerPosition)[keyof typeof PlayerPosition];
+
+export const FootballPosition = {
+  GK: "GK",
+  CB: "CB",
+  LB: "LB",
+  RB: "RB",
+  DM: "DM",
+  CM: "CM",
+  AM: "AM",
+  LW: "LW",
+  RW: "RW",
+  ST: "ST"
+} as const;
+export type FootballPosition = (typeof FootballPosition)[keyof typeof FootballPosition];
 
 export const IdType = {
   NID: "NID",
