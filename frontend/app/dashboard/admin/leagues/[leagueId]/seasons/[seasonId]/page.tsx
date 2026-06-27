@@ -176,6 +176,7 @@ interface AdminTeam {
 interface StandingTeam {
   name: string;
   short: string;
+  logoUrl: string | null;
   color: string;
   points: number;
   played: number;
@@ -287,49 +288,49 @@ type PlayerRegistrationApiRow = {
     id_type?: string | null;
     id_number_last4?: string | null;
   } | null;
-	  team_registrations?: {
-	    status?: string | null;
-	    teams?: { name?: string | null } | null;
-	  } | null;
-	  player_abilities?:
-	    | {
-	        rating_tier?: string | null;
-	        shooting?: number | null;
-	        passing?: number | null;
-	        dribbling?: number | null;
-	        defending?: number | null;
-	        physical?: number | null;
-	        pace?: number | null;
-	        stamina?: number | null;
-	        shot_stopping?: number | null;
-	        reflexes?: number | null;
-	        positioning?: number | null;
-	        handling?: number | null;
-	        diving?: number | null;
-	        distribution?: number | null;
-	        communication?: number | null;
-        overall_rating?: number | null;
-	      }
-	    | {
-	        rating_tier?: string | null;
-	        shooting?: number | null;
-	        passing?: number | null;
-	        dribbling?: number | null;
-	        defending?: number | null;
-	        physical?: number | null;
-	        pace?: number | null;
-	        stamina?: number | null;
-	        shot_stopping?: number | null;
-	        reflexes?: number | null;
-	        positioning?: number | null;
-	        handling?: number | null;
-	        diving?: number | null;
-	        distribution?: number | null;
-	        communication?: number | null;
-        overall_rating?: number | null;
-	      }[]
-	    | null;
-	  football_position?: string | null;
+  team_registrations?: {
+    status?: string | null;
+    teams?: { name?: string | null } | null;
+  } | null;
+  player_abilities?:
+  | {
+    rating_tier?: string | null;
+    shooting?: number | null;
+    passing?: number | null;
+    dribbling?: number | null;
+    defending?: number | null;
+    physical?: number | null;
+    pace?: number | null;
+    stamina?: number | null;
+    shot_stopping?: number | null;
+    reflexes?: number | null;
+    positioning?: number | null;
+    handling?: number | null;
+    diving?: number | null;
+    distribution?: number | null;
+    communication?: number | null;
+    overall_rating?: number | null;
+  }
+  | {
+    rating_tier?: string | null;
+    shooting?: number | null;
+    passing?: number | null;
+    dribbling?: number | null;
+    defending?: number | null;
+    physical?: number | null;
+    pace?: number | null;
+    stamina?: number | null;
+    shot_stopping?: number | null;
+    reflexes?: number | null;
+    positioning?: number | null;
+    handling?: number | null;
+    diving?: number | null;
+    distribution?: number | null;
+    communication?: number | null;
+    overall_rating?: number | null;
+  }[]
+  | null;
+  football_position?: string | null;
 };
 
 type FixtureApiRow = {
@@ -500,10 +501,10 @@ function buildAdminSeasonData(input: {
       idType: row.players?.id_type ?? "N/A",
       maskedId: row.players?.id_number_last4 ? `********${row.players.id_number_last4}` : "Not submitted",
       uploadedDocument: "Private document",
-	      jerseyNumber: row.shirt_number ?? 0,
-	      position: row.position,
-	      footballPosition: row.football_position ?? row.position,
-	      preferredFoot: statusLabel(row.preferred_foot),
+      jerseyNumber: row.shirt_number ?? 0,
+      position: row.position,
+      footballPosition: row.football_position ?? row.position,
+      preferredFoot: statusLabel(row.preferred_foot),
       approvalStatus: statusLabel(row.status) as AdminPlayer["approvalStatus"],
       playerStatus,
       registrationDate: safeDate(row.created_at),
@@ -522,10 +523,10 @@ function buildAdminSeasonData(input: {
 
   const fixturesByTeam = (teamRegistrationId: string) =>
     input.fixtures
-	      .filter((fixture) => fixture.home_team_registration_id === teamRegistrationId || fixture.away_team_registration_id === teamRegistrationId)
-	      .map((fixture) => ({
-	        id: fixture.id,
-	        date: safeDate(fixture.kickoff_at),
+      .filter((fixture) => fixture.home_team_registration_id === teamRegistrationId || fixture.away_team_registration_id === teamRegistrationId)
+      .map((fixture) => ({
+        id: fixture.id,
+        date: safeDate(fixture.kickoff_at),
         home: teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team",
         away: teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team",
         stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
@@ -533,24 +534,24 @@ function buildAdminSeasonData(input: {
         venue: fixture.venue ?? "Not set"
       }));
 
-	  const teams: AdminTeam[] = seasonTeamRegistrations
-	    .filter((row) => row.status === RegistrationStatus.APPROVED && !row.removed_at)
-	    .map((row) => {
-	      const manager = relatedOne(row.manager);
-	      const players = playersByTeam.get(row.id) ?? [];
+  const teams: AdminTeam[] = seasonTeamRegistrations
+    .filter((row) => row.status === RegistrationStatus.APPROVED && !row.removed_at)
+    .map((row) => {
+      const manager = relatedOne(row.manager);
+      const players = playersByTeam.get(row.id) ?? [];
       const suspendedPlayers = players.filter((player) => player.playerStatus === "Suspended" || player.playerStatus === "Removed");
       const activePlayers = players.filter((player) => player.playerStatus !== "Suspended" && player.playerStatus !== "Removed");
       const teamFixtures = fixturesByTeam(row.id);
       return {
         id: row.id,
-	        logo: row.teams?.short_name ?? row.teams?.name ?? "TM",
-	        logoUrl: row.teams?.logo_url ?? null,
-	        primaryColor: row.teams?.primary_color ?? null,
-	        secondaryColor: row.teams?.secondary_color ?? null,
-	        accentColor: row.teams?.accent_color ?? null,
-	        name: row.teams?.name ?? "Unnamed team",
-	        managerName: manager?.full_name ?? manager?.email ?? "Manager",
-	        managerEmail: manager?.email ?? "Not connected",
+        logo: row.teams?.short_name ?? row.teams?.name ?? "TM",
+        logoUrl: row.teams?.logo_url ?? null,
+        primaryColor: row.teams?.primary_color ?? null,
+        secondaryColor: row.teams?.secondary_color ?? null,
+        accentColor: row.teams?.accent_color ?? null,
+        name: row.teams?.name ?? "Unnamed team",
+        managerName: manager?.full_name ?? manager?.email ?? "Manager",
+        managerEmail: manager?.email ?? "Not connected",
         managerPhone: "Not connected",
         squadCount: players.filter((player) => player.playerStatus !== "Removed" && player.approvalStatus !== "Rejected").length,
         approvedPlayers: players.filter((player) => player.approvalStatus === "Approved" && player.playerStatus !== "Removed").length,
@@ -566,36 +567,36 @@ function buildAdminSeasonData(input: {
       };
     });
 
-	  const teamRequests: TeamRequest[] = seasonTeamRegistrations
-	    .filter((row) => row.status === RegistrationStatus.PENDING)
-	    .map((row) => ({
-	      id: row.id,
-	      team: row.teams?.name ?? "Unnamed team",
-	      logoUrl: row.teams?.logo_url ?? null,
-	      manager: relatedOne(row.manager)?.full_name ?? relatedOne(row.manager)?.email ?? "Manager",
-	      season: input.season.name,
+  const teamRequests: TeamRequest[] = seasonTeamRegistrations
+    .filter((row) => row.status === RegistrationStatus.PENDING)
+    .map((row) => ({
+      id: row.id,
+      team: row.teams?.name ?? "Unnamed team",
+      logoUrl: row.teams?.logo_url ?? null,
+      manager: relatedOne(row.manager)?.full_name ?? relatedOne(row.manager)?.email ?? "Manager",
+      season: input.season.name,
       squad: (playersByTeam.get(row.id) ?? []).length,
       status: "Pending"
     }));
 
-	  const playerRequests: PlayerRequest[] = input.playerRegistrations
-	    .filter((row) => row.season_id === input.season.id && row.status === RegistrationStatus.PENDING)
-	    .map((row) => {
-	      const requestPlayer = (playersByTeam.get(row.team_registration_id) ?? []).find((player) => player.id === row.id);
-	      return {
-	        id: row.id,
-	        code: `PLY-${row.id.slice(0, 8).toUpperCase()}`,
-	        name: row.players?.full_name ?? "Unnamed player",
-	        team: teamByRegistration.get(row.team_registration_id)?.teams?.name ?? "Unassigned team",
-	        position: row.football_position ?? row.position,
-	        jersey: row.shirt_number ?? 0,
-	        idType: row.players?.id_type ?? "N/A",
-	        status: "Pending",
-	        teamStatus: relatedOne(row.team_registrations)?.status ?? "PENDING",
-	        abilityRating: abilityLabel(row.ability_rating),
-	        player: requestPlayer
-	      };
-	    });
+  const playerRequests: PlayerRequest[] = input.playerRegistrations
+    .filter((row) => row.season_id === input.season.id && row.status === RegistrationStatus.PENDING)
+    .map((row) => {
+      const requestPlayer = (playersByTeam.get(row.team_registration_id) ?? []).find((player) => player.id === row.id);
+      return {
+        id: row.id,
+        code: `PLY-${row.id.slice(0, 8).toUpperCase()}`,
+        name: row.players?.full_name ?? "Unnamed player",
+        team: teamByRegistration.get(row.team_registration_id)?.teams?.name ?? "Unassigned team",
+        position: row.football_position ?? row.position,
+        jersey: row.shirt_number ?? 0,
+        idType: row.players?.id_type ?? "N/A",
+        status: "Pending",
+        teamStatus: relatedOne(row.team_registrations)?.status ?? "PENDING",
+        abilityRating: abilityLabel(row.ability_rating),
+        player: requestPlayer
+      };
+    });
 
   const fixtures = input.fixtures.map((fixture) => ({
     id: fixture.id,
@@ -622,6 +623,7 @@ function buildAdminSeasonData(input: {
     return {
       name,
       short: team?.teams?.short_name ?? initials(name),
+      logoUrl: team?.teams?.logo_url ?? null,
       color: "bg-blue-500",
       points: row.points,
       played: row.played,
@@ -660,21 +662,21 @@ function buildAdminSeasonData(input: {
     messages: [],
     readyMatches,
     pendingLineups: input.fixtures.filter((fixture) => fixture.status === FixtureStatus.LINEUPS_SUBMITTED).length,
-    topScorer: topGoal
+    topScorer: topGoal && (topGoal.appearances ?? 0) > 0
       ? {
-          name: topGoal.player_season_registrations?.players?.full_name ?? "Unnamed player",
-          team: "Season team",
-          goals: topGoal.goals ?? 0,
-          matches: topGoal.appearances ?? 0
-        }
+        name: topGoal.player_season_registrations?.players?.full_name ?? "Unnamed player",
+        team: "Season team",
+        goals: topGoal.goals ?? 0,
+        matches: topGoal.appearances ?? 0
+      }
       : null,
-    topRated: topRated
+    topRated: topRated && (topRated.appearances ?? 0) > 0
       ? {
-          name: topRated.player_season_registrations?.players?.full_name ?? "Unnamed player",
-          team: "Season team",
-          rating: String(topRated.average_rating),
-          matches: topRated.appearances ?? 0
-        }
+        name: topRated.player_season_registrations?.players?.full_name ?? "Unnamed player",
+        team: "Season team",
+        rating: String(topRated.average_rating),
+        matches: topRated.appearances ?? 0
+      }
       : null
   };
 }
@@ -782,11 +784,11 @@ export default function AdminLeagueSeasonDashboard() {
         ? { reason: input.reason, allow_resubmission: Boolean(input.allowResubmission) }
         : input.action === "suspend"
           ? {
-              reason: input.reason,
-              suspension_type: input.suspensionType,
-              suspension_until: input.suspensionUntil || null,
-              suspension_matches_remaining: input.suspensionMatchesRemaining ?? null
-            }
+            reason: input.reason,
+            suspension_type: input.suspensionType,
+            suspension_until: input.suspensionUntil || null,
+            suspension_matches_remaining: input.suspensionMatchesRemaining ?? null
+          }
           : input.action === "unsuspend"
             ? { message: input.reason }
             : { reason: input.reason };
@@ -881,9 +883,9 @@ export default function AdminLeagueSeasonDashboard() {
     () =>
       isGroupKnockout
         ? ([
-            { id: "groups", label: "Groups", icon: Users },
-            { id: "knockout", label: "Knockout Bracket", icon: GitBranch }
-          ] as const)
+          { id: "groups", label: "Groups", icon: Users },
+          { id: "knockout", label: "Knockout Bracket", icon: GitBranch }
+        ] as const)
         : [],
     [isGroupKnockout]
   );
@@ -947,18 +949,18 @@ export default function AdminLeagueSeasonDashboard() {
           </>
         ) : null}
 
-	        <div className="mt-auto px-3 pb-5">
-	          <div className="mb-5 h-px bg-white/15" />
-	          <SidebarButton item={{ id: "settings", label: "Settings", icon: Settings }} active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
-	          <button
-	            type="button"
-	            onClick={logout}
-	            className="mt-2 flex w-full items-center gap-4 rounded-md px-4 py-3 text-left text-base text-slate-100 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/10 hover:text-white active:translate-y-0 active:scale-[0.99]"
-	          >
-	            <LogOut size={22} />
-	            <span>Logout</span>
-	          </button>
-	        </div>
+        <div className="mt-auto px-3 pb-5">
+          <div className="mb-5 h-px bg-white/15" />
+          <SidebarButton item={{ id: "settings", label: "Settings", icon: Settings }} active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
+          <button
+            type="button"
+            onClick={logout}
+            className="mt-2 flex w-full items-center gap-4 rounded-md px-4 py-3 text-left text-base text-slate-100 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/10 hover:text-white active:translate-y-0 active:scale-[0.99]"
+          >
+            <LogOut size={22} />
+            <span>Logout</span>
+          </button>
+        </div>
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1006,10 +1008,10 @@ export default function AdminLeagueSeasonDashboard() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-8">
-	          {activeTab === "dashboard" ? <DashboardView league={league} season={season} data={adminData} onNavigate={setActiveTab} /> : null}
-		          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} onAbilityScoresUpdate={updateAbilityScores} /> : null}
-	          {activeTab === "team-requests" ? <TeamRequestsView teamRequests={adminData.teamRequests} onDecision={decideTeamRequest} /> : null}
-	          {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} /> : null}
+          {activeTab === "dashboard" ? <DashboardView league={league} season={season} data={adminData} onNavigate={setActiveTab} /> : null}
+          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} onAbilityScoresUpdate={updateAbilityScores} /> : null}
+          {activeTab === "team-requests" ? <TeamRequestsView teamRequests={adminData.teamRequests} onDecision={decideTeamRequest} /> : null}
+          {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} /> : null}
           {activeTab === "fixtures" ? <FixturesView fixtures={adminData.fixtures} teams={adminData.teams} onGenerateFixtures={generateFixtures} onScheduleFixture={scheduleFixture} onPostponeFixture={postponeFixture} onCancelFixture={cancelFixture} /> : null}
           {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} /> : null}
           {activeTab === "standings" ? <StandingsView groupMode={isGroupKnockout} teams={adminData.standings} /> : null}
@@ -1054,7 +1056,7 @@ function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto
           {tableTopper ? (
             <>
               <div className="flex items-center gap-6">
-                <TeamBadge name={tableTopper.short || tableTopper.name} size="xl" />
+                <TeamBadge name={tableTopper.short || tableTopper.name} logoUrl={tableTopper.logoUrl} size="xl" />
                 <h3 className="text-2xl font-black">{tableTopper.name}</h3>
               </div>
               <StatStrip
@@ -1097,15 +1099,15 @@ function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto
         <Panel title="Recently Completed Matches" action="View all" onAction={() => onNavigate("fixtures")}>
           {data.completedMatches.length > 0 ? (
             <div className="divide-y divide-slate-200">
-            {data.completedMatches.map((match) => (
-              <div key={`${match.date}-${match.home}`} className="grid grid-cols-[120px_1fr_68px_1fr_70px] items-center gap-3 py-4 text-sm">
-                <span className="text-slate-600">{match.date}</span>
-                <span className="text-right font-medium">{match.home}</span>
-                <span className="rounded-md bg-green-100 px-3 py-1 text-center font-black text-green-800">{match.score}</span>
-                <span className="font-medium">{match.away}</span>
-                <button className="rounded-md border border-slate-200 px-4 py-2 font-semibold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm active:translate-y-0 active:scale-[0.97]">View</button>
-              </div>
-            ))}
+              {data.completedMatches.map((match) => (
+                <div key={`${match.date}-${match.home}`} className="grid grid-cols-[120px_1fr_68px_1fr_70px] items-center gap-3 py-4 text-sm">
+                  <span className="text-slate-600">{match.date}</span>
+                  <span className="text-right font-medium">{match.home}</span>
+                  <span className="rounded-md bg-green-100 px-3 py-1 text-center font-black text-green-800">{match.score}</span>
+                  <span className="font-medium">{match.away}</span>
+                  <button className="rounded-md border border-slate-200 px-4 py-2 font-semibold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm active:translate-y-0 active:scale-[0.97]">View</button>
+                </div>
+              ))}
             </div>
           ) : <EmptyState label="No completed matches yet." />}
           <button className="mt-4 w-full text-sm font-bold text-indigo-700 transition hover:text-indigo-900 hover:drop-shadow-[0_0_8px_rgba(79,70,229,0.25)]" onClick={() => onNavigate("fixtures")}>View all completed matches →</button>
@@ -1149,13 +1151,13 @@ function TeamsView({
         team={selectedTeam}
         player={selectedPlayer}
         activeTab={playerTab}
-	        onTabChange={setPlayerTab}
-	        onDecision={onPlayerDecision}
-	        onAbility={onPlayerAbility}
-	        onPlayerAction={onPlayerAction}
-	        onAbilityScoresUpdate={onAbilityScoresUpdate}
-	        onMessageManager={() => onSendTeamMessage(selectedTeam.id)}
-	        onBack={() => {
+        onTabChange={setPlayerTab}
+        onDecision={onPlayerDecision}
+        onAbility={onPlayerAbility}
+        onPlayerAction={onPlayerAction}
+        onAbilityScoresUpdate={onAbilityScoresUpdate}
+        onMessageManager={() => onSendTeamMessage(selectedTeam.id)}
+        onBack={() => {
           setSelectedPlayerId(null);
           setPlayerTab("personal");
         }}
@@ -1168,14 +1170,14 @@ function TeamsView({
       <TeamDetailView
         team={selectedTeam}
         season={season}
-	        onBack={() => setSelectedTeamId(null)}
-	        onKickOutTeam={() => onKickOutTeam(selectedTeam.id)}
-		        onSendMessage={() => onSendTeamMessage(selectedTeam.id)}
-		        onPlayerDecision={onPlayerDecision}
-		        onPlayerAbility={onPlayerAbility}
-		        onPlayerAction={onPlayerAction}
-		        onAbilityScoresUpdate={onAbilityScoresUpdate}
-		        onOpenPlayer={(playerId) => {
+        onBack={() => setSelectedTeamId(null)}
+        onKickOutTeam={() => onKickOutTeam(selectedTeam.id)}
+        onSendMessage={() => onSendTeamMessage(selectedTeam.id)}
+        onPlayerDecision={onPlayerDecision}
+        onPlayerAbility={onPlayerAbility}
+        onPlayerAction={onPlayerAction}
+        onAbilityScoresUpdate={onAbilityScoresUpdate}
+        onOpenPlayer={(playerId) => {
           setSelectedPlayerId(playerId);
           setPlayerTab("personal");
         }}
@@ -1328,7 +1330,7 @@ function TeamDetailView({
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
         <Panel title="Removed / Suspended Players">
-            <PlayerMiniTable players={team.suspendedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} />
+          <PlayerMiniTable players={team.suspendedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} />
         </Panel>
 
         <Panel title="Team Fixtures">
@@ -1405,7 +1407,7 @@ function PlayerDetailView({
             <div>
               <h1 className="text-3xl font-black">{player.fullName}</h1>
               <p className="text-slate-600">
-	                {team.name} · {season.name} · #{player.jerseyNumber} · {player.footballPosition}
+                {team.name} · {season.name} · #{player.jerseyNumber} · {player.footballPosition}
               </p>
             </div>
           </div>
@@ -1487,7 +1489,7 @@ function PlayerPersonalData({
           <DetailRow label="Team Name" value={team.name} />
           <DetailRow label="Season Name" value={season.name} />
           <DetailRow label="Jersey Number" value={String(player.jerseyNumber)} />
-	          <DetailRow label="Position" value={`${player.footballPosition} (${player.position})`} />
+          <DetailRow label="Position" value={`${player.footballPosition} (${player.position})`} />
           <DetailRow label="Preferred Foot" value={player.preferredFoot} />
           <DetailRow label="Approval Status" value={player.approvalStatus} />
           <DetailRow label="Player Status" value={player.playerStatus} />
@@ -1512,33 +1514,33 @@ function PlayerPersonalData({
           </div>
         </Panel>
 
-	        <Panel title="Admin Actions">
-	          <div className="grid gap-2">
-	            {isPending ? (
-	              <>
-	                <AdminActionButton label="Approve Player" disabled={!canApprove} onClick={() => onDecision(player.id, "APPROVED")} />
-	                <DangerButton label="Reject Player" onClick={() => onPlayerAction("reject", player)} />
-	              </>
-	            ) : null}
-	            {isApproved && !isSuspended && !isRemoved ? (
-	              <>
-	                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
-	                <DangerButton label="Suspend Player" onClick={() => onPlayerAction("suspend", player)} />
-	              </>
-	            ) : null}
-	            {isSuspended ? (
-	              <>
-	                <AdminActionButton label="Unsuspend Player" onClick={() => onPlayerAction("unsuspend", player)} />
-	                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
-	              </>
-	            ) : null}
-	            <AdminActionButton label="Send Message to Manager" onClick={onMessageManager} />
-	            <div className="grid grid-cols-3 gap-2">
-	              <AdminActionButton label="Low" selected={player.abilityRating === "Low"} disabled={!canRate} onClick={() => onAbility(player.id, "LOW")} />
-	              <AdminActionButton label="Moderate" selected={player.abilityRating === "Moderate"} disabled={!canRate} onClick={() => onAbility(player.id, "MODERATE")} />
-	              <AdminActionButton label="High" selected={player.abilityRating === "High"} disabled={!canRate} onClick={() => onAbility(player.id, "HIGH")} />
-	            </div>
-	          </div>
+        <Panel title="Admin Actions">
+          <div className="grid gap-2">
+            {isPending ? (
+              <>
+                <AdminActionButton label="Approve Player" disabled={!canApprove} onClick={() => onDecision(player.id, "APPROVED")} />
+                <DangerButton label="Reject Player" onClick={() => onPlayerAction("reject", player)} />
+              </>
+            ) : null}
+            {isApproved && !isSuspended && !isRemoved ? (
+              <>
+                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
+                <DangerButton label="Suspend Player" onClick={() => onPlayerAction("suspend", player)} />
+              </>
+            ) : null}
+            {isSuspended ? (
+              <>
+                <AdminActionButton label="Unsuspend Player" onClick={() => onPlayerAction("unsuspend", player)} />
+                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
+              </>
+            ) : null}
+            <AdminActionButton label="Send Message to Manager" onClick={onMessageManager} />
+            <div className="grid grid-cols-3 gap-2">
+              <AdminActionButton label="Low" selected={player.abilityRating === "Low"} disabled={!canRate} onClick={() => onAbility(player.id, "LOW")} />
+              <AdminActionButton label="Moderate" selected={player.abilityRating === "Moderate"} disabled={!canRate} onClick={() => onAbility(player.id, "MODERATE")} />
+              <AdminActionButton label="High" selected={player.abilityRating === "High"} disabled={!canRate} onClick={() => onAbility(player.id, "HIGH")} />
+            </div>
+          </div>
           <p className="mt-3 text-xs text-slate-500">
             Ability scores stay hidden from managers and public users. Approval is blocked until Low, Moderate, or High is assigned.
           </p>
@@ -1694,14 +1696,14 @@ function PlayerMiniTable({
                 </button>
               </td>
               <td className="px-4 py-3">{player.code}</td>
-	              <td className="px-4 py-3">{player.footballPosition}</td>
+              <td className="px-4 py-3">{player.footballPosition}</td>
               <td className="px-4 py-3">#{player.jerseyNumber}</td>
               <td className="px-4 py-3"><StatusPill tone={player.approvalStatus === "Approved" ? "green" : "orange"}>{player.approvalStatus}</StatusPill></td>
-	              <td className="px-4 py-3">
-		                <ActionGroup
-		                  actions={playerMiniActions(player, pending, onOpenPlayer, onDecision, onAbility, onPlayerAction)}
-		                />
-	              </td>
+              <td className="px-4 py-3">
+                <ActionGroup
+                  actions={playerMiniActions(player, pending, onOpenPlayer, onDecision, onAbility, onPlayerAction)}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -1781,9 +1783,8 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg px-4 py-2 text-sm font-black transition-all duration-200 ${
-        active ? "bg-indigo-600 text-white shadow" : "text-slate-600 hover:bg-white hover:text-indigo-700"
-      }`}
+      className={`rounded-lg px-4 py-2 text-sm font-black transition-all duration-200 ${active ? "bg-indigo-600 text-white shadow" : "text-slate-600 hover:bg-white hover:text-indigo-700"
+        }`}
     >
       {children}
     </button>
@@ -1796,9 +1797,8 @@ function AdminActionButton({ label, icon, onClick, disabled, selected }: { label
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-black transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none ${
-        selected ? "border-green-300 bg-green-100 text-green-800 ring-2 ring-green-200" : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-      }`}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-black transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none ${selected ? "border-green-300 bg-green-100 text-green-800 ring-2 ring-green-200" : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+        }`}
     >
       {selected ? <CheckCircle2 size={14} /> : null}
       {icon}
@@ -2578,31 +2578,31 @@ function StandingTable({ title, teams: tableTeams }: { title: string; teams: Sta
     <Panel title={title} action="Recalculate Standings">
       <div className="overflow-x-auto">
         {tableTeams.length === 0 ? <EmptyState label="No standings yet." /> : (
-        <table className="w-full text-sm">
-          <thead className="text-xs uppercase text-slate-500">
-            <tr>
-              {["Rank", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"].map((header) => (
-                <th key={header} className="px-3 py-3 text-left">{header}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {tableTeams.map((team, index) => (
-              <tr key={team.name}>
-                <td className="px-3 py-3 font-black">{index + 1}</td>
-                <td className="px-3 py-3"><TeamCompact name={team.name} /></td>
-                <td className="px-3 py-3">{team.played}</td>
-                <td className="px-3 py-3">{team.won}</td>
-                <td className="px-3 py-3">{team.draw}</td>
-                <td className="px-3 py-3">{team.lost}</td>
-                <td className="px-3 py-3">{team.gf}</td>
-                <td className="px-3 py-3">{team.ga}</td>
-                <td className="px-3 py-3">{team.gf - team.ga}</td>
-                <td className="px-3 py-3 font-black text-indigo-700">{team.points}</td>
+          <table className="w-full text-sm">
+            <thead className="text-xs uppercase text-slate-500">
+              <tr>
+                {["Rank", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"].map((header) => (
+                  <th key={header} className="px-3 py-3 text-left">{header}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {tableTeams.map((team, index) => (
+                <tr key={team.name}>
+                  <td className="px-3 py-3 font-black">{index + 1}</td>
+                  <td className="px-3 py-3"><TeamCompact name={team.name} /></td>
+                  <td className="px-3 py-3">{team.played}</td>
+                  <td className="px-3 py-3">{team.won}</td>
+                  <td className="px-3 py-3">{team.draw}</td>
+                  <td className="px-3 py-3">{team.lost}</td>
+                  <td className="px-3 py-3">{team.gf}</td>
+                  <td className="px-3 py-3">{team.ga}</td>
+                  <td className="px-3 py-3">{team.gf - team.ga}</td>
+                  <td className="px-3 py-3 font-black text-indigo-700">{team.points}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </Panel>
@@ -2615,9 +2615,8 @@ function SidebarButton({ item, active, onClick }: { item: { id: string; label: s
     <button
       type="button"
       onClick={onClick}
-      className={`group flex w-full items-center gap-4 rounded-md px-4 py-3 text-left text-base transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] ${
-        active ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/20" : "text-slate-100 hover:bg-white/10 hover:shadow-[0_10px_24px_rgba(0,0,0,0.16)]"
-      }`}
+      className={`group flex w-full items-center gap-4 rounded-md px-4 py-3 text-left text-base transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] ${active ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/20" : "text-slate-100 hover:bg-white/10 hover:shadow-[0_10px_24px_rgba(0,0,0,0.16)]"
+        }`}
     >
       <Icon className="transition-transform duration-200 group-hover:scale-110" size={22} />
       <span>{item.label}</span>
@@ -2706,13 +2705,12 @@ function ActionGroup({ actions }: { actions: ActionItem[] }) {
             onClick={item.onClick}
             disabled={item.disabled}
             title={item.disabled ? "Approve the team before rating or approving players." : undefined}
-            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-bold transition-all duration-200 active:translate-y-0 active:scale-[0.96] ${
-              item.selected
+            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-bold transition-all duration-200 active:translate-y-0 active:scale-[0.96] ${item.selected
                 ? "border-green-300 bg-green-100 text-green-800 ring-2 ring-green-200"
                 : item.danger
-                ? "border-red-200 text-red-700 hover:-translate-y-0.5 hover:bg-red-50 hover:shadow-sm"
-                : "border-slate-200 text-indigo-700 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm"
-            } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:shadow-none`}
+                  ? "border-red-200 text-red-700 hover:-translate-y-0.5 hover:bg-red-50 hover:shadow-sm"
+                  : "border-slate-200 text-indigo-700 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm"
+              } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:shadow-none`}
           >
             {item.selected ? <CheckCircle2 size={13} /> : null}
             {item.label}
