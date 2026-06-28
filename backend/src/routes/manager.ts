@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import {
   FixtureStatus,
   FootballPosition,
@@ -33,6 +34,15 @@ import {
 
 export const managerRouter = Router();
 managerRouter.use(requireAuth, requireRole(UserRole.MANAGER, UserRole.ADMIN));
+
+const updatePlayerMinifacesSchema = z.object({
+  updates: z.array(
+    z.object({
+      player_registration_id: z.string().uuid(),
+      avatar_url: z.string().trim().max(2000).nullable()
+    })
+  ).min(1).max(100)
+});
 
 async function assertManagerOwnsTeam(userId: string, teamRegistrationId: string) {
   const { data, error } = await supabaseAdmin
@@ -113,7 +123,7 @@ async function loadTeamPlayers(teamRegistrationId: string) {
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url)"
+      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(rating_tier,overall_rating)"
     )
     .eq("team_registration_id", teamRegistrationId)
     .order("shirt_number", { ascending: true, nullsFirst: false });
@@ -137,7 +147,7 @@ async function assertManagerOwnsPlayerRegistration(userId: string, playerRegistr
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,status,shirt_number,football_position,position_category,preferred_foot,player_status,identity_mode,is_generated,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),team_registrations!inner(id,manager_id,season_id,team_id,teams(*),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))"
+      "id,player_id,season_id,team_registration_id,status,shirt_number,football_position,position_category,preferred_foot,player_status,identity_mode,is_generated,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(rating_tier,overall_rating),team_registrations!inner(id,manager_id,season_id,team_id,teams(*),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))"
     )
     .eq("id", playerRegistrationId)
     .single();
@@ -162,7 +172,11 @@ managerRouter.post(
         logo_url: input.logo_url ?? null,
         primary_color: input.primary_color ?? null,
         secondary_color: input.secondary_color ?? null,
-        accent_color: input.accent_color ?? null
+        accent_color: input.accent_color ?? null,
+        home_jersey_url: input.home_jersey_url ?? null,
+        away_jersey_url: input.away_jersey_url ?? null,
+        gk_home_jersey_url: input.gk_home_jersey_url ?? null,
+        gk_away_jersey_url: input.gk_away_jersey_url ?? null
       })
       .select("*")
       .single();
@@ -179,7 +193,7 @@ managerRouter.post(
       .select("*,teams(*)")
       .single();
     if (error) throw error;
-    res.status(201).json({ team_registration: data });
+    res.status(201).json({ team_registration: data, team: data.teams });
   })
 );
 
@@ -196,7 +210,11 @@ managerRouter.post(
         logo_url: input.logo_url ?? null,
         primary_color: input.primary_color ?? null,
         secondary_color: input.secondary_color ?? null,
-        accent_color: input.accent_color ?? null
+        accent_color: input.accent_color ?? null,
+        home_jersey_url: input.home_jersey_url ?? null,
+        away_jersey_url: input.away_jersey_url ?? null,
+        gk_home_jersey_url: input.gk_home_jersey_url ?? null,
+        gk_away_jersey_url: input.gk_away_jersey_url ?? null
       })
       .select("*")
       .single();
@@ -213,7 +231,7 @@ managerRouter.post(
       .select("*,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,max_players_per_team,league_id,leagues(id,name,short_name,logo_url))")
       .single();
     if (error) throw error;
-    res.status(201).json({ team: data });
+    res.status(201).json({ team_registration: data, team: data.teams });
   })
 );
 
@@ -345,21 +363,26 @@ managerRouter.patch(
   "/teams/:teamId",
   asyncHandler(async (req, res) => {
     const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, routeParam(req.params.teamId, "teamId"));
-    if (![RegistrationStatus.DRAFT, RegistrationStatus.PENDING].includes(teamRegistration.status)) {
-      throw new AppError(400, "Team settings can only be edited before admin approval");
-    }
     const input = teamRegistrationSchema.omit({ season_id: true }).partial().parse(req.body);
+    const canEditCoreTeamData = [RegistrationStatus.DRAFT, RegistrationStatus.PENDING].includes(teamRegistration.status);
+    const coreFields = ["name", "short_name", "logo_url", "primary_color", "secondary_color", "accent_color"] as const;
+    const hasCoreTeamUpdate = coreFields.some((field) => input[field] !== undefined);
+    if (!canEditCoreTeamData && hasCoreTeamUpdate) {
+      throw new AppError(400, "Team identity and colors can only be edited before admin approval");
+    }
+    const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (canEditCoreTeamData) {
+      for (const field of coreFields) {
+        if (input[field] !== undefined) updatePayload[field] = input[field];
+      }
+    }
+    const jerseyFields = ["home_jersey_url", "away_jersey_url", "gk_home_jersey_url", "gk_away_jersey_url"] as const;
+    for (const field of jerseyFields) {
+      if (input[field] !== undefined) updatePayload[field] = input[field];
+    }
     const { data, error } = await supabaseAdmin
       .from("teams")
-      .update({
-        name: input.name,
-        short_name: input.short_name,
-        logo_url: input.logo_url,
-        primary_color: input.primary_color,
-        secondary_color: input.secondary_color,
-        accent_color: input.accent_color,
-        updated_at: new Date().toISOString()
-      })
+      .update(updatePayload)
       .eq("id", teamRegistration.team_id)
       .select("*")
       .single();
@@ -648,6 +671,36 @@ managerRouter.post(
     }
 
     res.status(201).json({ player_registration: updated });
+  })
+);
+
+managerRouter.patch(
+  "/players/minifaces",
+  asyncHandler(async (req, res) => {
+    const input = updatePlayerMinifacesSchema.parse(req.body);
+    const updates = Array.from(
+      new Map(input.updates.map((update) => [update.player_registration_id, update])).values()
+    );
+    const registrations = await Promise.all(
+      updates.map((update) => assertManagerOwnsPlayerRegistration(req.auth!.userId, update.player_registration_id))
+    );
+    const registrationsById = new Map(registrations.map((registration) => [registration.id, registration]));
+    const updatedAt = new Date().toISOString();
+
+    await Promise.all(
+      updates.map(async (update) => {
+        const registration = registrationsById.get(update.player_registration_id);
+        if (!registration) throw new AppError(404, "Player registration not found");
+        const avatarUrl = update.avatar_url?.trim() ? update.avatar_url.trim() : null;
+        const { error } = await supabaseAdmin
+          .from("players")
+          .update({ avatar_url: avatarUrl, updated_at: updatedAt })
+          .eq("id", registration.player_id);
+        if (error) throw error;
+      })
+    );
+
+    res.json({ updated_count: updates.length });
   })
 );
 

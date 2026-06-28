@@ -85,6 +85,7 @@ alter table public.fixtures
   add column if not exists penalties_away integer check (penalties_away is null or penalties_away >= 0);
 
 alter table public.team_match_stats
+  add column if not exists rating numeric(3,1) check (rating is null or rating between 4.8 and 9.8),
   add column if not exists offsides integer not null default 0 check (offsides >= 0);
 
 alter table public.team_match_stats
@@ -104,6 +105,7 @@ alter table public.player_match_stats
   add column if not exists position_played public.football_position,
   add column if not exists shots_on_target integer not null default 0,
   add column if not exists chances_created integer not null default 0,
+  add column if not exists big_chances_created integer not null default 0,
   add column if not exists big_chances_missed integer not null default 0,
   add column if not exists dispossessed integer not null default 0,
   add column if not exists interceptions integer not null default 0,
@@ -123,6 +125,7 @@ alter table public.player_match_stats
   check (
     shots_on_target between 0 and shots
     and chances_created >= 0
+    and big_chances_created >= 0
     and big_chances_missed >= 0
     and accurate_passes between 0 and passes
     and successful_dribbles between 0 and dribbles_attempted

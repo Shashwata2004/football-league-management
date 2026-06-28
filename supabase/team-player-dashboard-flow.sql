@@ -54,6 +54,7 @@ alter table public.player_season_stats
   add column if not exists shots integer not null default 0,
   add column if not exists shots_on_target integer not null default 0,
   add column if not exists chances_created integer not null default 0,
+  add column if not exists big_chances_created integer not null default 0,
   add column if not exists total_passes integer not null default 0,
   add column if not exists accurate_passes integer not null default 0,
   add column if not exists dribbles_attempted integer not null default 0,
@@ -77,6 +78,7 @@ alter table public.player_season_stats
     and shots_on_target >= 0
     and shots_on_target <= shots
     and chances_created >= 0
+    and big_chances_created >= 0
     and total_passes >= 0
     and accurate_passes >= 0
     and accurate_passes <= total_passes

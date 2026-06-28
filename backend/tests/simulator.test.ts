@@ -20,8 +20,18 @@ function players(side: VenueSide): SimPlayer[] {
 
 describe("simulator", () => {
   it("obeys core consistency caps", () => {
-    const result = simulateMatch(players(VenueSide.HOME), players(VenueSide.AWAY), "8c74634e-9cc7-4a63-a8ec-5e3db8a92f11");
+    const homePlayers = players(VenueSide.HOME);
+    const awayPlayers = players(VenueSide.AWAY);
+    const result = simulateMatch(homePlayers, awayPlayers, "8c74634e-9cc7-4a63-a8ec-5e3db8a92f11");
     expect(result.home_stats.possession + result.away_stats.possession).toBe(100);
+    const homeIds = new Set(homePlayers.map((player) => player.player_registration_id));
+    const awayIds = new Set(awayPlayers.map((player) => player.player_registration_id));
+    const bigChancesCreatedBy = (ids: Set<string>) =>
+      result.player_stats
+        .filter((player) => ids.has(player.player_registration_id))
+        .reduce((sum, player) => sum + (player.big_chances_created ?? 0), 0);
+    expect(result.home_stats.big_chances).toBe(bigChancesCreatedBy(homeIds));
+    expect(result.away_stats.big_chances).toBe(bigChancesCreatedBy(awayIds));
     for (const [stats, goals] of [
       [result.home_stats, result.home_score],
       [result.away_stats, result.away_score]

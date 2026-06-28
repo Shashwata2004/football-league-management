@@ -25,6 +25,7 @@ export interface SimPlayer {
 }
 
 export interface SimTeamStats {
+  rating?: number;
   possession: number;
   shots: number;
   shots_on_target: number;
@@ -48,6 +49,7 @@ export interface SimPlayerStats {
   shots: number;
   shots_on_target?: number;
   chances_created?: number;
+  big_chances_created?: number;
   big_chances_missed?: number;
   passes: number;
   accurate_passes: number;
@@ -103,7 +105,7 @@ export interface SimulationResult {
 type Strength = { attack: number; midfield: number; defense: number; keeper: number; overall: number };
 
 const tierRanges: Record<PlayerAbilityRating, [number, number]> = {
-  LOW: [35, 54],
+  LOW: [49, 54],
   MODERATE: [55, 72],
   HIGH: [73, 88]
 };
@@ -163,6 +165,40 @@ function dribbleCap(position: FootballPosition) {
 
 function avg(players: SimPlayer[], selector: (player: SimPlayer) => number) {
   return players.reduce((sum, player) => sum + selector(player), 0) / Math.max(players.length, 1);
+}
+
+function avgNumbers(values: number[]) {
+  const valid = values.filter((value) => Number.isFinite(value));
+  if (!valid.length) return 0;
+  return Number((valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(1));
+}
+
+function distributeCount(
+  total: number,
+  players: SimPlayer[],
+  weightForPlayer: (player: SimPlayer) => number,
+  random: () => number
+) {
+  const result = new Map<string, number>();
+  if (total <= 0 || players.length === 0) return result;
+  const weighted = players.map((player) => ({
+    player,
+    weight: Math.max(1, weightForPlayer(player))
+  }));
+  for (let i = 0; i < total; i += 1) {
+    const weightTotal = weighted.reduce((sum, item) => sum + item.weight, 0);
+    let cursor = random() * weightTotal;
+    let selected = weighted[weighted.length - 1]!.player;
+    for (const item of weighted) {
+      cursor -= item.weight;
+      if (cursor <= 0) {
+        selected = item.player;
+        break;
+      }
+    }
+    result.set(selected.player_registration_id, (result.get(selected.player_registration_id) ?? 0) + 1);
+  }
+  return result;
 }
 
 function gkStrength(player: SimPlayer) {
@@ -319,6 +355,38 @@ function allocateStats(
   const passWeight = active.reduce((sum, player) => sum + (detailedPosition(player) === FootballPosition.GK ? (player.distribution ?? player.passing) * 0.5 : player.passing), 0) || 1;
   const yellowSet = new Set(active.slice(0, teamStats.yellow_cards).map((player) => player.player_registration_id));
   const redSet = new Set(teamStats.red_cards ? [active[active.length - 1]?.player_registration_id] : []);
+  const outfieldActive = active.filter((player) => detailedPosition(player) !== FootballPosition.GK);
+  const chanceCreatorWeight = (player: SimPlayer) => {
+    const position = detailedPosition(player);
+    const roleWeight =
+      position === FootballPosition.AM ? 1.65 :
+      position === FootballPosition.CM ? 1.35 :
+      position === FootballPosition.LW || position === FootballPosition.RW ? 1.45 :
+      position === FootballPosition.ST ? 1.15 :
+      position === FootballPosition.LB || position === FootballPosition.RB ? 1 :
+      position === FootballPosition.DM ? 0.9 :
+      0.45;
+    return (player.passing * 0.55 + player.dribbling * 0.25 + player.pace * 0.2) * roleWeight;
+  };
+  const bigChanceCreatedByPlayer = distributeCount(teamStats.big_chances, outfieldActive, chanceCreatorWeight, random);
+  const bigChanceMissedByPlayer = distributeCount(
+    teamStats.big_chances_missed,
+    outfieldActive.filter((player) => {
+      const position = detailedPosition(player);
+      return position === FootballPosition.ST || position === FootballPosition.LW || position === FootballPosition.RW || position === FootballPosition.AM;
+    }).length
+      ? outfieldActive.filter((player) => {
+          const position = detailedPosition(player);
+          return position === FootballPosition.ST || position === FootballPosition.LW || position === FootballPosition.RW || position === FootballPosition.AM;
+        })
+      : outfieldActive,
+    (player) => {
+      const position = detailedPosition(player);
+      const roleWeight = position === FootballPosition.ST ? 1.7 : position === FootballPosition.LW || position === FootballPosition.RW ? 1.35 : position === FootballPosition.AM ? 1.1 : 0.45;
+      return (player.shooting * 0.55 + player.pace * 0.2 + player.dribbling * 0.25) * roleWeight;
+    },
+    random
+  );
 
   return {
     stats: active.map((player) => {
@@ -347,6 +415,7 @@ function allocateStats(
           shots: 0,
           shots_on_target: 0,
           chances_created: 0,
+          big_chances_created: 0,
           big_chances_missed: 0,
           passes,
           accurate_passes: accuratePasses,
@@ -376,10 +445,15 @@ function allocateStats(
       const dribblesAttempted = clamp((player.dribbling / 18 + random() * 2.5) * (minutes / 90), 0, attemptCap);
       const successfulDribbles = clamp(dribblesAttempted * (0.35 + player.dribbling / 260), 0, successCap);
       const shotCap = position === FootballPosition.ST ? 7 : position === FootballPosition.LW || position === FootballPosition.RW ? 5 : position === FootballPosition.AM ? 4 : 2;
-      const shots = clamp(playerGoals + player.shooting / 35 + random() * 2, playerGoals, shotCap);
+      const bigChancesCreated = bigChanceCreatedByPlayer.get(player.player_registration_id) ?? 0;
+      const bigChancesMissed = bigChanceMissedByPlayer.get(player.player_registration_id) ?? 0;
+      const shots = clamp(playerGoals + bigChancesMissed + player.shooting / 35 + random() * 2, playerGoals + bigChancesMissed, shotCap);
       const shotsOnTarget = clamp(playerGoals + shots * (0.25 + player.shooting / 330), playerGoals, shots);
-      const chancesCreated = clamp(playerAssists + (position === FootballPosition.AM || position === FootballPosition.CM ? random() * 4 : random() * 2), playerAssists, 6);
-      const bigChancesMissed = clamp(position === FootballPosition.ST || position === FootballPosition.LW || position === FootballPosition.RW ? random() * 2 : random(), 0, 3);
+      const chancesCreated = clamp(
+        Math.max(bigChancesCreated, playerAssists + (position === FootballPosition.AM || position === FootballPosition.CM ? random() * 4 : random() * 2)),
+        Math.max(playerAssists, bigChancesCreated),
+        8
+      );
       const tackles = clamp((position === FootballPosition.CB || position === FootballPosition.DM ? 2 : 0) + player.defending / 32 + random() * 2, 0, 8);
       const interceptions = clamp((position === FootballPosition.CB || position === FootballPosition.DM ? 2 : 0) + player.defending / 40 + random() * 2, 0, 7);
       const clearances = clamp(position === FootballPosition.CB ? 3 + random() * 5 : position === FootballPosition.LB || position === FootballPosition.RB ? random() * 4 : random() * 2, 0, 10);
@@ -412,6 +486,7 @@ function allocateStats(
         shots,
         shots_on_target: shotsOnTarget,
         chances_created: chancesCreated,
+        big_chances_created: bigChancesCreated,
         big_chances_missed: bigChancesMissed,
         passes,
         accurate_passes: accuratePasses,
@@ -534,7 +609,7 @@ export function generateAbilityScores(tier: PlayerAbilityRating, position: Footb
     const veryHigh = tier === "HIGH" && random() > 0.94;
     return clamp(low + random() * (high - low) + (veryHigh ? random() * 4 : 0), low, high);
   };
-  const weak = () => roll(Math.max(30, min - 10), Math.min(60, max - 8));
+  const weak = () => tier === "LOW" ? roll(min, max) : roll(Math.max(30, min - 10), Math.min(60, max - 8));
   const secondary = () => roll(min, Math.min(75, tierMax));
   const strong = () => roll(min, tierMax);
   const boost = (value: number, amount: number, cap = tierMax) => clamp(value + amount, min, cap);
@@ -623,11 +698,24 @@ export function simulateMatch(homePlayers: SimPlayer[], awayPlayers: SimPlayer[]
   const awaySubs = generateSubstitutions(awayPlayers, seed, VenueSide.AWAY);
   const homeAllocated = allocateStats(homePlayers, homeStats, homeScore, awayScore, awayStats.shots_on_target, seed, VenueSide.HOME, homeScore > awayScore, homeScore < awayScore, homeSubs);
   const awayAllocated = allocateStats(awayPlayers, awayStats, awayScore, homeScore, homeStats.shots_on_target, seed, VenueSide.AWAY, awayScore > homeScore, awayScore < homeScore, awaySubs);
+  const sumPlayerStats = (stats: SimPlayerStats[], field: keyof SimPlayerStats) => stats.reduce((total, stat) => total + Number(stat[field] ?? 0), 0);
+  const finalizedHomeStats = {
+    ...homeStats,
+    rating: avgNumbers(homeAllocated.stats.map((stat) => stat.rating)),
+    big_chances: sumPlayerStats(homeAllocated.stats, "big_chances_created"),
+    big_chances_missed: sumPlayerStats(homeAllocated.stats, "big_chances_missed")
+  };
+  const finalizedAwayStats = {
+    ...awayStats,
+    rating: avgNumbers(awayAllocated.stats.map((stat) => stat.rating)),
+    big_chances: sumPlayerStats(awayAllocated.stats, "big_chances_created"),
+    big_chances_missed: sumPlayerStats(awayAllocated.stats, "big_chances_missed")
+  };
   const result: SimulationResult = {
     home_score: homeScore,
     away_score: awayScore,
-    home_stats: homeStats,
-    away_stats: awayStats,
+    home_stats: finalizedHomeStats,
+    away_stats: finalizedAwayStats,
     player_stats: [...homeAllocated.stats, ...awayAllocated.stats],
     events: [...homeAllocated.events, ...awayAllocated.events].sort((a, b) => a.minute - b.minute),
     substitutions: [...homeSubs, ...awaySubs].sort((a, b) => a.minute - b.minute),

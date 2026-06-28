@@ -130,10 +130,14 @@ export const teamRegistrationSchema = z.object({
   season_id: uuidSchema,
   name: z.string().trim().min(2).max(120),
   short_name: z.string().trim().min(2).max(12),
-  logo_url: z.string().trim().max(500).optional(),
+  logo_url: z.string().trim().max(2000).nullable().optional(),
   primary_color: z.string().trim().max(30).optional(),
   secondary_color: z.string().trim().max(30).optional(),
-  accent_color: z.string().trim().max(30).optional()
+  accent_color: z.string().trim().max(30).optional(),
+  home_jersey_url: z.string().trim().max(2000).nullable().optional(),
+  away_jersey_url: z.string().trim().max(2000).nullable().optional(),
+  gk_home_jersey_url: z.string().trim().max(2000).nullable().optional(),
+  gk_away_jersey_url: z.string().trim().max(2000).nullable().optional()
 });
 
 export const registrationDecisionSchema = z.object({

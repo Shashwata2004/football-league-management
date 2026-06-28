@@ -44,6 +44,7 @@ type TabId =
   | "matches-ready"
   | "standings"
   | "reports"
+  | "team-stats"
   | "messages"
   | "groups"
   | "knockout"
@@ -106,6 +107,7 @@ interface AdminPlayer {
   code: string;
   fullName: string;
   avatar: string;
+  avatarUrl?: string | null;
   dateOfBirth: string;
   age: number;
   idType: string;
@@ -122,6 +124,7 @@ interface AdminPlayer {
   adminApprovalDate: string;
   adminMessage: string;
   abilityRating: "Not rated" | "Low" | "Moderate" | "High";
+  overallRating: number | null;
   abilityDetails: { label: string; value: string }[];
   leagueStats: {
     matchesPlayed: number;
@@ -158,6 +161,10 @@ interface AdminTeam {
   primaryColor?: string | null;
   secondaryColor?: string | null;
   accentColor?: string | null;
+  homeJerseyUrl?: string | null;
+  awayJerseyUrl?: string | null;
+  gkHomeJerseyUrl?: string | null;
+  gkAwayJerseyUrl?: string | null;
   name: string;
   managerName: string;
   managerEmail: string;
@@ -222,8 +229,42 @@ interface AdminSeasonData {
   readyMatches: ReadyMatchRow[];
   pendingLineups: number;
   topScorer: { name: string; team: string; goals: number; matches: number } | null;
+  topAssist: { name: string; team: string; assists: number; matches: number } | null;
   topRated: { name: string; team: string; rating: string; matches: number } | null;
+  statsReport: AdminStatsReport;
 }
+
+interface StatEntry {
+  id: string;
+  name: string;
+  subLabel: string;
+  logoUrl?: string | null;
+  teamLogoUrl?: string | null;
+  initials: string;
+  value: string;
+  numericValue: number;
+}
+
+interface StatCardData {
+  id: string;
+  title: string;
+  entries: StatEntry[];
+}
+
+interface StatSectionData {
+  title: string;
+  cards: StatCardData[];
+}
+
+interface AdminStatsReport {
+  player_sections: StatSectionData[];
+  team_sections: StatSectionData[];
+}
+
+const emptyStatsReport: AdminStatsReport = {
+  player_sections: [],
+  team_sections: []
+};
 
 const emptyAdminSeasonData: AdminSeasonData = {
   teams: [],
@@ -236,7 +277,9 @@ const emptyAdminSeasonData: AdminSeasonData = {
   readyMatches: [],
   pendingLineups: 0,
   topScorer: null,
-  topRated: null
+  topAssist: null,
+  topRated: null,
+  statsReport: emptyStatsReport
 };
 
 type TeamRegistrationApiRow = {
@@ -258,6 +301,10 @@ type TeamRegistrationApiRow = {
     primary_color?: string | null;
     secondary_color?: string | null;
     accent_color?: string | null;
+    home_jersey_url?: string | null;
+    away_jersey_url?: string | null;
+    gk_home_jersey_url?: string | null;
+    gk_away_jersey_url?: string | null;
   } | null;
   seasons?: { name?: string | null } | null;
   manager?: { full_name?: string | null; email?: string | null } | { full_name?: string | null; email?: string | null }[] | null;
@@ -287,6 +334,7 @@ type PlayerRegistrationApiRow = {
     nationality?: string | null;
     id_type?: string | null;
     id_number_last4?: string | null;
+    avatar_url?: string | null;
   } | null;
   team_registrations?: {
     status?: string | null;
@@ -346,6 +394,97 @@ type FixtureApiRow = {
   away_score?: number | null;
 };
 
+type MatchDetailLineupPlayer = {
+  id: string;
+  player_registration_id: string;
+  is_starter?: boolean | null;
+  football_position?: string | null;
+  shirt_number?: number | null;
+  player_season_registrations?: {
+    id: string;
+    shirt_number?: number | null;
+    football_position?: string | null;
+    position?: string | null;
+    players?: { full_name?: string | null; avatar_url?: string | null } | null;
+  } | null;
+};
+
+type MatchDetailLineup = {
+  id: string;
+  team_registration_id: string;
+  side: string;
+  formation?: string | null;
+  status?: string | null;
+  lineup_players?: MatchDetailLineupPlayer[] | null;
+};
+
+type MatchDetailTeamStat = {
+  id: string;
+  fixture_id: string;
+  team_registration_id: string;
+  rating?: number | string | null;
+  possession: number;
+  shots: number;
+  shots_on_target: number;
+  big_chances: number;
+  big_chances_missed: number;
+  passes: number;
+  accurate_passes: number;
+  offsides?: number | null;
+  fouls: number;
+  yellow_cards: number;
+  red_cards: number;
+  corners: number;
+};
+
+type MatchDetailPlayerStat = {
+  id: string;
+  player_registration_id: string;
+  minutes: number;
+  position_played?: string | null;
+  goals: number;
+  assists: number;
+  shots: number;
+  shots_on_target?: number | null;
+  chances_created?: number | null;
+  big_chances_created?: number | null;
+  big_chances_missed?: number | null;
+  passes: number;
+  accurate_passes: number;
+  tackles: number;
+  interceptions?: number | null;
+  clearances?: number | null;
+  blocks?: number | null;
+  fouls_committed?: number | null;
+  saves: number;
+  goals_conceded?: number | null;
+  accurate_long_balls?: number | null;
+  diving_saves?: number | null;
+  saves_inside_box?: number | null;
+  dribbles_attempted: number;
+  successful_dribbles: number;
+  dispossessed?: number | null;
+  yellow_cards: number;
+  red_cards: number;
+  rating: number | string;
+  player_season_registrations?: {
+    id: string;
+    shirt_number?: number | null;
+    football_position?: string | null;
+    position?: string | null;
+    players?: { full_name?: string | null; avatar_url?: string | null } | null;
+  } | null;
+};
+
+type MatchDetailResponse = {
+  fixture: FixtureApiRow;
+  lineups: MatchDetailLineup[];
+  team_stats: MatchDetailTeamStat[];
+  player_stats: MatchDetailPlayerStat[];
+  events: Record<string, unknown>[];
+  substitutions: Record<string, unknown>[];
+};
+
 type StandingApiRow = {
   team_registration_id: string;
   played: number;
@@ -359,14 +498,31 @@ type StandingApiRow = {
 
 type PlayerSeasonStatApiRow = {
   player_registration_id: string;
+  appearances?: number | null;
+  starts?: number | null;
+  minutes_played?: number | null;
   goals?: number | null;
   assists?: number | null;
-  appearances?: number | null;
+  shots?: number | null;
+  shots_on_target?: number | null;
+  chances_created?: number | null;
+  big_chances_created?: number | null;
+  total_passes?: number | null;
+  accurate_passes?: number | null;
+  dribbles_attempted?: number | null;
+  successful_dribbles?: number | null;
+  dispossessed?: number | null;
+  tackles?: number | null;
+  interceptions?: number | null;
   yellow_cards?: number | null;
   red_cards?: number | null;
   average_rating?: number | string | null;
+  best_match_rating?: number | string | null;
+  lowest_match_rating?: number | string | null;
+  player_of_match_count?: number | null;
   player_season_registrations?: {
     position?: string | null;
+    football_position?: string | null;
     shirt_number?: number | null;
     players?: { full_name?: string | null } | null;
   } | null;
@@ -438,37 +594,41 @@ function abilityDetails(row: PlayerRegistrationApiRow): AdminPlayer["abilityDeta
     .map(([label, value]) => ({ label, value: String(value) }));
 }
 
+function abilityOverall(row: PlayerRegistrationApiRow) {
+  return relatedOne(row.player_abilities)?.overall_rating ?? null;
+}
+
 function zeroLeagueStats(stat?: PlayerSeasonStatApiRow): AdminPlayer["leagueStats"] {
-  const shots = 0;
-  const shotsOnTarget = 0;
-  const totalPasses = 0;
-  const accuratePasses = 0;
-  const dribblesAttempted = 0;
-  const successfulDribbles = 0;
+  const shots = stat?.shots ?? 0;
+  const shotsOnTarget = stat?.shots_on_target ?? 0;
+  const totalPasses = stat?.total_passes ?? 0;
+  const accuratePasses = stat?.accurate_passes ?? 0;
+  const dribblesAttempted = stat?.dribbles_attempted ?? 0;
+  const successfulDribbles = stat?.successful_dribbles ?? 0;
   return {
     matchesPlayed: stat?.appearances ?? 0,
-    starts: 0,
-    minutesPlayed: 0,
+    starts: stat?.starts ?? 0,
+    minutesPlayed: stat?.minutes_played ?? 0,
     goals: stat?.goals ?? 0,
     assists: stat?.assists ?? 0,
     shots,
     shotsOnTarget,
     shotAccuracy: shots ? `${Math.round((shotsOnTarget / shots) * 100)}%` : "0%",
-    chancesCreated: 0,
+    chancesCreated: stat?.chances_created ?? 0,
     totalPasses,
     accuratePasses,
     passAccuracy: totalPasses ? `${Math.round((accuratePasses / totalPasses) * 100)}%` : "0%",
     dribblesAttempted,
     successfulDribbles,
-    dispossessed: 0,
-    tackles: 0,
-    interceptions: 0,
+    dispossessed: stat?.dispossessed ?? 0,
+    tackles: stat?.tackles ?? 0,
+    interceptions: stat?.interceptions ?? 0,
     yellowCards: stat?.yellow_cards ?? 0,
     redCards: stat?.red_cards ?? 0,
     averageRating: stat?.average_rating ? String(stat.average_rating) : "N/A",
-    bestMatchRating: "N/A",
-    lowestMatchRating: "N/A",
-    playerOfTheMatch: 0
+    bestMatchRating: stat?.best_match_rating ? String(stat.best_match_rating) : "N/A",
+    lowestMatchRating: stat?.lowest_match_rating ? String(stat.lowest_match_rating) : "N/A",
+    playerOfTheMatch: stat?.player_of_match_count ?? 0
   };
 }
 
@@ -479,6 +639,7 @@ function buildAdminSeasonData(input: {
   fixtures: FixtureApiRow[];
   standings: StandingApiRow[];
   playerStats: PlayerSeasonStatApiRow[];
+  statsReport: AdminStatsReport;
 }): AdminSeasonData {
   const seasonTeamRegistrations = input.teamRegistrations.filter((row) => row.season_id === input.season.id);
   const teamByRegistration = new Map(seasonTeamRegistrations.map((row) => [row.id, row]));
@@ -496,6 +657,7 @@ function buildAdminSeasonData(input: {
       code: `PLY-${row.id.slice(0, 8).toUpperCase()}`,
       fullName: playerName,
       avatar: initials(playerName),
+      avatarUrl: row.players?.avatar_url ?? null,
       dateOfBirth: row.players?.date_of_birth ? safeDate(row.players.date_of_birth) : "Not set",
       age: calculateAge(row.players?.date_of_birth),
       idType: row.players?.id_type ?? "N/A",
@@ -512,6 +674,7 @@ function buildAdminSeasonData(input: {
       adminApprovalDate: row.reviewed_at ? safeDate(row.reviewed_at) : "Not approved yet",
       adminMessage: row.rejection_reason ?? row.removal_reason ?? row.suspension_reason ?? "No admin message.",
       abilityRating: abilityLabel(row.ability_rating),
+      overallRating: abilityOverall(row),
       abilityDetails: abilityDetails(row),
       leagueStats: zeroLeagueStats(stat),
       performances: []
@@ -540,7 +703,7 @@ function buildAdminSeasonData(input: {
       const manager = relatedOne(row.manager);
       const players = playersByTeam.get(row.id) ?? [];
       const suspendedPlayers = players.filter((player) => player.playerStatus === "Suspended" || player.playerStatus === "Removed");
-      const activePlayers = players.filter((player) => player.playerStatus !== "Suspended" && player.playerStatus !== "Removed");
+      const activePlayers = players.filter((player) => player.playerStatus !== "Suspended" && player.playerStatus !== "Removed" && player.playerStatus !== "Rejected");
       const teamFixtures = fixturesByTeam(row.id);
       return {
         id: row.id,
@@ -549,6 +712,10 @@ function buildAdminSeasonData(input: {
         primaryColor: row.teams?.primary_color ?? null,
         secondaryColor: row.teams?.secondary_color ?? null,
         accentColor: row.teams?.accent_color ?? null,
+        homeJerseyUrl: row.teams?.home_jersey_url ?? null,
+        awayJerseyUrl: row.teams?.away_jersey_url ?? null,
+        gkHomeJerseyUrl: row.teams?.gk_home_jersey_url ?? null,
+        gkAwayJerseyUrl: row.teams?.gk_away_jersey_url ?? null,
         name: row.teams?.name ?? "Unnamed team",
         managerName: manager?.full_name ?? manager?.email ?? "Manager",
         managerEmail: manager?.email ?? "Not connected",
@@ -636,7 +803,7 @@ function buildAdminSeasonData(input: {
   });
 
   const readyMatches = input.fixtures
-    .filter((fixture) => fixture.status === FixtureStatus.LINEUPS_CONFIRMED)
+    .filter((fixture) => fixture.status === FixtureStatus.LINEUPS_CONFIRMED || fixture.status === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION)
     .map((fixture) => ({
       id: fixture.id,
       home: teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team",
@@ -648,6 +815,7 @@ function buildAdminSeasonData(input: {
 
   const sortedStats = [...input.playerStats].sort((a, b) => (b.goals ?? 0) - (a.goals ?? 0));
   const topGoal = sortedStats[0];
+  const topAssist = [...input.playerStats].sort((a, b) => (b.assists ?? 0) - (a.assists ?? 0))[0];
   const topRated = [...input.playerStats]
     .filter((row) => row.average_rating)
     .sort((a, b) => Number(b.average_rating ?? 0) - Number(a.average_rating ?? 0))[0];
@@ -670,6 +838,14 @@ function buildAdminSeasonData(input: {
         matches: topGoal.appearances ?? 0
       }
       : null,
+    topAssist: topAssist && (topAssist.appearances ?? 0) > 0 && (topAssist.assists ?? 0) > 0
+      ? {
+        name: topAssist.player_season_registrations?.players?.full_name ?? "Unnamed player",
+        team: "Season team",
+        assists: topAssist.assists ?? 0,
+        matches: topAssist.appearances ?? 0
+      }
+      : null,
     topRated: topRated && (topRated.appearances ?? 0) > 0
       ? {
         name: topRated.player_season_registrations?.players?.full_name ?? "Unnamed player",
@@ -677,7 +853,8 @@ function buildAdminSeasonData(input: {
         rating: String(topRated.average_rating),
         matches: topRated.appearances ?? 0
       }
-      : null
+      : null,
+    statsReport: input.statsReport
   };
 }
 
@@ -688,6 +865,52 @@ function initials(value: string) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("") || "NA";
+}
+
+function formatNumber(value: unknown) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric)) return "0";
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+}
+
+function formatValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "0";
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return String(value);
+}
+
+function percent(part: unknown, total: unknown) {
+  const numerator = Number(part ?? 0);
+  const denominator = Number(total ?? 0);
+  if (!denominator || !Number.isFinite(numerator) || !Number.isFinite(denominator)) return "0%";
+  return `${Math.round((numerator / denominator) * 100)}%`;
+}
+
+function ratingTone(value: number) {
+  if (value >= 7.9) return "bg-emerald-500";
+  if (value >= 7) return "bg-lime-500";
+  return "bg-orange-500";
+}
+
+function formatTeamStat(stat: MatchDetailTeamStat, field: keyof MatchDetailTeamStat, format: "number" | "percent" | "passes" | "rating") {
+  if (format === "percent") return `${formatNumber(stat[field])}%`;
+  if (format === "passes") return `${formatNumber(stat.accurate_passes)}/${formatNumber(stat.passes)} (${percent(stat.accurate_passes, stat.passes)})`;
+  if (format === "rating") return formatNumber(stat[field]);
+  return formatNumber(stat[field]);
+}
+
+function positionBreakdown(players: AdminPlayer[]) {
+  const order = ["GK", "LB", "CB", "RB", "DM", "CM", "AM", "LW", "RW", "ST"];
+  const counts = new Map<string, number>();
+  for (const player of players) {
+    const key = (player.footballPosition || player.position || "UNK").toUpperCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const ordered = order.map((position) => [position, counts.get(position) ?? 0] as const).filter(([, count]) => count > 0);
+  const extra = Array.from(counts.entries())
+    .filter(([position]) => !order.includes(position))
+    .sort(([a], [b]) => a.localeCompare(b));
+  return [...ordered, ...extra];
 }
 
 export default function AdminLeagueSeasonDashboard() {
@@ -714,12 +937,13 @@ export default function AdminLeagueSeasonDashboard() {
       setAdminData(emptyAdminSeasonData);
       return;
     }
-    const [teamRegistrationData, playerRegistrationData, fixtureData, standingData, playerStatData] = await Promise.all([
+    const [teamRegistrationData, playerRegistrationData, fixtureData, standingData, playerStatData, statsReportData] = await Promise.all([
       api<{ team_registrations: TeamRegistrationApiRow[] }>("/admin/team-registrations"),
       api<{ player_registrations: PlayerRegistrationApiRow[] }>("/admin/player-registrations"),
       publicApi<{ fixtures: FixtureApiRow[] }>(`/public/seasons/${selectedSeason.id}/fixtures`),
       publicApi<{ standings: StandingApiRow[] }>(`/public/seasons/${selectedSeason.id}/standings`),
-      publicApi<{ player_stats: PlayerSeasonStatApiRow[] }>(`/public/seasons/${selectedSeason.id}/player-stats`)
+      publicApi<{ player_stats: PlayerSeasonStatApiRow[] }>(`/public/seasons/${selectedSeason.id}/player-stats`),
+      api<AdminStatsReport>(`/admin/seasons/${selectedSeason.id}/stat-leaderboards`)
     ]);
     setAdminData(
       buildAdminSeasonData({
@@ -728,7 +952,8 @@ export default function AdminLeagueSeasonDashboard() {
         playerRegistrations: playerRegistrationData.player_registrations ?? [],
         fixtures: fixtureData.fixtures ?? [],
         standings: standingData.standings ?? [],
-        playerStats: playerStatData.player_stats ?? []
+        playerStats: playerStatData.player_stats ?? [],
+        statsReport: statsReportData ?? emptyStatsReport
       })
     );
   }
@@ -757,6 +982,34 @@ export default function AdminLeagueSeasonDashboard() {
     await api(`/admin/player-registrations/${id}/ability`, {
       method: "PATCH",
       body: JSON.stringify({ ability_rating })
+    });
+    await loadDashboardData();
+  }
+
+  async function bulkRatePendingPlayers(teamId: string, rerate = false) {
+    await api(`/admin/teams/${teamId}/pending-players/rate-randomly`, {
+      method: "POST",
+      body: JSON.stringify({
+        seasonId: season?.id,
+        distribution: { low: 0.15, moderate: 0.7, high: 0.15 },
+        rerate
+      })
+    });
+    await loadDashboardData();
+  }
+
+  async function bulkApproveRatedPlayers(teamId: string) {
+    await api(`/admin/teams/${teamId}/pending-players/approve-all-rated`, {
+      method: "POST",
+      body: JSON.stringify({ seasonId: season?.id })
+    });
+    await loadDashboardData();
+  }
+
+  async function simulateReadyMatch(fixtureId: string) {
+    await api("/admin/matches/simulate", {
+      method: "POST",
+      body: JSON.stringify({ fixture_id: fixtureId })
     });
     await loadDashboardData();
   }
@@ -873,7 +1126,8 @@ export default function AdminLeagueSeasonDashboard() {
         { id: "fixtures", label: "Fixtures", icon: CalendarDays },
         { id: "matches-ready", label: "Matches Ready", icon: PlayCircle },
         { id: "standings", label: "Standings", icon: Trophy },
-        { id: "reports", label: "Reports", icon: BarChart3 },
+        { id: "reports", label: "Player Stats", icon: BarChart3 },
+        { id: "team-stats", label: "Team Stats", icon: ShieldCheck },
         { id: "messages", label: "Messages", icon: Mail }
       ] as const,
     []
@@ -1009,13 +1263,14 @@ export default function AdminLeagueSeasonDashboard() {
 
         <main className="min-h-0 flex-1 overflow-y-auto p-8">
           {activeTab === "dashboard" ? <DashboardView league={league} season={season} data={adminData} onNavigate={setActiveTab} /> : null}
-          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} onAbilityScoresUpdate={updateAbilityScores} /> : null}
+		          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onBulkRatePending={bulkRatePendingPlayers} onBulkApproveRated={bulkApproveRatedPlayers} onPlayerAction={(action, player) => setPlayerAction({ action, player })} onAbilityScoresUpdate={updateAbilityScores} /> : null}
           {activeTab === "team-requests" ? <TeamRequestsView teamRequests={adminData.teamRequests} onDecision={decideTeamRequest} /> : null}
           {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} /> : null}
           {activeTab === "fixtures" ? <FixturesView fixtures={adminData.fixtures} teams={adminData.teams} onGenerateFixtures={generateFixtures} onScheduleFixture={scheduleFixture} onPostponeFixture={postponeFixture} onCancelFixture={cancelFixture} /> : null}
-          {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} /> : null}
+          {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} onSimulate={simulateReadyMatch} /> : null}
           {activeTab === "standings" ? <StandingsView groupMode={isGroupKnockout} teams={adminData.standings} /> : null}
-          {activeTab === "reports" ? <ReportsView data={adminData} /> : null}
+          {activeTab === "reports" ? <PlayerStatsView data={adminData} /> : null}
+          {activeTab === "team-stats" ? <TeamStatsView data={adminData} /> : null}
           {activeTab === "messages" ? <MessagesView messages={adminData.messages} /> : null}
           {activeTab === "groups" ? <GroupsView teams={adminData.teams} /> : null}
           {activeTab === "knockout" ? <KnockoutView /> : null}
@@ -1036,6 +1291,7 @@ export default function AdminLeagueSeasonDashboard() {
 
 function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto; season: SeasonDto; data: AdminSeasonData; onNavigate: (tab: TabId) => void }) {
   const tableTopper = data.standings[0] ?? null;
+  const isLeagueTableFormat = season.format === SeasonFormat.SINGLE_ROUND_ROBIN || season.format === SeasonFormat.DOUBLE_ROUND_ROBIN;
   return (
     <div>
       <PageTitle
@@ -1051,26 +1307,28 @@ function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto
         <SummaryCard icon={<CheckCircle2 size={31} />} label="Completed Matches" value={String(data.completedMatches.length)} color="cyan" action="View matches" onAction={() => onNavigate("fixtures")} />
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-3">
-        <FeatureCard title="Current Table Topper" icon={<Trophy size={20} />} className="xl:col-span-1">
-          {tableTopper ? (
-            <>
-              <div className="flex items-center gap-6">
-                <TeamBadge name={tableTopper.short || tableTopper.name} logoUrl={tableTopper.logoUrl} size="xl" />
-                <h3 className="text-2xl font-black">{tableTopper.name}</h3>
-              </div>
-              <StatStrip
-                stats={[
-                  [String(tableTopper.points), "Points"],
-                  [String(tableTopper.played), "Played"],
-                  [String(tableTopper.won), "Won"],
-                  [String(tableTopper.draw), "Draw"],
-                  [String(tableTopper.lost), "Lost"]
-                ]}
-              />
-            </>
-          ) : <EmptyState label="No standings yet. Standings appear after teams are approved and matches are finalized." />}
-        </FeatureCard>
+      <div className={`mt-6 grid grid-cols-1 gap-5 ${isLeagueTableFormat ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
+        {isLeagueTableFormat ? (
+          <FeatureCard title="Current Table Topper" icon={<Trophy size={20} />} className="xl:col-span-1">
+            {tableTopper ? (
+              <>
+                <div className="flex items-center gap-6">
+                  <TeamBadge name={tableTopper.short || tableTopper.name} logoUrl={tableTopper.logoUrl} size="xl" />
+                  <h3 className="text-2xl font-black">{tableTopper.name}</h3>
+                </div>
+                <StatStrip
+                  stats={[
+                    [String(tableTopper.points), "Points"],
+                    [String(tableTopper.played), "Played"],
+                    [String(tableTopper.won), "Won"],
+                    [String(tableTopper.draw), "Draw"],
+                    [String(tableTopper.lost), "Lost"]
+                  ]}
+                />
+              </>
+            ) : <EmptyState label="No standings yet. Standings appear after teams are approved and matches are finalized." />}
+          </FeatureCard>
+        ) : null}
 
         <FeatureCard title="Top Scorer" icon={<Target size={20} />} iconTone="green">
           {data.topScorer ? (
@@ -1079,6 +1337,15 @@ function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto
               <StatStrip stats={[[String(data.topScorer.goals), "Goals"], [String(data.topScorer.matches), "Matches"]]} />
             </>
           ) : <EmptyState label="No scorer data yet." />}
+        </FeatureCard>
+
+        <FeatureCard title="Top Assist Provider" icon={<UserPlus size={20} />} iconTone="green">
+          {data.topAssist ? (
+            <>
+              <PlayerHero name={data.topAssist.name} team={data.topAssist.team} shirt="-" color="blue" />
+              <StatStrip stats={[[String(data.topAssist.assists), "Assists"], [String(data.topAssist.matches), "Matches"]]} />
+            </>
+          ) : <EmptyState label="No assist data yet." />}
         </FeatureCard>
 
         <FeatureCard title="Top Rated Player" icon={<Star size={20} />} iconTone="purple">
@@ -1124,6 +1391,8 @@ function TeamsView({
   onSendTeamMessage,
   onPlayerDecision,
   onPlayerAbility,
+  onBulkRatePending,
+  onBulkApproveRated,
   onPlayerAction,
   onAbilityScoresUpdate
 }: {
@@ -1133,6 +1402,8 @@ function TeamsView({
   onSendTeamMessage: (id: string) => Promise<void>;
   onPlayerDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onPlayerAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onBulkRatePending: (teamId: string, rerate?: boolean) => Promise<void>;
+  onBulkApproveRated: (teamId: string) => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
 }) {
@@ -1173,9 +1444,11 @@ function TeamsView({
         onBack={() => setSelectedTeamId(null)}
         onKickOutTeam={() => onKickOutTeam(selectedTeam.id)}
         onSendMessage={() => onSendTeamMessage(selectedTeam.id)}
-        onPlayerDecision={onPlayerDecision}
-        onPlayerAbility={onPlayerAbility}
-        onPlayerAction={onPlayerAction}
+		        onPlayerDecision={onPlayerDecision}
+		        onPlayerAbility={onPlayerAbility}
+		        onBulkRatePending={(rerate) => onBulkRatePending(selectedTeam.id, rerate)}
+		        onBulkApproveRated={() => onBulkApproveRated(selectedTeam.id)}
+		        onPlayerAction={onPlayerAction}
         onAbilityScoresUpdate={onAbilityScoresUpdate}
         onOpenPlayer={(playerId) => {
           setSelectedPlayerId(playerId);
@@ -1229,6 +1502,8 @@ function TeamDetailView({
   onSendMessage,
   onPlayerDecision,
   onPlayerAbility,
+  onBulkRatePending,
+  onBulkApproveRated,
   onPlayerAction,
   onAbilityScoresUpdate,
   onOpenPlayer
@@ -1240,13 +1515,39 @@ function TeamDetailView({
   onSendMessage: () => Promise<void>;
   onPlayerDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
   onPlayerAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onBulkRatePending: (rerate?: boolean) => Promise<void>;
+  onBulkApproveRated: () => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
   onOpenPlayer: (playerId: string) => void;
 }) {
   const approvedPlayers = team.players.filter((player) => player.approvalStatus === "Approved");
   const pendingPlayers = team.players.filter((player) => player.approvalStatus === "Pending");
+  const squadBreakdown = positionBreakdown(team.players.filter((player) => player.playerStatus !== "Removed" && player.playerStatus !== "Rejected"));
+  const pendingUnratedCount = pendingPlayers.filter((player) => player.abilityRating === "Not rated").length;
+  const allPendingRated = pendingPlayers.length > 0 && pendingUnratedCount === 0;
   const [playerPanel, setPlayerPanel] = useState<"approved" | "pending" | null>(null);
+  const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  const [bulkLoading, setBulkLoading] = useState<"rating" | "approving" | null>(null);
+
+  async function runBulkRate(rerate = false) {
+    setBulkLoading("rating");
+    try {
+      await onBulkRatePending(rerate);
+    } finally {
+      setBulkLoading(null);
+    }
+  }
+
+  async function runBulkApprove() {
+    setBulkLoading("approving");
+    try {
+      await onBulkApproveRated();
+      setBulkApproveOpen(false);
+    } finally {
+      setBulkLoading(null);
+    }
+  }
 
   return (
     <div>
@@ -1283,13 +1584,24 @@ function TeamDetailView({
           </button>
         </div>
       </div>
+      <TeamJerseyStrip team={team} />
 
       <div className="grid gap-5 xl:grid-cols-3">
         <Panel title="Team Profile">
           <div className="grid gap-3">
             <InfoBox label="Team Name" value={team.name} />
             <InfoBox label="Team Status" value={team.status} />
-            <InfoBox label="Squad Count" value={String(team.squadCount)} />
+            <InfoBox label="Squad Count" value={String(team.squadCount)}>
+              {squadBreakdown.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {squadBreakdown.map(([position, count]) => (
+                    <span key={position} className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-700">
+                      {position} {count}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </InfoBox>
           </div>
         </Panel>
 
@@ -1318,14 +1630,25 @@ function TeamDetailView({
         </Panel>
       </div>
 
-      <div className="mt-6 grid gap-5 xl:grid-cols-2">
+      <div className={`mt-6 grid gap-5 ${pendingPlayers.length > 0 ? "xl:grid-cols-2" : "xl:grid-cols-1"}`}>
         <Panel title="Approved Players" action="View all" onAction={() => setPlayerPanel("approved")}>
           <PlayerMiniTable players={approvedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} />
         </Panel>
 
-        <Panel title="Pending Player Requests" action="Review all" onAction={() => setPlayerPanel("pending")}>
-          <PlayerMiniTable players={pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending />
-        </Panel>
+        {pendingPlayers.length > 0 ? (
+          <Panel title="Pending Player Requests" action="Review all" onAction={() => setPlayerPanel("pending")}>
+            <BulkPendingActions
+              pendingCount={pendingPlayers.length}
+              unratedCount={pendingUnratedCount}
+              allRated={allPendingRated}
+              loading={bulkLoading}
+              onRate={() => void runBulkRate()}
+              onRateAgain={() => void runBulkRate(true)}
+              onApprove={() => setBulkApproveOpen(true)}
+            />
+            <PlayerMiniTable players={pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending />
+          </Panel>
+        ) : null}
       </div>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
@@ -1349,20 +1672,39 @@ function TeamDetailView({
           <div className="max-h-[86vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">{playerPanel === "approved" ? "Approved Players" : "Pending Player Requests"}</p>
-                <h2 className="mt-1 text-2xl font-black">{team.name}</h2>
-              </div>
+	                <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">{playerPanel === "approved" ? "Approved Players" : "Pending Player Requests"}</p>
+	                <h2 className="mt-1 text-2xl font-black">{team.name}</h2>
+	              </div>
               <button type="button" onClick={() => setPlayerPanel(null)} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">
                 Close
               </button>
-            </div>
-            <PlayerMiniTable players={playerPanel === "approved" ? approvedPlayers : pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending={playerPanel === "pending"} />
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
+	            </div>
+	            {playerPanel === "pending" ? (
+	              <BulkPendingActions
+	                pendingCount={pendingPlayers.length}
+	                unratedCount={pendingUnratedCount}
+	                allRated={allPendingRated}
+	                loading={bulkLoading}
+	                onRate={() => void runBulkRate()}
+	                onRateAgain={() => void runBulkRate(true)}
+	                onApprove={() => setBulkApproveOpen(true)}
+	              />
+	            ) : null}
+	            <PlayerMiniTable players={playerPanel === "approved" ? approvedPlayers : pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending={playerPanel === "pending"} />
+	          </div>
+	        </div>
+	      ) : null}
+	      {bulkApproveOpen ? (
+	        <BulkApproveConfirmModal
+	          count={pendingPlayers.length}
+	          loading={bulkLoading === "approving"}
+	          onClose={() => setBulkApproveOpen(false)}
+	          onConfirm={() => void runBulkApprove()}
+	        />
+	      ) : null}
+	    </div>
+	  );
+	}
 
 function PlayerDetailView({
   season,
@@ -1428,6 +1770,79 @@ function PlayerDetailView({
       </div>
 
       {activeTab === "personal" ? <PlayerPersonalData team={team} season={season} player={player} onDecision={onDecision} onAbility={onAbility} onPlayerAction={onPlayerAction} onAbilityScoresUpdate={onAbilityScoresUpdate} onMessageManager={onMessageManager} /> : <PlayerLeagueStats player={player} />}
+    </div>
+  );
+}
+
+function TeamJerseyStrip({ team }: { team: AdminTeam }) {
+  const jerseys = [
+    { label: "Home", url: team.homeJerseyUrl },
+    { label: "Away", url: team.awayJerseyUrl },
+    { label: "GK Home", url: team.gkHomeJerseyUrl },
+    { label: "GK Away", url: team.gkAwayJerseyUrl }
+  ];
+  const hasJerseys = jerseys.some((jersey) => jersey.url);
+
+  return (
+    <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <h2 className="text-xl font-black">Team Jerseys</h2>
+        <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-indigo-700">Home / Away / GK</span>
+      </div>
+      {hasJerseys ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {jerseys.map((jersey) => (
+            <AdminJerseyCard key={jersey.label} teamName={team.name} label={jersey.label} url={jersey.url} />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm font-semibold text-slate-500">
+          No jersey URLs saved for this team yet.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminJerseyCard({ teamName, label, url }: { teamName: string; label: string; url: string | null | undefined }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+      <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+      <div className="mt-2 flex h-56 items-center justify-center rounded-lg bg-white p-1">
+        {url ? (
+          <button
+            type="button"
+            className="flex h-full w-full items-center justify-center rounded-lg transition hover:scale-[1.02] hover:bg-slate-50"
+            onClick={() => setPreviewOpen(true)}
+            title={`Open ${teamName} ${label} jersey`}
+            aria-label={`Open ${teamName} ${label} jersey`}
+          >
+            <img src={url} alt={`${teamName} ${label} jersey`} className="max-h-full max-w-full object-contain" />
+          </button>
+        ) : (
+          <span className="text-sm font-semibold text-slate-400">Not set</span>
+        )}
+      </div>
+      {previewOpen && url ? <AdminImagePreviewModal title={`${teamName} ${label} Jersey`} src={url} onClose={() => setPreviewOpen(false)} /> : null}
+    </div>
+  );
+}
+
+function AdminImagePreviewModal({ title, src, onClose }: { title: string; src: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-5 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-3xl rounded-3xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h3 className="text-xl font-black">{title}</h3>
+          <button type="button" className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="grid place-items-center rounded-3xl bg-slate-100 p-4">
+          <img src={src} alt={title} className="max-h-[75vh] max-w-full rounded-2xl object-contain" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -1563,7 +1978,7 @@ function PlayerPersonalData({
                     />
                   </label>
                 ) : (
-                  <DetailRow key={ability.label} label={ability.label} value={ability.value} />
+                  <AbilityDetailCard key={ability.label} ability={ability} />
                 )
               )}
             </div>
@@ -1656,6 +2071,100 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
   );
 }
 
+function BulkPendingActions({
+  pendingCount,
+  unratedCount,
+  allRated,
+  loading,
+  onRate,
+  onRateAgain,
+  onApprove
+}: {
+  pendingCount: number;
+  unratedCount: number;
+  allRated: boolean;
+  loading: "rating" | "approving" | null;
+  onRate: () => void;
+  onRateAgain: () => void;
+  onApprove: () => void;
+}) {
+  if (pendingCount === 0) return null;
+  const ratedCount = pendingCount - unratedCount;
+  return (
+    <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.25em] text-indigo-700">Bulk Actions</p>
+        <p className="mt-1 text-sm font-semibold text-slate-600">
+          {ratedCount}/{pendingCount} pending players rated. Moderate stays the majority, with occasional Low/High exceptions.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {unratedCount > 0 ? (
+          <button
+            type="button"
+            onClick={onRate}
+            disabled={loading !== null}
+            className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+          >
+            {loading === "rating" ? "Rating..." : "Rate Everyone Randomly"}
+          </button>
+        ) : null}
+        {ratedCount > 0 ? (
+          <button
+            type="button"
+            onClick={onRateAgain}
+            disabled={loading !== null}
+            className="rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-sm font-black text-indigo-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+          >
+            {loading === "rating" ? "Rating..." : "Rate Again"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onApprove}
+          disabled={!allRated || loading !== null}
+          className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+        >
+          Approve All Rated Players
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BulkApproveConfirmModal({
+  count,
+  loading,
+  onClose,
+  onConfirm
+}: {
+  count: number;
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/55 p-5 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+        <p className="text-xs font-black uppercase tracking-[0.3em] text-emerald-700">Bulk Approval</p>
+        <h2 className="mt-2 text-3xl font-black">Approve all rated players?</h2>
+        <p className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+          This will approve all {count} pending players who already have Low, Moderate, or High rating selected.
+          Approved players will become available for lineup selection.
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" onClick={onClose} disabled={loading} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200 disabled:opacity-50">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={loading} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0">
+            {loading ? "Approving..." : "Approve All"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlayerMiniTable({
   players,
   onOpenPlayer,
@@ -1678,7 +2187,7 @@ function PlayerMiniTable({
       <table className="w-full min-w-[620px] text-sm">
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
           <tr>
-            {["Player", "Code", "Position", "Jersey", "Status", "Actions"].map((header) => (
+            {["Player", "Code", "Position", "Jersey", "OVR", "Status", "Actions"].map((header) => (
               <th key={header} className="px-4 py-3 text-left font-black">{header}</th>
             ))}
           </tr>
@@ -1690,15 +2199,21 @@ function PlayerMiniTable({
                 <button
                   type="button"
                   onClick={() => onOpenPlayer(player.id)}
-                  className="font-black text-indigo-700 transition hover:text-indigo-950"
+                  className="inline-flex items-center gap-3 text-left font-black text-indigo-700 transition hover:text-indigo-950"
                 >
-                  {player.fullName}
+                  <SmallPlayerAvatar player={player} />
+                  <span>{player.fullName}</span>
                 </button>
               </td>
               <td className="px-4 py-3">{player.code}</td>
               <td className="px-4 py-3">{player.footballPosition}</td>
               <td className="px-4 py-3">#{player.jerseyNumber}</td>
-              <td className="px-4 py-3"><StatusPill tone={player.approvalStatus === "Approved" ? "green" : "orange"}>{player.approvalStatus}</StatusPill></td>
+              <td className="px-4 py-3"><AbilityCapsule player={player} /></td>
+              <td className="px-4 py-3">
+                <StatusPill tone={player.playerStatus === "Approved" ? "green" : player.playerStatus === "Removed" || player.playerStatus === "Suspended" || player.playerStatus === "Rejected" ? "orange" : "orange"}>
+                  {player.playerStatus}
+                </StatusPill>
+              </td>
               <td className="px-4 py-3">
                 <ActionGroup
                   actions={playerMiniActions(player, pending, onOpenPlayer, onDecision, onAbility, onPlayerAction)}
@@ -1770,10 +2285,99 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function abilityTone(tier: AdminPlayer["abilityRating"]) {
+  if (tier === "High") return "bg-sky-100 text-sky-700 ring-sky-200";
+  if (tier === "Moderate") return "bg-green-100 text-green-700 ring-green-200";
+  if (tier === "Low") return "bg-amber-100 text-amber-800 ring-amber-200";
+  return "bg-slate-100 text-slate-500 ring-slate-200";
+}
+
+function AbilityCapsule({ player }: { player: AdminPlayer }) {
+  if (player.overallRating === null || player.overallRating === undefined) {
+    return <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-400 ring-1 ring-slate-200">N/A</span>;
+  }
+  return (
+    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${abilityTone(player.abilityRating)}`}>
+      {player.overallRating}
+    </span>
+  );
+}
+
+function AbilityDetailCard({ ability }: { ability: { label: string; value: string } }) {
+  const numeric = Number(ability.value);
+  const bg = ability.label === "Tier"
+    ? ability.value === "HIGH" ? "bg-sky-50 ring-sky-100" : ability.value === "MODERATE" ? "bg-green-50 ring-green-100" : "bg-amber-50 ring-amber-100"
+    : Number.isFinite(numeric)
+      ? numeric >= 73 ? "bg-sky-50 ring-sky-100" : numeric >= 55 ? "bg-green-50 ring-green-100" : "bg-amber-50 ring-amber-100"
+      : "bg-slate-50 ring-slate-100";
+  return (
+    <div className={`rounded-lg p-3 ring-1 ${bg}`}>
+      <p className="text-xs font-black uppercase tracking-wide text-slate-500">{ability.label}</p>
+      <p className="mt-1 font-bold text-slate-800">{ability.value}</p>
+    </div>
+  );
+}
+
+function SmallPlayerAvatar({ player }: { player: AdminPlayer }) {
+  if (player.avatarUrl) {
+    return (
+      <img
+        src={player.avatarUrl}
+        alt={player.fullName}
+        className="h-10 w-10 shrink-0 rounded-full object-cover ring-2 ring-white"
+      />
+    );
+  }
+  return (
+    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-600 to-sky-400 text-xs font-black text-white">
+      {player.avatar}
+    </span>
+  );
+}
+
 function PlayerAvatar({ player }: { player: AdminPlayer }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  if (player.avatarUrl) {
+    return (
+      <>
+        <button
+          type="button"
+          className="h-20 w-20 shrink-0 overflow-hidden rounded-full bg-slate-100 shadow-lg ring-4 ring-white transition hover:scale-105 hover:ring-indigo-200"
+          onClick={() => setPreviewOpen(true)}
+          title={`Open ${player.fullName} miniface`}
+          aria-label={`Open ${player.fullName} miniface`}
+        >
+          <img src={player.avatarUrl} alt={player.fullName} className="h-full w-full object-cover" />
+        </button>
+        {previewOpen ? <AdminFacePreviewModal player={player} onClose={() => setPreviewOpen(false)} /> : null}
+      </>
+    );
+  }
   return (
     <div className="grid h-20 w-20 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-600 to-sky-400 text-xl font-black text-white shadow-lg">
       {player.avatar}
+    </div>
+  );
+}
+
+function AdminFacePreviewModal({ player, onClose }: { player: AdminPlayer; onClose: () => void }) {
+  if (!player.avatarUrl) return null;
+  return (
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-5 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-black">{player.fullName}</h3>
+            <p className="text-sm font-semibold text-slate-500">#{player.jerseyNumber} · {player.footballPosition}</p>
+          </div>
+          <button type="button" className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="grid place-items-center rounded-3xl bg-slate-100 p-4">
+          <img src={player.avatarUrl} alt={player.fullName} className="max-h-[70vh] max-w-full rounded-2xl object-contain" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -1868,7 +2472,7 @@ function PlayerRequestsView({
       <CrudPage
         title="Player Requests"
         subtitle="Review players, assign ability rating, approve, reject, or remove them."
-        columns={["Player Code", "Player Name", "Team Name", "Position", "Jersey", "ID Type", "Approval", "Actions"]}
+        columns={["Player Code", "Player Name", "Team Name", "Position", "Jersey", "ID Type", "Approval", "OVR", "Actions"]}
         rows={playerRequests.map((row) => {
           const canRate = row.teamStatus === RegistrationStatus.APPROVED;
           const canApprove = canRate && row.abilityRating !== "Not rated";
@@ -1891,6 +2495,7 @@ function PlayerRequestsView({
               <StatusPill tone="orange">{row.status}</StatusPill>
               <span className="text-xs font-bold text-slate-500">Ability: {row.abilityRating}</span>
             </div>,
+            row.player ? <AbilityCapsule key="ovr" player={row.player} /> : <span key="ovr" className="text-xs font-bold text-slate-400">N/A</span>,
             <ActionGroup
               key="actions"
               actions={[
@@ -2055,7 +2660,7 @@ function PlayerRequestDetailModal({ player, onClose }: { player: AdminPlayer; on
           {player.abilityDetails.length > 0 ? (
             <div className="mt-3 grid gap-3 md:grid-cols-3">
               {player.abilityDetails.map((ability) => (
-                <DetailRow key={ability.label} label={ability.label} value={ability.value} />
+                <AbilityDetailCard key={ability.label} ability={ability} />
               ))}
             </div>
           ) : (
@@ -2187,10 +2792,47 @@ function PlayerLifecycleModal({
   );
 }
 
-function MatchesReadyView({ matches }: { matches: ReadyMatchRow[] }) {
+function MatchesReadyView({ matches, onSimulate }: { matches: ReadyMatchRow[]; onSimulate: (fixtureId: string) => Promise<void> }) {
+  const [selectedMatch, setSelectedMatch] = useState<ReadyMatchRow | null>(null);
+  const [detail, setDetail] = useState<MatchDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [simulatingId, setSimulatingId] = useState<string | null>(null);
+  const [selectedStat, setSelectedStat] = useState<MatchDetailPlayerStat | null>(null);
+  const [error, setError] = useState("");
+
+  async function openDetail(match: ReadyMatchRow) {
+    setSelectedMatch(match);
+    setDetailLoading(true);
+    setError("");
+    try {
+      const data = await api<MatchDetailResponse>(`/admin/matches/${match.id}/detail`);
+      setDetail(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load match detail");
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function simulate(match: ReadyMatchRow) {
+    setSimulatingId(match.id);
+    setError("");
+    try {
+      await onSimulate(match.id);
+      const data = await api<MatchDetailResponse>(`/admin/matches/${match.id}/detail`);
+      setSelectedMatch(match);
+      setDetail(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not simulate match");
+    } finally {
+      setSimulatingId(null);
+    }
+  }
+
   return (
     <div>
       <PageTitle title="Matches Ready" subtitle="Matches appear here only after both lineups are confirmed." />
+      {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</div> : null}
       <div className="grid gap-5 xl:grid-cols-2">
         {matches.length === 0 ? <EmptyState label="No matches are ready for simulation. Confirm both team lineups first." /> : null}
         {matches.map((match, index) => (
@@ -2208,13 +2850,254 @@ function MatchesReadyView({ matches }: { matches: ReadyMatchRow[] }) {
             <div className="mt-6 flex flex-wrap gap-3">
               <button
                 type="button"
+                onClick={() => void openDetail(match)}
+                className="rounded-md border border-indigo-200 bg-white px-5 py-3 text-sm font-bold text-indigo-700 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-50 hover:shadow-lg active:translate-y-0 active:scale-[0.98]"
+              >
+                Open Detail →
+              </button>
+              <button
+                type="button"
+                onClick={() => void simulate(match)}
+                disabled={simulatingId === match.id}
                 className="rounded-md bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98]"
               >
-                Simulate Match
+                {simulatingId === match.id ? "Simulating..." : "Simulate Match"}
               </button>
             </div>
           </Panel>
         ))}
+      </div>
+      {selectedMatch ? (
+        <MatchDetailModal
+          match={selectedMatch}
+          detail={detail}
+          loading={detailLoading}
+          simulating={simulatingId === selectedMatch.id}
+          onClose={() => {
+            setSelectedMatch(null);
+            setDetail(null);
+            setSelectedStat(null);
+          }}
+          onSimulate={() => void simulate(selectedMatch)}
+          onPlayerStat={setSelectedStat}
+        />
+      ) : null}
+      {selectedStat ? <PlayerMatchStatModal stat={selectedStat} onClose={() => setSelectedStat(null)} /> : null}
+    </div>
+  );
+}
+
+function MatchDetailModal({
+  match,
+  detail,
+  loading,
+  simulating,
+  onClose,
+  onSimulate,
+  onPlayerStat
+}: {
+  match: ReadyMatchRow;
+  detail: MatchDetailResponse | null;
+  loading: boolean;
+  simulating: boolean;
+  onClose: () => void;
+  onSimulate: () => void;
+  onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+}) {
+  const statsByPlayer = new Map((detail?.player_stats ?? []).map((stat) => [stat.player_registration_id, stat]));
+  const homeLineup = detail?.lineups.find((lineup) => lineup.side === "HOME") ?? detail?.lineups[0] ?? null;
+  const awayLineup = detail?.lineups.find((lineup) => lineup.side === "AWAY") ?? detail?.lineups[1] ?? null;
+  const hasSimulation = (detail?.player_stats?.length ?? 0) > 0 || (detail?.team_stats?.length ?? 0) > 0;
+  return (
+    <div className="fixed inset-0 z-[70] overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm">
+      <div className="mx-auto my-8 max-w-7xl rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.35em] text-indigo-600">Match Detail</p>
+            <h2 className="mt-2 text-3xl font-black">{match.home} vs {match.away}</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">{match.stage} · {match.kickoff}</p>
+          </div>
+          <div className="flex gap-3">
+            <button type="button" onClick={onSimulate} disabled={simulating} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:opacity-50">
+              {simulating ? "Simulating..." : hasSimulation ? "Simulate Again" : "Simulate Match"}
+            </button>
+            <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
+          </div>
+        </div>
+
+        {loading ? <EmptyState label="Loading match detail..." /> : null}
+        {!loading ? (
+          <div className="mt-6 space-y-6">
+            <div className="rounded-3xl bg-gradient-to-b from-emerald-500 to-emerald-700 p-5 text-white shadow-inner">
+              <div className="grid gap-5 lg:grid-cols-2">
+                <LineupSide title={match.home} lineup={homeLineup} statsByPlayer={statsByPlayer} onPlayerStat={onPlayerStat} />
+                <LineupSide title={match.away} lineup={awayLineup} statsByPlayer={statsByPlayer} onPlayerStat={onPlayerStat} />
+              </div>
+            </div>
+            {detail?.team_stats?.length ? <MatchTeamStatsPanel home={match.home} away={match.away} stats={detail.team_stats} /> : <EmptyState label="No match stats yet. Click Simulate Match to generate ratings and stats." />}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function LineupSide({
+  title,
+  lineup,
+  statsByPlayer,
+  onPlayerStat
+}: {
+  title: string;
+  lineup: MatchDetailLineup | null;
+  statsByPlayer: Map<string, MatchDetailPlayerStat>;
+  onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+}) {
+  const players = [...(lineup?.lineup_players ?? [])].sort((a, b) => Number(b.is_starter) - Number(a.is_starter));
+  return (
+    <div className="rounded-2xl bg-white/10 p-4">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-lg font-black">{title}</h3>
+        <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-bold">{lineup?.formation ?? "Formation N/A"}</span>
+      </div>
+      {players.length ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          {players.map((player) => {
+            const registration = player.player_season_registrations;
+            const name = registration?.players?.full_name ?? "Player";
+            const stat = statsByPlayer.get(player.player_registration_id);
+            return (
+              <button
+                key={player.id}
+                type="button"
+                disabled={!stat}
+                onClick={() => stat ? onPlayerStat(stat) : undefined}
+                className="relative rounded-2xl bg-white/15 p-3 text-left text-sm transition hover:-translate-y-0.5 hover:bg-white/25 disabled:cursor-default disabled:hover:translate-y-0"
+              >
+                {stat ? <span className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-xs font-black text-white ${ratingTone(Number(stat.rating))}`}>{formatNumber(stat.rating)}</span> : null}
+                <div className="flex items-center gap-2">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white font-black text-emerald-700">
+                    {initials(name)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate font-black">#{registration?.shirt_number ?? player.shirt_number ?? "-"} {name}</p>
+                    <p className="text-xs text-white/75">{registration?.football_position ?? player.football_position ?? registration?.position ?? "POS"} · {player.is_starter ? "Starter" : "Bench"}</p>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-white/20 p-4 text-sm font-semibold text-white/80">No lineup players found.</div>
+      )}
+    </div>
+  );
+}
+
+function MatchTeamStatsPanel({ home, away, stats }: { home: string; away: string; stats: MatchDetailTeamStat[] }) {
+  const [first, second] = stats;
+  if (!first || !second) return null;
+  const rows: Array<[string, keyof MatchDetailTeamStat, "number" | "percent" | "passes" | "rating"]> = [
+    ["Team Rating", "rating", "rating"],
+    ["Possession", "possession", "percent"],
+    ["Total Shots", "shots", "number"],
+    ["Shots on Target", "shots_on_target", "number"],
+    ["Big Chances Created", "big_chances", "number"],
+    ["Big Chances Missed", "big_chances_missed", "number"],
+    ["Accurate Passes", "accurate_passes", "passes"],
+    ["Corners", "corners", "number"],
+    ["Offsides", "offsides", "number"],
+    ["Fouls", "fouls", "number"],
+    ["Yellow Cards", "yellow_cards", "number"],
+    ["Red Cards", "red_cards", "number"]
+  ];
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-5">
+      <h3 className="text-xl font-black">Match Stats</h3>
+      <div className="mt-5 space-y-3">
+        {rows.map(([label, field, format]) => (
+          <div key={label} className="grid grid-cols-[1fr_180px_1fr] items-center gap-4 text-sm">
+            <div className="font-black">{formatTeamStat(first, field, format)}</div>
+            <div className="text-center font-semibold text-slate-500">{label}</div>
+            <div className="text-right font-black">{formatTeamStat(second, field, format)}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-full text-sm font-black text-white">
+        <div className="bg-indigo-600 px-4 py-3">{home}</div>
+        <div className="bg-slate-950 px-4 py-3 text-right">{away}</div>
+      </div>
+    </div>
+  );
+}
+
+function PlayerMatchStatModal({ stat, onClose }: { stat: MatchDetailPlayerStat; onClose: () => void }) {
+  const player = stat.player_season_registrations;
+  const isGoalkeeper = (stat.position_played ?? player?.football_position) === "GK";
+  const name = player?.players?.full_name ?? "Player";
+  const items: Array<[string, unknown]> = isGoalkeeper
+    ? [
+        ["Minutes Played", stat.minutes],
+        ["Saves", stat.saves],
+        ["Goals Conceded", stat.goals_conceded],
+        ["Accurate Passes", stat.accurate_passes],
+        ["Accurate Long Balls", stat.accurate_long_balls],
+        ["Diving Saves", stat.diving_saves],
+        ["Saves Inside Box", stat.saves_inside_box],
+        ["Clearances", stat.clearances],
+        ["Yellow Cards", stat.yellow_cards],
+        ["Red Cards", stat.red_cards],
+        ["Rating", stat.rating]
+      ]
+    : [
+        ["Minutes Played", stat.minutes],
+        ["Position Played", stat.position_played],
+        ["Goals", stat.goals],
+        ["Assists", stat.assists],
+        ["Shots", stat.shots],
+        ["Shots on Target", stat.shots_on_target],
+        ["Shot Accuracy", percent(stat.shots_on_target, stat.shots)],
+        ["Chances Created", stat.chances_created],
+        ["Big Chances Created", stat.big_chances_created],
+        ["Big Chances Missed", stat.big_chances_missed],
+        ["Total Passes", stat.passes],
+        ["Accurate Passes", stat.accurate_passes],
+        ["Pass Accuracy", percent(stat.accurate_passes, stat.passes)],
+        ["Dribbles Attempted", stat.dribbles_attempted],
+        ["Successful Dribbles", stat.successful_dribbles],
+        ["Dribble Success Rate", percent(stat.successful_dribbles, stat.dribbles_attempted)],
+        ["Dispossessed", stat.dispossessed],
+        ["Tackles", stat.tackles],
+        ["Interceptions", stat.interceptions],
+        ["Clearances", stat.clearances],
+        ["Blocks", stat.blocks],
+        ["Fouls Committed", stat.fouls_committed],
+        ["Yellow Cards", stat.yellow_cards],
+        ["Red Cards", stat.red_cards],
+        ["Rating", stat.rating]
+      ];
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-indigo-100 text-xl font-black text-indigo-700">{initials(name)}</div>
+            <div>
+              <h3 className="text-2xl font-black">{name}</h3>
+              <p className="font-semibold text-slate-500">#{player?.shirt_number ?? "-"} · {stat.position_played ?? player?.football_position ?? player?.position ?? "POS"}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
+        </div>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map(([label, value]) => (
+            <div key={label} className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</p>
+              <p className="mt-2 text-xl font-black">{formatValue(value)}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -2238,22 +3121,128 @@ function StandingsView({ groupMode, teams }: { groupMode: boolean; teams: Standi
   );
 }
 
-function ReportsView({ data }: { data: AdminSeasonData }) {
-  const reportRows = [
-    ...(data.topScorer ? [["Top Scorer", data.topScorer.name, `${data.topScorer.goals} goals`]] : []),
-    ...(data.topRated ? [["Top Rated Player", data.topRated.name, `${data.topRated.rating} rating`]] : []),
-    ["Approved Teams", "Season", `${data.teams.length} teams`],
-    ["Completed Matches", "Season", `${data.completedMatches.length} matches`],
-    ["Pending Player Requests", "Season", `${data.playerRequests.length} requests`]
-  ] as Array<[string, string, string]>;
-
+function PlayerStatsView({ data }: { data: AdminSeasonData }) {
+  const [openCard, setOpenCard] = useState<StatCardData | null>(null);
   return (
-    <CrudPage
-      title="Reports"
-      subtitle="Reports update after confirmed match results."
-      columns={["Report", "Leader", "Metric"]}
-      rows={reportRows}
-    />
+    <div>
+      <PageTitle
+        title="Player Stats"
+        subtitle="Player leaderboards update after confirmed match simulations. xG/xA are intentionally not tracked in this project."
+      />
+      <LeaderboardSections title="Player Stats" sections={data.statsReport.player_sections} onOpen={setOpenCard} />
+      {openCard ? <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} /> : null}
+    </div>
+  );
+}
+
+function TeamStatsView({ data }: { data: AdminSeasonData }) {
+  const [openCard, setOpenCard] = useState<StatCardData | null>(null);
+  return (
+    <div>
+      <PageTitle
+        title="Team Stats"
+        subtitle="Team leaderboards update after confirmed match simulations. xG/xA are intentionally not tracked in this project."
+      />
+      <LeaderboardSections title="Team Stats" sections={data.statsReport.team_sections} onOpen={setOpenCard} />
+      {openCard ? <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} /> : null}
+    </div>
+  );
+}
+
+function LeaderboardSections({ title, sections, onOpen }: { title: string; sections: StatSectionData[]; onOpen: (card: StatCardData) => void }) {
+  const hasData = sections.some((section) => section.cards.some((card) => card.entries.length > 0));
+  return (
+    <section>
+      <h2 className="mb-4 text-2xl font-black">{title}</h2>
+      {!hasData ? <EmptyState label={`${title} will appear after confirmed match results generate stats.`} /> : null}
+      <div className="space-y-6">
+        {sections.map((section) => (
+          <div key={section.title}>
+            <h3 className="mb-3 text-lg font-black">{section.title}</h3>
+            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+              {section.cards.map((card) => (
+                <LeaderboardCard key={card.id} card={card} onOpen={() => onOpen(card)} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LeaderboardCard({ card, onOpen }: { card: StatCardData; onOpen: () => void }) {
+  const topEntries = card.entries.slice(0, 3);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-indigo-200 hover:shadow-xl active:translate-y-0 active:scale-[0.99]"
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h4 className="text-lg font-black">{card.title}</h4>
+        <span className="text-2xl font-black text-slate-300">›</span>
+      </div>
+      {topEntries.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm font-bold text-slate-500">No data yet.</div>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {topEntries.map((entry, index) => (
+            <LeaderboardEntryRow key={entry.id} entry={entry} rank={index + 1} />
+          ))}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function LeaderboardEntryRow({ entry, rank }: { entry: StatEntry; rank: number }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="w-5 text-sm font-black text-slate-400">{rank}</span>
+        <PlayerOrTeamAvatar entry={entry} />
+        <div className="min-w-0">
+          <p className="truncate font-black">{entry.name}</p>
+          <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-slate-500">
+            {entry.teamLogoUrl ? <img src={entry.teamLogoUrl} alt="" className="h-4 w-4 rounded-full object-cover" /> : null}
+            <span className="truncate">{entry.subLabel}</span>
+          </div>
+        </div>
+      </div>
+      <span className={`rounded-full px-3 py-1 text-sm font-black ${rank === 1 ? "bg-blue-500 text-white" : "text-slate-900"}`}>{entry.value}</span>
+    </div>
+  );
+}
+
+function PlayerOrTeamAvatar({ entry }: { entry: StatEntry }) {
+  const [failed, setFailed] = useState(false);
+  if (entry.logoUrl && !failed) {
+    return <img src={entry.logoUrl} alt={entry.name} onError={() => setFailed(true)} className="h-9 w-9 rounded-full object-cover" />;
+  }
+  return <div className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-xs font-black text-slate-700">{entry.initials}</div>;
+}
+
+function LeaderboardModal({ card, onClose }: { card: StatCardData; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
+      <div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">Full Leaderboard</p>
+            <h2 className="mt-1 text-2xl font-black">{card.title}</h2>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
+        </div>
+        {card.entries.length === 0 ? <EmptyState label="No data yet." /> : (
+          <div className="divide-y divide-slate-100">
+            {card.entries.map((entry, index) => (
+              <LeaderboardEntryRow key={entry.id} entry={entry} rank={index + 1} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -2730,11 +3719,12 @@ function StatusBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-function InfoBox({ label, value }: { label: string; value: string }) {
+function InfoBox({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-2 text-lg font-black">{value}</p>
+      {children}
     </div>
   );
 }

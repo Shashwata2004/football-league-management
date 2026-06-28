@@ -7,6 +7,7 @@ import {
   FootballPosition,
   generateFixturesSchema,
   playerAbilityDecisionSchema,
+  PlayerAbilityRating,
   PlayerLifecycleStatus,
   RegistrationStatus,
   registrationDecisionSchema,
@@ -237,10 +238,245 @@ adminRouter.get(
   asyncHandler(async (_req, res) => {
     const { data, error } = await supabaseAdmin
       .from("player_season_registrations")
-      .select("*,players(full_name,date_of_birth,nationality,id_type,id_number_last4),team_registrations(status,teams(name)),player_abilities(*)")
+      .select("*,players(full_name,date_of_birth,nationality,id_type,id_number_last4,avatar_url),team_registrations(status,teams(name)),player_abilities(*)")
       .order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ player_registrations: data });
+  })
+);
+
+adminRouter.get(
+  "/seasons/:seasonId/stat-leaderboards",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "Season id");
+    const [
+      teamRegistrationsResult,
+      playerRegistrationsResult,
+      standingsResult,
+      fixturesResult
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("team_registrations")
+        .select("id,season_id,status,teams(name,short_name,logo_url)")
+        .eq("season_id", seasonId),
+      supabaseAdmin
+        .from("player_season_registrations")
+        .select("id,season_id,team_registration_id,position,football_position,shirt_number,players(full_name,avatar_url)")
+        .eq("season_id", seasonId),
+      supabaseAdmin.from("standings").select("*").eq("season_id", seasonId),
+      supabaseAdmin
+        .from("fixtures")
+        .select("id,home_team_registration_id,away_team_registration_id,home_score,away_score,status")
+        .eq("season_id", seasonId)
+    ]);
+    if (teamRegistrationsResult.error) throw teamRegistrationsResult.error;
+    if (playerRegistrationsResult.error) throw playerRegistrationsResult.error;
+    if (standingsResult.error) throw standingsResult.error;
+    if (fixturesResult.error) throw fixturesResult.error;
+
+    const teamRegistrations = teamRegistrationsResult.data ?? [];
+    const playerRegistrations = playerRegistrationsResult.data ?? [];
+    const teamIds = teamRegistrations.map((team) => team.id);
+    const playerIds = playerRegistrations.map((player) => player.id);
+
+    const [playerSeasonStatsResult, playerMatchStatsResult, teamMatchStatsResult] = await Promise.all([
+      playerIds.length
+        ? supabaseAdmin.from("player_season_stats").select("*").eq("season_id", seasonId).in("player_registration_id", playerIds)
+        : Promise.resolve({ data: [], error: null }),
+      playerIds.length
+        ? supabaseAdmin.from("player_match_stats").select("*").in("player_registration_id", playerIds)
+        : Promise.resolve({ data: [], error: null }),
+      teamIds.length
+        ? supabaseAdmin.from("team_match_stats").select("*").in("team_registration_id", teamIds)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
+    if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
+    if (teamMatchStatsResult.error) throw teamMatchStatsResult.error;
+
+    const teamById = new Map(teamRegistrations.map((team) => [team.id, team]));
+    const playerById = new Map(playerRegistrations.map((player) => [player.id, player]));
+    const playerMatchStats = playerMatchStatsResult.data ?? [];
+
+    const playerRows = (playerSeasonStatsResult.data ?? []).map((seasonStat) => {
+      const player = playerById.get(seasonStat.player_registration_id);
+      const team = player ? teamById.get(player.team_registration_id) : null;
+      const matchRows = playerMatchStats.filter((row) => row.player_registration_id === seasonStat.player_registration_id);
+      const minutes = Number(seasonStat.minutes_played ?? 0);
+      const sum = (field: string) => matchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+      const gkRows = matchRows.filter((row) => row.position_played === FootballPosition.GK);
+      const cleanSheets = gkRows.filter((row) => Number(row.goals_conceded ?? 0) === 0 && Number(row.minutes ?? 0) >= 45).length;
+      return {
+        id: seasonStat.player_registration_id,
+        name: relatedName(player?.players, "full_name") ?? "Unnamed player",
+        avatarUrl: relatedName(player?.players, "avatar_url"),
+        team: relatedName(team?.teams, "name") ?? "Unassigned team",
+        teamLogoUrl: relatedName(team?.teams, "logo_url"),
+        minutes,
+        matches: Number(seasonStat.appearances ?? 0),
+        goals: Number(seasonStat.goals ?? 0),
+        assists: Number(seasonStat.assists ?? 0),
+        goalAssists: Number(seasonStat.goals ?? 0) + Number(seasonStat.assists ?? 0),
+        successfulDribblesPer90: per90(Number(seasonStat.successful_dribbles ?? 0), minutes),
+        shotsOnTargetPer90: per90(Number(seasonStat.shots_on_target ?? 0), minutes),
+        accuratePassesPer90: per90(Number(seasonStat.accurate_passes ?? 0), minutes),
+        bigChancesCreated: Number(seasonStat.big_chances_created ?? sum("big_chances_created") ?? 0),
+        bigChancesMissed: sum("big_chances_missed"),
+        tacklesPer90: per90(Number(seasonStat.tackles ?? 0), minutes),
+        interceptionsPer90: per90(Number(seasonStat.interceptions ?? 0), minutes),
+        blocksPer90: per90(sum("blocks"), minutes),
+        clearancesPer90: per90(sum("clearances"), minutes),
+        cleanSheets,
+        savesPer90: per90(sum("saves"), minutes),
+        goalsConcededPer90: per90(sum("goals_conceded"), minutes),
+        yellowCards: Number(seasonStat.yellow_cards ?? 0),
+        redCards: Number(seasonStat.red_cards ?? 0),
+        foulsCommittedPer90: per90(sum("fouls_committed"), minutes),
+        rating: Number(seasonStat.average_rating ?? 0)
+      };
+    });
+
+    const standingsByTeam = new Map((standingsResult.data ?? []).map((standing) => [standing.team_registration_id, standing]));
+    const fixtures = fixturesResult.data ?? [];
+    const teamMatchStats = teamMatchStatsResult.data ?? [];
+    const teamRows = teamRegistrations
+      .filter((team) => team.status === RegistrationStatus.APPROVED)
+      .map((team) => {
+        const teamStats = teamMatchStats.filter((row) => row.team_registration_id === team.id);
+        const standing = standingsByTeam.get(team.id);
+        const played = Math.max(Number(standing?.played ?? 0), teamStats.length);
+        const teamPlayers = playerRegistrations.filter((player) => player.team_registration_id === team.id).map((player) => player.id);
+        const teamPlayerMatchRows = playerMatchStats.filter((row) => teamPlayers.includes(row.player_registration_id));
+        const sumTeam = (field: string) => teamStats.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+        const sumPlayers = (field: string) => teamPlayerMatchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+        const cleanSheets = fixtures.filter((fixture) => {
+          if (fixture.status !== FixtureStatus.FINAL) return false;
+          if (fixture.home_team_registration_id === team.id) return Number(fixture.away_score ?? 0) === 0;
+          if (fixture.away_team_registration_id === team.id) return Number(fixture.home_score ?? 0) === 0;
+          return false;
+        }).length;
+        const teamMatchRatings = teamStats.map((teamStat) => {
+          const storedRating = Number(teamStat.rating ?? 0);
+          if (storedRating > 0) return storedRating;
+          const matchPlayerRatings = teamPlayerMatchRows
+            .filter((row) => row.fixture_id === teamStat.fixture_id)
+            .map((row) => Number(row.rating ?? 0))
+            .filter((rating) => rating > 0);
+          return avg(matchPlayerRatings);
+        }).filter((rating) => rating > 0);
+        return {
+          id: team.id,
+          name: relatedName(team.teams, "name") ?? "Unnamed team",
+          logoUrl: relatedName(team.teams, "logo_url"),
+          played,
+          avgPossession: avg(teamStats.map((row) => Number(row.possession ?? 0))),
+          rating: teamMatchRatings.length ? avg(teamMatchRatings) : 0,
+          goalsPerMatch: perMatch(Number(standing?.goals_for ?? 0), played),
+          shotsOnTargetPerMatch: perMatch(sumTeam("shots_on_target"), played),
+          bigChancesPerMatch: perMatch(sumTeam("big_chances"), played),
+          bigChancesMissedPerMatch: perMatch(sumTeam("big_chances_missed"), played),
+          accuratePassesPerMatch: perMatch(sumTeam("accurate_passes"), played),
+          cornersPerMatch: perMatch(sumTeam("corners"), played),
+          cleanSheets,
+          goalsConcededPerMatch: perMatch(Number(standing?.goals_against ?? 0), played),
+          tacklesPerMatch: perMatch(sumPlayers("tackles"), played),
+          clearancesPerMatch: perMatch(sumPlayers("clearances"), played),
+          penaltiesConceded: 0,
+          gkSavesPerMatch: perMatch(sumPlayers("saves"), played),
+          foulsPerMatch: perMatch(sumTeam("fouls"), played),
+          yellowCards: sumTeam("yellow_cards"),
+          redCards: sumTeam("red_cards")
+        };
+      });
+
+    res.json({
+      player_sections: [
+        {
+          title: "General",
+          cards: [
+            makeLeaderboard("minutes_played", "Minutes Played", playerRows, "minutes", "number"),
+            makeLeaderboard("rating", "Rating", playerRows, "rating", "decimal")
+          ]
+        },
+        {
+          title: "Attack",
+          cards: [
+            makeLeaderboard("top_scorer", "Top Scorer", playerRows, "goals", "number"),
+            makeLeaderboard("assists", "Assists", playerRows, "assists", "number"),
+            makeLeaderboard("goal_assists", "Goal + Assists", playerRows, "goalAssists", "number"),
+            makeLeaderboard("successful_dribbles_per_90", "Successful Dribbles per 90", playerRows, "successfulDribblesPer90", "decimal"),
+            makeLeaderboard("shots_on_target_per_90", "Shots on Target per 90", playerRows, "shotsOnTargetPer90", "decimal"),
+            makeLeaderboard("accurate_passes_per_90", "Accurate Passes per 90", playerRows, "accuratePassesPer90", "decimal"),
+            makeLeaderboard("big_chances_created", "Big Chances Created", playerRows, "bigChancesCreated", "number"),
+            makeLeaderboard("big_chances_missed", "Big Chances Missed", playerRows, "bigChancesMissed", "number")
+          ]
+        },
+        {
+          title: "Defense",
+          cards: [
+            makeLeaderboard("tackles_per_90", "Tackles per 90", playerRows, "tacklesPer90", "decimal"),
+            makeLeaderboard("interceptions_per_90", "Interceptions per 90", playerRows, "interceptionsPer90", "decimal"),
+            makeLeaderboard("blocks_per_90", "Blocks per 90", playerRows, "blocksPer90", "decimal"),
+            makeLeaderboard("clearances_per_90", "Clearances per 90", playerRows, "clearancesPer90", "decimal")
+          ]
+        },
+        {
+          title: "Goalkeeping",
+          cards: [
+            makeLeaderboard("clean_sheets", "Clean Sheets", playerRows, "cleanSheets", "number"),
+            makeLeaderboard("saves_per_90", "Saves per 90", playerRows, "savesPer90", "decimal"),
+            makeLeaderboard("goals_conceded_per_90", "Goals Conceded per 90", playerRows, "goalsConcededPer90", "decimal", "asc")
+          ]
+        },
+        {
+          title: "Discipline",
+          cards: [
+            makeLeaderboard("yellow_cards", "Yellow Cards", playerRows, "yellowCards", "number"),
+            makeLeaderboard("red_cards", "Red Cards", playerRows, "redCards", "number"),
+            makeLeaderboard("fouls_committed_per_90", "Fouls Committed per 90", playerRows, "foulsCommittedPer90", "decimal")
+          ]
+        }
+      ],
+      team_sections: [
+        {
+          title: "General",
+          cards: [
+            makeTeamLeaderboard("avg_possession", "Avg Possession", teamRows, "avgPossession", "percent"),
+            makeTeamLeaderboard("rating", "Rating", teamRows, "rating", "decimal")
+          ]
+        },
+        {
+          title: "Attack",
+          cards: [
+            makeTeamLeaderboard("goals_per_match", "Goals per Match", teamRows, "goalsPerMatch", "decimal"),
+            makeTeamLeaderboard("shots_on_target_per_match", "Shots on Target per Match", teamRows, "shotsOnTargetPerMatch", "decimal"),
+            makeTeamLeaderboard("big_chances", "Big Chances", teamRows, "bigChancesPerMatch", "decimal"),
+            makeTeamLeaderboard("big_chances_missed", "Big Chances Missed", teamRows, "bigChancesMissedPerMatch", "decimal"),
+            makeTeamLeaderboard("accurate_passes_per_match", "Accurate Passes per Match", teamRows, "accuratePassesPerMatch", "decimal"),
+            makeTeamLeaderboard("corners", "Corners", teamRows, "cornersPerMatch", "decimal")
+          ]
+        },
+        {
+          title: "Defense",
+          cards: [
+            makeTeamLeaderboard("clean_sheets", "Clean Sheets", teamRows, "cleanSheets", "number"),
+            makeTeamLeaderboard("goals_conceded_per_match", "Goals Conceded per Match", teamRows, "goalsConcededPerMatch", "decimal", "asc"),
+            makeTeamLeaderboard("tackles_per_match", "Tackles per Match", teamRows, "tacklesPerMatch", "decimal"),
+            makeTeamLeaderboard("clearances_per_match", "Clearances per Match", teamRows, "clearancesPerMatch", "decimal"),
+            makeTeamLeaderboard("penalties_conceded", "Penalties Conceded", teamRows, "penaltiesConceded", "number", "asc"),
+            makeTeamLeaderboard("gk_saves_per_match", "GK Saves per Match", teamRows, "gkSavesPerMatch", "decimal")
+          ]
+        },
+        {
+          title: "Discipline",
+          cards: [
+            makeTeamLeaderboard("fouls_per_match", "Fouls per Match", teamRows, "foulsPerMatch", "decimal", "asc"),
+            makeTeamLeaderboard("yellow_cards", "Yellow Cards", teamRows, "yellowCards", "number", "asc"),
+            makeTeamLeaderboard("red_cards", "Red Cards", teamRows, "redCards", "number", "asc")
+          ]
+        }
+      ]
+    });
   })
 );
 
@@ -299,6 +535,134 @@ adminRouter.patch(
         );
     }
     res.json({ player_registration: data });
+  })
+);
+
+adminRouter.post(
+  "/teams/:teamId/pending-players/rate-randomly",
+  asyncHandler(async (req, res) => {
+    const teamRegistrationId = routeParam(req.params.teamId, "Team registration id");
+    const seasonId = requiredBodyText(req.body?.seasonId, "Season id");
+    const rerate = Boolean(req.body?.rerate);
+    const teamRegistration = await getApprovedTeamRegistration(teamRegistrationId, seasonId);
+    let query = supabaseAdmin
+      .from("player_season_registrations")
+      .select("id,player_id,season_id,team_registration_id,position,football_position,status,player_status,ability_rating")
+      .eq("team_registration_id", teamRegistrationId)
+      .eq("season_id", seasonId)
+      .eq("status", RegistrationStatus.PENDING)
+      .neq("player_status", PlayerLifecycleStatus.REMOVED)
+      .neq("player_status", PlayerLifecycleStatus.SUSPENDED);
+    if (!rerate) query = query.is("ability_rating", null);
+    const { data: players, error } = await query;
+    if (error) throw error;
+    const pendingPlayers = players ?? [];
+    if (pendingPlayers.length === 0) return res.json({ player_registrations: [] });
+
+    const assignments = assignBellCurveRatings(pendingPlayers, `${teamRegistrationId}:${seasonId}:${Date.now()}`);
+    const abilityRows = assignments.map(({ player, tier }) => buildAbilityUpsertRow(player, tier, req.auth!.userId));
+    const { error: abilityError } = await supabaseAdmin
+      .from("player_abilities")
+      .upsert(abilityRows, { onConflict: "player_registration_id" });
+    if (abilityError) throw abilityError;
+
+    for (const tier of [PlayerAbilityRating.LOW, PlayerAbilityRating.MODERATE, PlayerAbilityRating.HIGH] as const) {
+      const ids = assignments.filter((assignment) => assignment.tier === tier).map((assignment) => assignment.player.id);
+      if (ids.length === 0) continue;
+      const { error: updateError } = await supabaseAdmin
+        .from("player_season_registrations")
+        .update({ ability_rating: tier, updated_at: new Date().toISOString() })
+        .in("id", ids);
+      if (updateError) throw updateError;
+    }
+
+    await supabaseAdmin.from("manager_messages").insert({
+      season_id: seasonId,
+      manager_id: teamRegistration.manager_id,
+      team_registration_id: teamRegistrationId,
+      related_type: "GENERAL_NOTICE",
+      message: `${assignments.length} pending players were ${rerate ? "re-rated" : "rated"} automatically by admin.`,
+      created_by: req.auth!.userId
+    });
+
+    const { data: updated, error: updatedError } = await supabaseAdmin
+      .from("player_season_registrations")
+      .select("*,players(full_name,date_of_birth,nationality,id_type,id_number_last4),team_registrations(status,teams(name)),player_abilities(*)")
+      .in("id", assignments.map((assignment) => assignment.player.id));
+    if (updatedError) throw updatedError;
+    res.json({ player_registrations: updated ?? [] });
+  })
+);
+
+adminRouter.post(
+  "/teams/:teamId/pending-players/approve-all-rated",
+  asyncHandler(async (req, res) => {
+    const teamRegistrationId = routeParam(req.params.teamId, "Team registration id");
+    const seasonId = requiredBodyText(req.body?.seasonId, "Season id");
+    const teamRegistration = await getApprovedTeamRegistration(teamRegistrationId, seasonId);
+    const { data: pendingPlayers, error } = await supabaseAdmin
+      .from("player_season_registrations")
+      .select("id,season_id,ability_rating,status,player_status")
+      .eq("team_registration_id", teamRegistrationId)
+      .eq("season_id", seasonId)
+      .eq("status", RegistrationStatus.PENDING)
+      .neq("player_status", PlayerLifecycleStatus.REMOVED)
+      .neq("player_status", PlayerLifecycleStatus.SUSPENDED);
+    if (error) throw error;
+    const rows = pendingPlayers ?? [];
+    const unrated = rows.filter((player) => !player.ability_rating);
+    if (unrated.length > 0) throw new AppError(400, "Some pending players are not rated yet.");
+    if (rows.length === 0) return res.json({ player_registrations: [] });
+
+    const ids = rows.map((player) => player.id);
+    const { data: abilityRows, error: abilityError } = await supabaseAdmin
+      .from("player_abilities")
+      .select("player_registration_id")
+      .in("player_registration_id", ids);
+    if (abilityError) throw abilityError;
+    const abilityIds = new Set((abilityRows ?? []).map((row) => row.player_registration_id));
+    if (ids.some((id) => !abilityIds.has(id))) throw new AppError(400, "Some pending players are not rated yet.");
+
+    const { data: approved, error: updateError } = await supabaseAdmin
+      .from("player_season_registrations")
+      .update({
+        status: RegistrationStatus.APPROVED,
+        player_status: PlayerLifecycleStatus.ACTIVE,
+        reviewed_by: req.auth!.userId,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .in("id", ids)
+      .select("*");
+    if (updateError) throw updateError;
+
+    const statsRows = (approved ?? []).map((player) => ({
+      season_id: player.season_id,
+      player_registration_id: player.id,
+      appearances: 0,
+      goals: 0,
+      assists: 0,
+      yellow_cards: 0,
+      red_cards: 0,
+      average_rating: null
+    }));
+    if (statsRows.length > 0) {
+      const { error: statsError } = await supabaseAdmin
+        .from("player_season_stats")
+        .upsert(statsRows, { onConflict: "season_id,player_registration_id" });
+      if (statsError) throw statsError;
+    }
+
+    await supabaseAdmin.from("manager_messages").insert({
+      season_id: seasonId,
+      manager_id: teamRegistration.manager_id,
+      team_registration_id: teamRegistrationId,
+      related_type: "GENERAL_NOTICE",
+      message: `${approved?.length ?? 0} rated pending players were approved. They are now available for lineup selection.`,
+      created_by: req.auth!.userId
+    });
+
+    res.json({ player_registrations: approved ?? [] });
   })
 );
 
@@ -753,6 +1117,46 @@ adminRouter.post(
   })
 );
 
+adminRouter.get(
+  "/matches/:fixtureId/detail",
+  asyncHandler(async (req, res) => {
+    const fixtureId = routeParam(req.params.fixtureId, "Fixture id");
+    const fixture = await getFixture(fixtureId);
+    const [
+      lineupsResult,
+      teamStatsResult,
+      playerStatsResult,
+      eventsResult,
+      substitutionsResult
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("lineups")
+        .select("*,lineup_players(*,player_season_registrations(id,shirt_number,football_position,position,players(full_name,avatar_url)))")
+        .eq("fixture_id", fixture.id),
+      supabaseAdmin.from("team_match_stats").select("*").eq("fixture_id", fixture.id),
+      supabaseAdmin
+        .from("player_match_stats")
+        .select("*,player_season_registrations(id,shirt_number,football_position,position,players(full_name,avatar_url))")
+        .eq("fixture_id", fixture.id),
+      supabaseAdmin.from("match_events").select("*").eq("fixture_id", fixture.id).order("minute", { ascending: true }),
+      supabaseAdmin.from("match_substitutions").select("*").eq("fixture_id", fixture.id).order("minute", { ascending: true })
+    ]);
+    if (lineupsResult.error) throw lineupsResult.error;
+    if (teamStatsResult.error) throw teamStatsResult.error;
+    if (playerStatsResult.error) throw playerStatsResult.error;
+    if (eventsResult.error) throw eventsResult.error;
+    if (substitutionsResult.error) throw substitutionsResult.error;
+    res.json({
+      fixture,
+      lineups: lineupsResult.data ?? [],
+      team_stats: teamStatsResult.data ?? [],
+      player_stats: playerStatsResult.data ?? [],
+      events: eventsResult.data ?? [],
+      substitutions: substitutionsResult.data ?? []
+    });
+  })
+);
+
 adminRouter.patch(
   "/matches/simulation",
   asyncHandler(async (req, res) => {
@@ -850,6 +1254,143 @@ function requiredBodyText(value: unknown, label: string) {
 function routeParam(value: string | string[] | undefined, label: string) {
   if (typeof value !== "string" || !value.trim()) throw new AppError(400, `${label} is required.`);
   return value;
+}
+
+type BulkRatingTier = typeof PlayerAbilityRating.LOW | typeof PlayerAbilityRating.MODERATE | typeof PlayerAbilityRating.HIGH;
+type BulkRatingPlayer = {
+  id: string;
+  player_id: string;
+  season_id: string;
+  team_registration_id: string;
+  position: string;
+  football_position?: string | null;
+};
+
+async function getApprovedTeamRegistration(teamRegistrationId: string, seasonId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("team_registrations")
+    .select("id,season_id,manager_id,status")
+    .eq("id", teamRegistrationId)
+    .eq("season_id", seasonId)
+    .single();
+  if (error) throw error;
+  if (data.status !== RegistrationStatus.APPROVED) throw new AppError(400, "Approve the team before rating or approving its players.");
+  return data;
+}
+
+function seededRandom(seed: string) {
+  let hash = 2166136261;
+  for (const char of seed) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  let state = hash >>> 0;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffled<T>(items: T[], seed: string) {
+  const random = seededRandom(seed);
+  const copy = [...items];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [copy[index], copy[swapIndex]] = [copy[swapIndex]!, copy[index]!];
+  }
+  return copy;
+}
+
+function getBulkRatingCounts(total: number, seed: string) {
+  if (total <= 0) return { low: 0, moderate: 0, high: 0 };
+  const random = seededRandom(`${seed}:counts`);
+  if (total < 4) {
+    const high = total >= 3 && random() > 0.72 ? 1 : 0;
+    const low = total >= 3 && high === 0 && random() > 0.72 ? 1 : 0;
+    return { low, high, moderate: total - low - high };
+  }
+
+  const baseExtreme = Math.max(1, Math.round(total * 0.15));
+  const allowException = total >= 10 && random() > 0.78;
+  const jitter = () => (allowException && random() > 0.5 ? 1 : random() < 0.18 ? -1 : 0);
+  const maxExtreme = Math.max(1, Math.floor(total * 0.25));
+  let low = Math.max(1, Math.min(maxExtreme, baseExtreme + jitter()));
+  let high = Math.max(1, Math.min(maxExtreme, baseExtreme + jitter()));
+  let moderate = total - low - high;
+
+  while (moderate <= Math.max(low, high) && (low > 1 || high > 1)) {
+    if (low >= high && low > 1) low -= 1;
+    else if (high > 1) high -= 1;
+    moderate = total - low - high;
+  }
+
+  return { low, moderate, high };
+}
+
+function assignBellCurveRatings(players: BulkRatingPlayer[], seed: string) {
+  const counts = getBulkRatingCounts(players.length, seed);
+  const order = shuffled(players, `${seed}:players`);
+  const assignments: Array<{ player: BulkRatingPlayer; tier: BulkRatingTier }> = [];
+  for (const player of order.slice(0, counts.low)) assignments.push({ player, tier: PlayerAbilityRating.LOW });
+  for (const player of order.slice(counts.low, counts.low + counts.high)) assignments.push({ player, tier: PlayerAbilityRating.HIGH });
+  for (const player of order.slice(counts.low + counts.high)) assignments.push({ player, tier: PlayerAbilityRating.MODERATE });
+  return shuffled(assignments, `${seed}:assignments`);
+}
+
+function buildAbilityUpsertRow(registration: BulkRatingPlayer, tier: BulkRatingTier, adminId: string) {
+  const footballPosition = (registration.football_position as FootballPosition | null) ?? coarseToFootballPosition(registration.position);
+  const generated = generateAbilityScores(tier, footballPosition, `${registration.id}:${tier}:${footballPosition}`);
+  const base = {
+    player_registration_id: registration.id,
+    player_id: registration.player_id,
+    season_id: registration.season_id,
+    team_registration_id: registration.team_registration_id,
+    position: generated.position,
+    rating_tier: generated.rating_tier,
+    overall_rating: generated.overall_rating,
+    generated_by_admin_id: adminId,
+    generated_at: new Date().toISOString(),
+    is_hidden_from_manager: true
+  };
+  if (generated.position === FootballPosition.GK) {
+    return {
+      ...base,
+      shooting: null,
+      passing: null,
+      dribbling: null,
+      defending: null,
+      pace: null,
+      stamina: null,
+      physical: generated.physical,
+      shot_stopping: generated.shot_stopping,
+      reflexes: generated.reflexes,
+      positioning: generated.positioning,
+      handling: generated.handling,
+      diving: generated.diving,
+      distribution: generated.distribution,
+      communication: generated.communication
+    };
+  }
+  return {
+    ...base,
+    shooting: generated.shooting,
+    passing: generated.passing,
+    dribbling: generated.dribbling,
+    defending: generated.defending,
+    physical: generated.physical,
+    pace: generated.pace,
+    stamina: generated.stamina,
+    shot_stopping: null,
+    reflexes: null,
+    positioning: null,
+    handling: null,
+    diving: null,
+    distribution: null,
+    communication: null
+  };
 }
 
 async function getPlayerRegistrationForAction(playerRegistrationId: string) {
@@ -1037,6 +1578,98 @@ function teamStatsRow(fixtureId: string, teamRegistrationId: string, stats: SimT
   };
 }
 
+function relatedName(value: unknown, key: string) {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (!row || typeof row !== "object" || !(key in row)) return null;
+  const resolved = (row as Record<string, unknown>)[key];
+  return typeof resolved === "string" && resolved.trim() ? resolved : null;
+}
+
+function per90(value: number, minutes: number) {
+  if (!minutes || minutes <= 0) return 0;
+  return Number(((value / minutes) * 90).toFixed(2));
+}
+
+function perMatch(value: number, matches: number) {
+  if (!matches || matches <= 0) return 0;
+  return Number((value / matches).toFixed(2));
+}
+
+function avg(values: number[]) {
+  const valid = values.filter((value) => Number.isFinite(value) && value > 0);
+  if (valid.length === 0) return 0;
+  return Number((valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(2));
+}
+
+type LeaderboardDirection = "asc" | "desc";
+type LeaderboardFormat = "number" | "decimal" | "percent";
+
+function formatLeaderboardValue(value: number, format: LeaderboardFormat) {
+  if (format === "percent") return `${Math.round(value)}%`;
+  if (format === "decimal") return value.toFixed(2).replace(/\.00$/, "");
+  return String(Math.round(value));
+}
+
+function makeLeaderboard<T extends { id: string; name: string; team: string; teamLogoUrl: string | null; avatarUrl: string | null }>(
+  id: string,
+  title: string,
+  rows: T[],
+  field: keyof T,
+  format: LeaderboardFormat,
+  direction: LeaderboardDirection = "desc"
+) {
+  const entries = rows
+    .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
+    .filter(({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0)
+    .sort((a, b) => (direction === "asc" ? a.numericValue - b.numericValue : b.numericValue - a.numericValue))
+    .map(({ row, numericValue }) => ({
+      id: row.id,
+      name: row.name,
+      subLabel: row.team,
+      logoUrl: row.avatarUrl,
+      teamLogoUrl: row.teamLogoUrl,
+      initials: row.name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? "")
+        .join("") || "NA",
+      value: formatLeaderboardValue(numericValue, format),
+      numericValue
+    }));
+  return { id, title, entries };
+}
+
+function makeTeamLeaderboard<T extends { id: string; name: string; logoUrl: string | null }>(
+  id: string,
+  title: string,
+  rows: T[],
+  field: keyof T,
+  format: LeaderboardFormat,
+  direction: LeaderboardDirection = "desc"
+) {
+  const entries = rows
+    .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
+    .filter(({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0)
+    .sort((a, b) => (direction === "asc" ? a.numericValue - b.numericValue : b.numericValue - a.numericValue))
+    .map(({ row, numericValue }) => ({
+      id: row.id,
+      name: row.name,
+      subLabel: "Team",
+      logoUrl: row.logoUrl,
+      teamLogoUrl: row.logoUrl,
+      initials: row.name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? "")
+        .join("") || "TM",
+      value: formatLeaderboardValue(numericValue, format),
+      numericValue
+    }));
+  return { id, title, entries };
+}
+
 async function getOrCreateStanding(seasonId: string, teamRegistrationId: string) {
   const { data, error } = await supabaseAdmin
     .from("standings")
@@ -1076,6 +1709,7 @@ async function rollupPlayerStats(fixtureId: string, seasonId: string) {
       shots: (current?.shots ?? 0) + stat.shots,
       shots_on_target: (current?.shots_on_target ?? 0) + (stat.shots_on_target ?? 0),
       chances_created: (current?.chances_created ?? 0) + (stat.chances_created ?? 0),
+      big_chances_created: (current?.big_chances_created ?? 0) + (stat.big_chances_created ?? 0),
       total_passes: (current?.total_passes ?? 0) + stat.passes,
       accurate_passes: (current?.accurate_passes ?? 0) + stat.accurate_passes,
       dribbles_attempted: (current?.dribbles_attempted ?? 0) + stat.dribbles_attempted,

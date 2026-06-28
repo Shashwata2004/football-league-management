@@ -76,6 +76,10 @@ interface TeamRecord {
     primary_color?: string | null;
     secondary_color?: string | null;
     accent_color?: string | null;
+    home_jersey_url?: string | null;
+    away_jersey_url?: string | null;
+    gk_home_jersey_url?: string | null;
+    gk_away_jersey_url?: string | null;
   } | null;
   seasons?: Season | Season[] | null;
 }
@@ -105,6 +109,10 @@ interface PlayerRecord {
     generated_identity_number?: string | null;
     avatar_url?: string | null;
   } | null;
+  player_abilities?: Array<{
+    rating_tier?: "LOW" | "MODERATE" | "HIGH" | null;
+    overall_rating?: number | null;
+  }> | null;
 }
 
 type PositionBreakdown = Record<FootballPosition, number>;
@@ -206,6 +214,8 @@ const positions = [
 ];
 
 const teamColorPalette = [
+  "#FFFFFF", "#FAFAFA", "#F8FAFC", "#F1F5F9", "#E2E8F0",
+  "#E5E7EB", "#D1D5DB", "#CBD5E1", "#F3F4F6", "#F5F5F5",
   "#111827", "#1F2937", "#374151", "#4B5563", "#6B7280",
   "#0F172A", "#1E293B", "#334155", "#475569", "#64748B",
   "#581C87", "#6D28D9", "#7E22CE", "#9333EA", "#A855F7",
@@ -232,6 +242,52 @@ function statusClass(status?: string | null) {
     return "bg-red-50 text-red-700 ring-red-200";
   }
   return "bg-purple-50 text-purple-700 ring-purple-200";
+}
+
+function cleanUrl(value: string) {
+  return value.trim() || null;
+}
+
+type TeamJerseyFields = Pick<
+  NonNullable<TeamRecord["teams"]>,
+  "home_jersey_url" | "away_jersey_url" | "gk_home_jersey_url" | "gk_away_jersey_url"
+>;
+
+function assertJerseySave(requested: TeamJerseyFields, saved: TeamJerseyFields | null | undefined) {
+  const hasRequestedJersey = Object.values(requested).some(Boolean);
+  if (!hasRequestedJersey) return;
+  if (!saved) {
+    throw new Error("Jersey URLs were not saved. Restart the backend/frontend and try again.");
+  }
+  const fields = ["home_jersey_url", "away_jersey_url", "gk_home_jersey_url", "gk_away_jersey_url"] as const;
+  const failed = fields.some((field) => (requested[field] ?? null) !== (saved[field] ?? null));
+  if (failed) {
+    throw new Error("Jersey URLs were not saved by the server. Restart pnpm dev, then submit again.");
+  }
+}
+
+function displayPlayerStatus(player: PlayerRecord) {
+  if (player.player_status === "REMOVED" || player.player_status === "SUSPENDED") return player.player_status;
+  return player.status;
+}
+
+function playerOverall(player: PlayerRecord) {
+  return one(player.player_abilities)?.overall_rating ?? null;
+}
+
+function playerRatingTier(player: PlayerRecord) {
+  return one(player.player_abilities)?.rating_tier ?? null;
+}
+
+function overallCapsule(value?: number | null, tier?: string | null) {
+  if (value === null || value === undefined) return <span className="text-xs font-bold text-slate-400">N/A</span>;
+  const cls =
+    tier === "HIGH"
+      ? "bg-sky-100 text-sky-700 ring-sky-200"
+      : tier === "MODERATE"
+        ? "bg-green-100 text-green-700 ring-green-200"
+        : "bg-amber-100 text-amber-700 ring-amber-200";
+  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${cls}`}>{value}</span>;
 }
 
 function formatDate(value?: string | null) {
@@ -314,6 +370,12 @@ export default function ManagerDashboardPage() {
   const teamSecondary = activeTeam?.teams?.secondary_color || "#111827";
   const teamAccent = activeTeam?.teams?.accent_color || "#F59E0B";
   const teamText = getReadableTextColor(teamPrimary);
+  const sidebarText = getReadableTextColor(teamSecondary);
+  const sidebarUsesDarkText = sidebarText === "#111827";
+  const sidebarMutedText = sidebarUsesDarkText ? "#475569" : "#CBD5E1";
+  const sidebarBorder = sidebarUsesDarkText ? "rgba(15, 23, 42, 0.12)" : "rgba(255, 255, 255, 0.12)";
+  const sidebarPanel = sidebarUsesDarkText ? "rgba(15, 23, 42, 0.04)" : "rgba(255, 255, 255, 0.06)";
+  const sidebarHover = sidebarUsesDarkText ? "rgba(15, 23, 42, 0.08)" : "rgba(255, 255, 255, 0.12)";
 
   return (
     <div
@@ -323,7 +385,12 @@ export default function ManagerDashboardPage() {
           "--team-primary": teamPrimary,
           "--team-secondary": teamSecondary,
           "--team-accent": teamAccent,
-          "--team-primary-text": teamText
+          "--team-primary-text": teamText,
+          "--team-sidebar-text": sidebarText,
+          "--team-sidebar-muted": sidebarMutedText,
+          "--team-sidebar-border": sidebarBorder,
+          "--team-sidebar-panel": sidebarPanel,
+          "--team-sidebar-hover": sidebarHover
         } as CSSProperties
       }
     >
@@ -366,6 +433,7 @@ export default function ManagerDashboardPage() {
               onCreateTeam={() => void load().catch((error) => setMessage(error.message))}
               onGenerate={() => setGenerateOpen(true)}
               onPlayerClick={setSelectedPlayer}
+              onSectionChange={setSection}
             />
           )}
         </div>
@@ -425,22 +493,22 @@ function ManagerSidebar({
   onSection: (section: Section) => void;
 }) {
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col bg-[var(--team-secondary)] text-white shadow-2xl lg:flex">
-      <div className="flex items-center gap-3 border-b border-white/10 px-6 py-6">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col bg-[var(--team-secondary)] text-[var(--team-sidebar-text)] shadow-2xl lg:flex">
+      <div className="flex items-center gap-3 border-b border-[var(--team-sidebar-border)] px-6 py-6">
         <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--team-primary)]">
           <Trophy size={22} />
         </div>
         <div>
           <p className="text-lg font-black tracking-wide">Scoreline</p>
-          <p className="text-xs uppercase tracking-[0.3em] text-purple-200">Manager</p>
+          <p className="text-xs uppercase tracking-[0.3em] text-[var(--team-sidebar-muted)]">Manager</p>
         </div>
       </div>
-      <div className="mx-4 mt-5 rounded-3xl border border-white/10 bg-white/5 p-4">
+      <div className="mx-4 mt-5 rounded-3xl border border-[var(--team-sidebar-border)] bg-[var(--team-sidebar-panel)] p-4">
         <div className="flex items-center gap-3">
           <Avatar name={profile?.full_name ?? profile?.email ?? "Manager"} />
           <div className="min-w-0">
             <p className="truncate font-semibold">{profile?.full_name ?? "Manager"}</p>
-            <p className="truncate text-xs text-slate-300">{activeTeam?.teams?.name ?? "No team selected"}</p>
+            <p className="truncate text-xs text-[var(--team-sidebar-muted)]">{activeTeam?.teams?.name ?? "No team selected"}</p>
           </div>
         </div>
       </div>
@@ -448,8 +516,10 @@ function ManagerSidebar({
         {menu.map((item) => (
           <button
             key={item.label}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-all duration-200 ${
-              section === item.label ? "bg-[var(--team-primary)] text-[var(--team-primary-text)] shadow-lg shadow-purple-950/30" : "text-slate-300 hover:bg-white/10 hover:text-white"
+            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-black tracking-wide transition-all duration-200 ${
+              section === item.label
+                ? "bg-[var(--team-primary)] text-[var(--team-primary-text)] shadow-lg shadow-purple-950/30"
+                : "text-[var(--team-sidebar-text)] hover:bg-[var(--team-sidebar-hover)] hover:text-[var(--team-sidebar-text)]"
             }`}
             onClick={() => onSection(item.label)}
           >
@@ -462,7 +532,7 @@ function ManagerSidebar({
         ))}
       </nav>
       <button
-        className="m-4 flex items-center gap-3 rounded-2xl border border-white/10 px-4 py-3 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white"
+        className="m-4 flex items-center gap-3 rounded-2xl border border-[var(--team-sidebar-border)] px-4 py-3 text-sm font-black tracking-wide text-[var(--team-sidebar-text)] transition hover:bg-[var(--team-sidebar-hover)]"
         onClick={() => {
           clearAuth();
           window.location.href = "/login";
@@ -545,6 +615,7 @@ function SectionView(props: {
   onCreateTeam: () => void;
   onGenerate: () => void;
   onPlayerClick: (player: PlayerRecord) => void;
+  onSectionChange: (section: Section) => void;
 }) {
   if (!props.activeTeam && props.section !== "Profile & Settings") {
     return <CreateTeamEmpty leagues={props.leagues} onCreated={props.onCreateTeam} />;
@@ -569,7 +640,8 @@ function DashboardSection({
   fixtures,
   results,
   messages,
-  onGenerate
+  onGenerate,
+  onSectionChange
 }: Parameters<typeof SectionView>[0]) {
   const nextMatch = fixtures.find((fixture) => fixture.status !== "FINAL");
   const latestResult = results[0];
@@ -611,13 +683,14 @@ function DashboardSection({
           )}
         </Panel>
       </div>
+      <TeamJerseysPanel team={activeTeam} />
       <Panel title="Quick Actions">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <ActionButton label="Open My Team" />
+          <ActionButton label="Open My Team" onClick={() => onSectionChange("My Team")} />
           <ActionButton label="Generate Squad" onClick={onGenerate} />
-          <ActionButton label="Add Player" />
-          <ActionButton label="Submit Lineup" />
-          <ActionButton label="View Fixtures" />
+          <ActionButton label="Add Player" onClick={() => onSectionChange("Players")} />
+          <ActionButton label="Submit Lineup" onClick={() => onSectionChange("Submit Lineup")} />
+          <ActionButton label="View Fixtures" onClick={() => onSectionChange("Fixtures")} />
         </div>
       </Panel>
     </div>
@@ -626,7 +699,6 @@ function DashboardSection({
 
 function MyTeamSection({ activeTeam, activeSeason, activeLeague, summary, onGenerate, onRefresh }: Parameters<typeof SectionView>[0]) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const canEditTeam = activeTeam?.status === RegistrationStatus.DRAFT || activeTeam?.status === RegistrationStatus.PENDING;
   return (
     <div className="space-y-6">
       <PageTitle title="My Team" subtitle="Team profile, admin status, and squad capacity." />
@@ -639,13 +711,15 @@ function MyTeamSection({ activeTeam, activeSeason, activeLeague, summary, onGene
           <Detail label="Primary Color" value={activeTeam?.teams?.primary_color || "#6D28D9"} />
           <Detail label="Secondary Color" value={activeTeam?.teams?.secondary_color || "#0B1626"} />
           <Detail label="Accent Color" value={activeTeam?.teams?.accent_color || "#16A34A"} />
+          <Detail label="Home Jersey URL" value={activeTeam?.teams?.home_jersey_url || "Not set"} />
+          <Detail label="Away Jersey URL" value={activeTeam?.teams?.away_jersey_url || "Not set"} />
+          <Detail label="GK Home Jersey URL" value={activeTeam?.teams?.gk_home_jersey_url || "Not set"} />
+          <Detail label="GK Away Jersey URL" value={activeTeam?.teams?.gk_away_jersey_url || "Not set"} />
           <Detail label="Registered Date" value={activeTeam?.created_at ? formatDate(activeTeam.created_at) : "-"} />
           <Detail label="Team Status" value={activeTeam?.status} />
-          {canEditTeam ? (
-            <button className="mt-5 rounded-2xl border border-purple-200 bg-purple-50 px-5 py-3 text-sm font-bold text-[var(--team-primary)] transition hover:-translate-y-0.5 hover:bg-purple-100" onClick={() => setSettingsOpen(true)}>
-              Team Settings
-            </button>
-          ) : null}
+          <button className="mt-5 rounded-2xl border border-purple-200 bg-purple-50 px-5 py-3 text-sm font-bold text-[var(--team-primary)] transition hover:-translate-y-0.5 hover:bg-purple-100" onClick={() => setSettingsOpen(true)}>
+            Team Settings
+          </button>
         </Panel>
         <Panel title="Squad Summary">
           <StatGrid summary={summary} />
@@ -674,6 +748,20 @@ function PlayersSection({ players, summary, onGenerate, onPlayerClick, activeTea
   const [positionFilter, setPositionFilter] = useState("ALL");
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<PlayerRecord | null>(null);
+  const [minifaceDrafts, setMinifaceDrafts] = useState<Record<string, string>>({});
+  const [savingMinifaces, setSavingMinifaces] = useState(false);
+  const [minifaceError, setMinifaceError] = useState("");
+
+  useEffect(() => {
+    setMinifaceDrafts((current) => {
+      const next: Record<string, string> = {};
+      players.forEach((player) => {
+        next[player.id] = current[player.id] ?? player.players?.avatar_url ?? "";
+      });
+      return next;
+    });
+  }, [players]);
+
   const statusFiltered = tab === "ALL" ? players : players.filter((player) => player.status === tab || player.player_status === tab);
   const positionFiltered =
     positionFilter === "ALL" ? statusFiltered : statusFiltered.filter((player) => (player.position_category ?? "").toUpperCase() === positionFilter);
@@ -681,6 +769,14 @@ function PlayersSection({ players, summary, onGenerate, onPlayerClick, activeTea
     const text = `${player.players?.full_name ?? ""} ${player.player_code ?? ""} ${player.shirt_number ?? ""}`.toLowerCase();
     return text.includes(query.trim().toLowerCase());
   });
+  const dirtyMinifaceUpdates = players
+    .map((player) => ({
+      player_registration_id: player.id,
+      avatar_url: (minifaceDrafts[player.id] ?? "").trim(),
+      current_avatar_url: player.players?.avatar_url ?? ""
+    }))
+    .filter((update) => update.avatar_url !== update.current_avatar_url);
+
   async function submitAll() {
     const ids = players.filter((player) => player.status === RegistrationStatus.DRAFT).map((player) => player.id);
     if (!activeTeam || ids.length === 0) return;
@@ -690,6 +786,27 @@ function PlayersSection({ players, summary, onGenerate, onPlayerClick, activeTea
   async function removePlayer(player: PlayerRecord) {
     await api(`/manager/players/${player.id}`, { method: "DELETE" });
     onRefresh();
+  }
+  async function saveAllMinifaces() {
+    if (dirtyMinifaceUpdates.length === 0) return;
+    setSavingMinifaces(true);
+    setMinifaceError("");
+    try {
+      await api("/manager/players/minifaces", {
+        method: "PATCH",
+        body: JSON.stringify({
+          updates: dirtyMinifaceUpdates.map((update) => ({
+            player_registration_id: update.player_registration_id,
+            avatar_url: update.avatar_url || null
+          }))
+        })
+      });
+      onRefresh();
+    } catch (err) {
+      setMinifaceError(err instanceof Error ? err.message : "Failed to save miniface URLs");
+    } finally {
+      setSavingMinifaces(false);
+    }
   }
   return (
     <div className="space-y-6">
@@ -704,7 +821,15 @@ function PlayersSection({ players, summary, onGenerate, onPlayerClick, activeTea
         <button className="rounded-2xl border border-green-200 bg-green-50 px-5 py-3 text-sm font-bold text-green-700 transition hover:bg-green-100" onClick={() => void submitAll()}>
           Submit Draft Players
         </button>
+        <button
+          className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-3 text-sm font-bold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={dirtyMinifaceUpdates.length === 0 || savingMinifaces}
+          onClick={() => void saveAllMinifaces()}
+        >
+          {savingMinifaces ? "Saving Minifaces..." : `Save All Minifaces${dirtyMinifaceUpdates.length ? ` (${dirtyMinifaceUpdates.length})` : ""}`}
+        </button>
       </div>
+      {minifaceError ? <div className="rounded-2xl bg-red-50 p-3 text-sm font-bold text-red-700">{minifaceError}</div> : null}
       <div className="grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 md:grid-cols-[1fr_auto]">
         <input
           className="manager-input"
@@ -723,6 +848,8 @@ function PlayersSection({ players, summary, onGenerate, onPlayerClick, activeTea
         onPlayerClick={onPlayerClick}
         onEdit={setEditing}
         onRemove={(player) => void removePlayer(player)}
+        minifaceDrafts={minifaceDrafts}
+        onMinifaceChange={(playerId, value) => setMinifaceDrafts((current) => ({ ...current, [playerId]: value }))}
         emptyLabel={summary?.total ? "No players match this filter." : "No players yet. Click Generate Squad to create your squad."}
       />
       {editing ? (
@@ -906,6 +1033,10 @@ function CreateTeamEmpty({ leagues, onCreated }: { leagues: League[]; onCreated:
   const [primaryColor, setPrimaryColor] = useState("#6D28D9");
   const [secondaryColor, setSecondaryColor] = useState("#111827");
   const [accentColor, setAccentColor] = useState("#F59E0B");
+  const [homeJerseyUrl, setHomeJerseyUrl] = useState("");
+  const [awayJerseyUrl, setAwayJerseyUrl] = useState("");
+  const [gkHomeJerseyUrl, setGkHomeJerseyUrl] = useState("");
+  const [gkAwayJerseyUrl, setGkAwayJerseyUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -914,18 +1045,26 @@ function CreateTeamEmpty({ leagues, onCreated }: { leagues: League[]; onCreated:
     setSaving(true);
     setError("");
     try {
-      await api("/manager/teams", {
+      const requestedJerseys = {
+        home_jersey_url: cleanUrl(homeJerseyUrl),
+        away_jersey_url: cleanUrl(awayJerseyUrl),
+        gk_home_jersey_url: cleanUrl(gkHomeJerseyUrl),
+        gk_away_jersey_url: cleanUrl(gkAwayJerseyUrl)
+      };
+      const created = await api<{ team?: NonNullable<TeamRecord["teams"]>; team_registration?: TeamRecord }>("/manager/teams", {
         method: "POST",
         body: JSON.stringify({
           season_id: seasonId,
           name,
           short_name: shortName,
-          logo_url: logoUrl || undefined,
+          logo_url: cleanUrl(logoUrl),
           primary_color: primaryColor,
           secondary_color: secondaryColor,
-          accent_color: accentColor
+          accent_color: accentColor,
+          ...requestedJerseys
         })
       });
+      assertJerseySave(requestedJerseys, created.team_registration?.teams ?? created.team);
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create team");
@@ -950,6 +1089,12 @@ function CreateTeamEmpty({ leagues, onCreated }: { leagues: League[]; onCreated:
           <input className="manager-input" placeholder="Team name" value={name} onChange={(event) => setName(event.target.value)} required />
           <input className="manager-input" placeholder="Team short name" value={shortName} onChange={(event) => setShortName(event.target.value)} required />
           <input className="manager-input" placeholder="Team logo URL (optional)" value={logoUrl} onChange={(event) => setLogoUrl(event.target.value)} />
+          <div className="grid gap-3 md:grid-cols-2">
+            <input className="manager-input" placeholder="Home jersey URL (optional)" value={homeJerseyUrl} onChange={(event) => setHomeJerseyUrl(event.target.value)} />
+            <input className="manager-input" placeholder="Away jersey URL (optional)" value={awayJerseyUrl} onChange={(event) => setAwayJerseyUrl(event.target.value)} />
+            <input className="manager-input" placeholder="GK home jersey URL (optional)" value={gkHomeJerseyUrl} onChange={(event) => setGkHomeJerseyUrl(event.target.value)} />
+            <input className="manager-input" placeholder="GK away jersey URL (optional)" value={gkAwayJerseyUrl} onChange={(event) => setGkAwayJerseyUrl(event.target.value)} />
+          </div>
           <div className="grid gap-3 md:grid-cols-3">
             <ColorField label="Primary Color" value={primaryColor} onChange={setPrimaryColor} />
             <ColorField label="Secondary Color" value={secondaryColor} onChange={setSecondaryColor} />
@@ -965,22 +1110,23 @@ function CreateTeamEmpty({ leagues, onCreated }: { leagues: League[]; onCreated:
   );
 }
 
-function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ColorField({ label, value, onChange, disabled = false }: { label: string; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   return (
-    <div className="text-sm font-bold text-slate-700">
+    <div className={`text-sm font-bold text-slate-700 ${disabled ? "opacity-60" : ""}`}>
       <div className="flex items-center justify-between gap-3">
         <span>{label}</span>
         <span className="rounded-full bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-500">{value.toUpperCase()}</span>
       </div>
       <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-3">
         <div className="flex items-center gap-3">
-          <input className="h-11 w-11 shrink-0 cursor-pointer rounded-xl border-0 bg-transparent p-0" type="color" value={value} onChange={(event) => onChange(event.target.value)} aria-label={label} />
+          <input className="h-11 w-11 shrink-0 cursor-pointer rounded-xl border-0 bg-transparent p-0 disabled:cursor-not-allowed" type="color" value={value} onChange={(event) => onChange(event.target.value)} aria-label={label} disabled={disabled} />
           <div className="grid flex-1 grid-cols-10 gap-1.5">
             {teamColorPalette.map((color) => (
               <button
                 key={`${label}-${color}`}
                 type="button"
-                className={`h-6 rounded-md border transition hover:scale-110 ${value.toLowerCase() === color.toLowerCase() ? "border-slate-950 ring-2 ring-slate-300" : "border-white"}`}
+                disabled={disabled}
+                className={`h-6 rounded-md border transition disabled:cursor-not-allowed ${disabled ? "" : "hover:scale-110"} ${value.toLowerCase() === color.toLowerCase() ? "border-slate-950 ring-2 ring-slate-300" : "border-white"}`}
                 style={{ backgroundColor: color }}
                 onClick={() => onChange(color)}
                 title={color}
@@ -994,6 +1140,55 @@ function ColorField({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
+function TeamJerseysPanel({ team }: { team: TeamRecord | null }) {
+  const jerseys = [
+    { label: "Home", url: team?.teams?.home_jersey_url },
+    { label: "Away", url: team?.teams?.away_jersey_url },
+    { label: "GK Home", url: team?.teams?.gk_home_jersey_url },
+    { label: "GK Away", url: team?.teams?.gk_away_jersey_url }
+  ];
+  const hasAnyJersey = jerseys.some((jersey) => jersey.url);
+
+  return (
+    <Panel title="Team Jerseys">
+      {hasAnyJersey ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {jerseys.map((jersey) => (
+            <ManagerJerseyCard key={jersey.label} label={jersey.label} url={jersey.url} />
+          ))}
+        </div>
+      ) : (
+        <EmptyState label="No jersey URLs set yet. Add home, away, GK home, and GK away jerseys from My Team → Team Settings." />
+      )}
+    </Panel>
+  );
+}
+
+function ManagerJerseyCard({ label, url }: { label: string; url: string | null | undefined }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-3">
+      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <div className="mt-2 flex h-56 items-center justify-center rounded-2xl bg-white p-1">
+        {url ? (
+          <button
+            type="button"
+            className="flex h-full w-full items-center justify-center rounded-2xl transition hover:scale-[1.02] hover:bg-slate-50"
+            onClick={() => setPreviewOpen(true)}
+            title={`Open ${label} jersey`}
+            aria-label={`Open ${label} jersey`}
+          >
+            <img className="max-h-full max-w-full object-contain" src={url} alt={`${label} jersey`} />
+          </button>
+        ) : (
+          <span className="text-sm font-semibold text-slate-400">Not set</span>
+        )}
+      </div>
+      {previewOpen && url ? <FacePreviewModal name={`${label} Jersey`} src={url} onClose={() => setPreviewOpen(false)} /> : null}
+    </div>
+  );
+}
+
 function TeamSettingsModal({ team, onClose, onSaved }: { team: TeamRecord; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(team.teams?.name ?? "");
   const [shortName, setShortName] = useState(team.teams?.short_name ?? "");
@@ -1001,25 +1196,42 @@ function TeamSettingsModal({ team, onClose, onSaved }: { team: TeamRecord; onClo
   const [primaryColor, setPrimaryColor] = useState(team.teams?.primary_color ?? "#6D28D9");
   const [secondaryColor, setSecondaryColor] = useState(team.teams?.secondary_color ?? "#0B1626");
   const [accentColor, setAccentColor] = useState(team.teams?.accent_color ?? "#16A34A");
+  const [homeJerseyUrl, setHomeJerseyUrl] = useState(team.teams?.home_jersey_url ?? "");
+  const [awayJerseyUrl, setAwayJerseyUrl] = useState(team.teams?.away_jersey_url ?? "");
+  const [gkHomeJerseyUrl, setGkHomeJerseyUrl] = useState(team.teams?.gk_home_jersey_url ?? "");
+  const [gkAwayJerseyUrl, setGkAwayJerseyUrl] = useState(team.teams?.gk_away_jersey_url ?? "");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const canEditCoreTeamData = team.status === RegistrationStatus.DRAFT || team.status === RegistrationStatus.PENDING;
 
   async function save(event: FormEvent) {
     event.preventDefault();
     setSaving(true);
     setError("");
     try {
-      await api(`/manager/teams/${team.id}`, {
+      const requestedJerseys = {
+        home_jersey_url: cleanUrl(homeJerseyUrl),
+        away_jersey_url: cleanUrl(awayJerseyUrl),
+        gk_home_jersey_url: cleanUrl(gkHomeJerseyUrl),
+        gk_away_jersey_url: cleanUrl(gkAwayJerseyUrl)
+      };
+      const saved = await api<{ team?: NonNullable<TeamRecord["teams"]> }>(`/manager/teams/${team.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          name,
-          short_name: shortName,
-          logo_url: logoUrl || null,
-          primary_color: primaryColor,
-          secondary_color: secondaryColor,
-          accent_color: accentColor
+          ...(canEditCoreTeamData
+            ? {
+                name,
+                short_name: shortName,
+                logo_url: cleanUrl(logoUrl),
+                primary_color: primaryColor,
+                secondary_color: secondaryColor,
+                accent_color: accentColor
+              }
+            : {}),
+          ...requestedJerseys
         })
       });
+      assertJerseySave(requestedJerseys, saved.team);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update team settings");
@@ -1039,15 +1251,19 @@ function TeamSettingsModal({ team, onClose, onSaved }: { team: TeamRecord; onClo
           <button type="button" className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200" onClick={onClose}>Close</button>
         </div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="text-sm font-bold">Team Name<input className="manager-input mt-2" value={name} onChange={(event) => setName(event.target.value)} required /></label>
-          <label className="text-sm font-bold">Short Name<input className="manager-input mt-2" value={shortName} onChange={(event) => setShortName(event.target.value)} required /></label>
-          <label className="text-sm font-bold sm:col-span-2">Logo URL<input className="manager-input mt-2" value={logoUrl} onChange={(event) => setLogoUrl(event.target.value)} /></label>
-          <ColorField label="Primary Color" value={primaryColor} onChange={setPrimaryColor} />
-          <ColorField label="Secondary Color" value={secondaryColor} onChange={setSecondaryColor} />
-          <ColorField label="Accent Color" value={accentColor} onChange={setAccentColor} />
+          <label className="text-sm font-bold">Team Name<input className="manager-input mt-2 disabled:bg-slate-100 disabled:text-slate-500" value={name} onChange={(event) => setName(event.target.value)} required disabled={!canEditCoreTeamData} /></label>
+          <label className="text-sm font-bold">Short Name<input className="manager-input mt-2 disabled:bg-slate-100 disabled:text-slate-500" value={shortName} onChange={(event) => setShortName(event.target.value)} required disabled={!canEditCoreTeamData} /></label>
+          <label className="text-sm font-bold sm:col-span-2">Logo URL<input className="manager-input mt-2 disabled:bg-slate-100 disabled:text-slate-500" value={logoUrl} onChange={(event) => setLogoUrl(event.target.value)} disabled={!canEditCoreTeamData} /></label>
+          <ColorField label="Primary Color" value={primaryColor} onChange={setPrimaryColor} disabled={!canEditCoreTeamData} />
+          <ColorField label="Secondary Color" value={secondaryColor} onChange={setSecondaryColor} disabled={!canEditCoreTeamData} />
+          <ColorField label="Accent Color" value={accentColor} onChange={setAccentColor} disabled={!canEditCoreTeamData} />
+          <label className="text-sm font-bold sm:col-span-2">Home Jersey URL<input className="manager-input mt-2" value={homeJerseyUrl} onChange={(event) => setHomeJerseyUrl(event.target.value)} placeholder="https://..." /></label>
+          <label className="text-sm font-bold sm:col-span-2">Away Jersey URL<input className="manager-input mt-2" value={awayJerseyUrl} onChange={(event) => setAwayJerseyUrl(event.target.value)} placeholder="https://..." /></label>
+          <label className="text-sm font-bold sm:col-span-2">GK Home Jersey URL<input className="manager-input mt-2" value={gkHomeJerseyUrl} onChange={(event) => setGkHomeJerseyUrl(event.target.value)} placeholder="https://..." /></label>
+          <label className="text-sm font-bold sm:col-span-2">GK Away Jersey URL<input className="manager-input mt-2" value={gkAwayJerseyUrl} onChange={(event) => setGkAwayJerseyUrl(event.target.value)} placeholder="https://..." /></label>
         </div>
         <p className="mt-4 rounded-2xl bg-yellow-50 p-3 text-sm font-semibold text-yellow-800">
-          Team settings can be changed until admin approval.
+          Team identity and colors can be changed until admin approval. Jersey URLs can be updated anytime.
         </p>
         {error ? <p className="mt-4 text-sm font-semibold text-red-600">{error}</p> : null}
         <div className="mt-6 flex justify-end gap-3">
@@ -1246,62 +1462,84 @@ function PlayerTable({
   onPlayerClick,
   onEdit,
   onRemove,
+  minifaceDrafts,
+  onMinifaceChange,
   emptyLabel
 }: {
   players: PlayerRecord[];
   onPlayerClick: (player: PlayerRecord) => void;
   onEdit?: (player: PlayerRecord) => void;
   onRemove?: (player: PlayerRecord) => void;
+  minifaceDrafts?: Record<string, string>;
+  onMinifaceChange?: (playerId: string, value: string) => void;
   emptyLabel: string;
 }) {
   if (players.length === 0) return <EmptyState label={emptyLabel} />;
   const canEdit = (player: PlayerRecord) => player.status === RegistrationStatus.DRAFT || player.status === RegistrationStatus.PENDING;
+  const showMinifaceEditor = Boolean(minifaceDrafts && onMinifaceChange);
+  const tableHeads = showMinifaceEditor
+    ? ["Avatar", "Miniface URL", "Code", "Player Name", "Position", "Category", "No.", "ID Type", "ID Number", "Foot", "OVR", "Status", "Action"]
+    : ["Avatar", "Code", "Player Name", "Position", "Category", "No.", "ID Type", "ID Number", "Foot", "OVR", "Status", "Action"];
   return (
     <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white">
-      <table className="w-full min-w-[980px] text-left text-sm">
+      <table className={`w-full text-left text-sm ${showMinifaceEditor ? "min-w-[1320px]" : "min-w-[980px]"}`}>
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
           <tr>
-            {["Avatar", "Code", "Player Name", "Position", "Category", "No.", "ID Type", "ID Number", "Foot", "Status", "Action"].map((head) => (
+            {tableHeads.map((head) => (
               <th key={head} className="px-4 py-3">{head}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {players.map((player) => (
-            <tr key={player.id} className="border-t transition hover:bg-purple-50/40">
-              <td className="px-4 py-3"><Avatar name={player.players?.full_name ?? "Player"} src={player.players?.avatar_url} small /></td>
-              <td className="px-4 py-3 font-mono text-xs">{player.player_code ?? "-"}</td>
-              <td className="px-4 py-3">
-                <button className="text-left font-bold transition hover:text-[var(--team-primary)] hover:underline" onClick={() => onPlayerClick(player)}>
-                  {player.players?.full_name ?? "-"}
-                </button>
-              </td>
-              <td className="px-4 py-3">{player.football_position ?? player.position}</td>
-              <td className="px-4 py-3">{player.position_category ?? "-"}</td>
-              <td className="px-4 py-3 font-bold">#{player.shirt_number ?? "-"}</td>
-              <td className="px-4 py-3">{player.players?.id_type ?? "-"}</td>
-              <td className="px-4 py-3 font-mono text-xs">{player.players?.generated_identity_number ?? "-"}</td>
-              <td className="px-4 py-3">{player.preferred_foot ?? "UNKNOWN"}</td>
-              <td className="px-4 py-3"><StatusBadge status={player.status} /></td>
-              <td className="px-4 py-3">
-                <div className="flex gap-2">
-                  <button className="rounded-xl bg-purple-50 px-3 py-2 text-xs font-bold text-[var(--team-primary)] transition hover:bg-[var(--team-primary)] hover:text-[var(--team-primary-text)]" onClick={() => onPlayerClick(player)}>
-                    Open
+          {players.map((player) => {
+            const draftAvatarUrl = minifaceDrafts?.[player.id] ?? player.players?.avatar_url ?? "";
+            return (
+              <tr key={player.id} className="border-t transition hover:bg-purple-50/40">
+                <td className="px-4 py-3"><Avatar name={player.players?.full_name ?? "Player"} src={draftAvatarUrl || null} small /></td>
+                {showMinifaceEditor ? (
+                  <td className="px-4 py-3">
+                    <input
+                      className="w-72 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none transition focus:border-[var(--team-primary)] focus:ring-2 focus:ring-purple-100"
+                      placeholder="Paste miniface URL"
+                      value={draftAvatarUrl}
+                      onChange={(event) => onMinifaceChange?.(player.id, event.target.value)}
+                    />
+                  </td>
+                ) : null}
+                <td className="px-4 py-3 font-mono text-xs">{player.player_code ?? "-"}</td>
+                <td className="px-4 py-3">
+                  <button className="text-left font-bold transition hover:text-[var(--team-primary)] hover:underline" onClick={() => onPlayerClick(player)}>
+                    {player.players?.full_name ?? "-"}
                   </button>
-                  {canEdit(player) && onEdit ? (
-                    <button className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-200" onClick={() => onEdit(player)}>
-                      Edit
+                </td>
+                <td className="px-4 py-3">{player.football_position ?? player.position}</td>
+                <td className="px-4 py-3">{player.position_category ?? "-"}</td>
+                <td className="px-4 py-3 font-bold">#{player.shirt_number ?? "-"}</td>
+                <td className="px-4 py-3">{player.players?.id_type ?? "-"}</td>
+                <td className="px-4 py-3 font-mono text-xs">{player.players?.generated_identity_number ?? "-"}</td>
+                <td className="px-4 py-3">{player.preferred_foot ?? "UNKNOWN"}</td>
+                <td className="px-4 py-3">{overallCapsule(playerOverall(player), playerRatingTier(player))}</td>
+                <td className="px-4 py-3"><StatusBadge status={displayPlayerStatus(player)} /></td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2">
+                    <button className="rounded-xl bg-purple-50 px-3 py-2 text-xs font-bold text-[var(--team-primary)] transition hover:bg-[var(--team-primary)] hover:text-[var(--team-primary-text)]" onClick={() => onPlayerClick(player)}>
+                      Open
                     </button>
-                  ) : null}
-                  {canEdit(player) && onRemove ? (
-                    <button className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100" onClick={() => onRemove(player)}>
-                      Delete
-                    </button>
-                  ) : null}
-                </div>
-              </td>
-            </tr>
-          ))}
+                    {canEdit(player) && onEdit ? (
+                      <button className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-200" onClick={() => onEdit(player)}>
+                        Edit
+                      </button>
+                    ) : null}
+                    {canEdit(player) && onRemove ? (
+                      <button className="rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100" onClick={() => onRemove(player)}>
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -1394,9 +1632,12 @@ function EditDraftPlayerModal({ player, onClose, onSaved }: { player: PlayerReco
 function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecord; onClose: () => void; onDeleted: () => void }) {
   const [tab, setTab] = useState<"Personal Data" | "League Stats">("Personal Data");
   const [error, setError] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState(player.players?.avatar_url ?? "");
+  const [savingAvatar, setSavingAvatar] = useState(false);
   const [stats, setStats] = useState<PlayerLeagueStatsPayload | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const canDelete = player.status === RegistrationStatus.DRAFT || player.status === RegistrationStatus.PENDING;
+  const canEditMiniface = player.status === RegistrationStatus.DRAFT || player.status === RegistrationStatus.PENDING;
   const isGoalkeeper = (player.football_position ?? player.position) === FootballPosition.GK;
 
   useEffect(() => {
@@ -1424,6 +1665,23 @@ function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecor
       onDeleted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete player");
+    }
+  }
+
+  async function saveMiniface() {
+    if (!canEditMiniface) return;
+    setSavingAvatar(true);
+    setError("");
+    try {
+      await api(`/manager/players/${player.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ avatar_url: avatarUrl || null })
+      });
+      onDeleted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save miniface URL");
+    } finally {
+      setSavingAvatar(false);
     }
   }
 
@@ -1456,11 +1714,33 @@ function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecor
             <Detail label="Position" value={player.football_position ?? player.position} />
             <Detail label="Jersey Number" value={player.shirt_number ? `#${player.shirt_number}` : "-"} />
             <Detail label="Preferred Foot" value={player.preferred_foot ?? "UNKNOWN"} />
+            <Detail label="Overall Rating" value={playerOverall(player) ?? "Not rated"} />
             <Detail label="ID Type" value={player.players?.id_type ?? "-"} />
             <Detail label="ID Number" value={player.players?.generated_identity_number ?? "-"} />
             <Detail label="Masked ID" value={player.players?.id_number_last4 ? `****${player.players.id_number_last4}` : "-"} />
             <Detail label="Approval Status" value={player.status} />
             <Detail label="Player Status" value={player.player_status ?? "ACTIVE"} />
+            <div className="rounded-2xl bg-slate-50 p-4 sm:col-span-2">
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Miniface / Avatar URL</p>
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                <input
+                  className="manager-input flex-1"
+                  value={avatarUrl}
+                  onChange={(event) => setAvatarUrl(event.target.value)}
+                  placeholder="Paste player miniface image URL"
+                  disabled={!canEditMiniface}
+                />
+                <button
+                  type="button"
+                  disabled={!canEditMiniface || savingAvatar}
+                  onClick={() => void saveMiniface()}
+                  className="rounded-2xl bg-[var(--team-primary)] px-5 py-3 text-sm font-black text-[var(--team-primary-text)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingAvatar ? "Saving..." : "Save Miniface"}
+                </button>
+              </div>
+              {!canEditMiniface ? <p className="mt-2 text-xs font-semibold text-slate-500">Approved players cannot be edited by manager.</p> : null}
+            </div>
           </div>
         ) : (
           <div className="mt-5 space-y-5">
@@ -1535,6 +1815,7 @@ function PlayerStatsGrid({ stats, isGoalkeeper }: { stats: Record<string, number
         ["Shots on Target", "shots_on_target"],
         ["Shot Accuracy", "shot_accuracy"],
         ["Chances Created", "chances_created"],
+        ["Big Chances Created", "big_chances_created"],
         ["Big Chances Missed", "big_chances_missed"],
         ["Total Passes", "total_passes"],
         ["Accurate Passes", "accurate_passes"],
@@ -1764,9 +2045,43 @@ function Tabs({ values, value, onChange }: { values: string[]; value: string; on
 }
 
 function Avatar({ name, src, small = false }: { name: string; src?: string | null | undefined; small?: boolean }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
   const size = small ? "h-9 w-9 text-xs" : "h-12 w-12";
-  if (src) return <img src={src} alt={name} className={`${size} rounded-2xl object-cover ring-2 ring-white`} />;
+  if (src) {
+    return (
+      <>
+        <button
+          type="button"
+          className={`${size} shrink-0 overflow-hidden rounded-2xl ring-2 ring-white transition hover:scale-105 hover:ring-[var(--team-primary)]`}
+          onClick={() => setPreviewOpen(true)}
+          title={`Open ${name} miniface`}
+          aria-label={`Open ${name} miniface`}
+        >
+          <img src={src} alt={name} className="h-full w-full object-cover" />
+        </button>
+        {previewOpen ? <FacePreviewModal name={name} src={src} onClose={() => setPreviewOpen(false)} /> : null}
+      </>
+    );
+  }
   return <div className={`${size} grid place-items-center rounded-2xl bg-[var(--team-primary)] font-black text-[var(--team-primary-text)]`}>{initials(name)}</div>;
+}
+
+function FacePreviewModal({ name, src, onClose }: { name: string; src: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-5 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h3 className="text-xl font-black">{name}</h3>
+          <button type="button" className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="grid place-items-center rounded-3xl bg-slate-100 p-4">
+          <img src={src} alt={name} className="max-h-[70vh] max-w-full rounded-2xl object-contain" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function previewDistribution(size: number) {

@@ -34,7 +34,9 @@ try {
       and (
         (table_name = 'leagues' and column_name in ('short_name', 'logo_url', 'organizer_name'))
         or
-        (table_name = 'teams' and column_name = 'logo_url')
+        (table_name = 'teams' and column_name in (
+          'logo_url', 'home_jersey_url', 'away_jersey_url', 'gk_home_jersey_url', 'gk_away_jersey_url'
+        ))
         or
         (table_name = 'players' and column_name = 'avatar_url')
         or
@@ -56,7 +58,7 @@ try {
         (table_name = 'manager_messages' and column_name in ('player_registration_id', 'fixture_id'))
         or
         (table_name = 'player_season_stats' and column_name in (
-          'starts', 'minutes_played', 'shots', 'shots_on_target', 'chances_created',
+          'starts', 'minutes_played', 'shots', 'shots_on_target', 'chances_created', 'big_chances_created',
           'total_passes', 'accurate_passes', 'dribbles_attempted', 'successful_dribbles',
           'dispossessed', 'tackles', 'interceptions', 'best_match_rating',
           'lowest_match_rating', 'player_of_match_count'
@@ -75,10 +77,10 @@ try {
           'penalties_home', 'penalties_away'
         ))
         or
-        (table_name = 'team_match_stats' and column_name = 'offsides')
+        (table_name = 'team_match_stats' and column_name in ('offsides', 'rating'))
         or
         (table_name = 'player_match_stats' and column_name in (
-          'position_played', 'shots_on_target', 'chances_created', 'big_chances_missed',
+          'position_played', 'shots_on_target', 'chances_created', 'big_chances_created', 'big_chances_missed',
           'dispossessed', 'interceptions', 'clearances', 'blocks', 'fouls_committed',
           'goals_conceded', 'accurate_long_balls', 'diving_saves', 'saves_inside_box'
         ))

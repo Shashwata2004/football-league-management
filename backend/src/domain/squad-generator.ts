@@ -188,6 +188,7 @@ export function generateSquadPlayers(input: {
     ? buildPositionListFromBreakdown(input.positionBreakdown)
     : buildPositionList(input.distribution ?? targetDistribution(input.count));
   const positions = basePositions.slice(0, input.count);
+  const preferredFeet = buildPreferredFootList(positions.length, random);
   const names = shuffle(
     bangladeshiPlayerNames.filter((name) => !input.usedNames.includes(name.fullName)).map((name) => name.fullName),
     random
@@ -211,7 +212,7 @@ export function generateSquadPlayers(input: {
       football_position: footballPosition,
       position_category: categoryForFootballPosition(footballPosition),
       shirt_number: shirtNumber,
-      preferred_foot: pickPreferredFoot(random),
+      preferred_foot: preferredFeet[index] ?? PreferredFoot.RIGHT,
       avatar_url: ""
     };
   });
@@ -297,11 +298,18 @@ function balancedForwards(count: number) {
   return Array.from({ length: count }, (_, index) => positions[index % positions.length]!);
 }
 
-function pickPreferredFoot(random: () => number): PreferredFoot {
-  const value = random();
-  if (value < 0.13) return PreferredFoot.LEFT;
-  if (value < 0.2) return PreferredFoot.BOTH;
-  return PreferredFoot.RIGHT;
+function buildPreferredFootList(count: number, random: () => number): PreferredFoot[] {
+  const right = Math.round(count * 0.5);
+  const left = Math.round(count * 0.35);
+  const both = Math.max(0, count - right - left);
+  return shuffle(
+    [
+      ...repeat(PreferredFoot.RIGHT, right),
+      ...repeat(PreferredFoot.LEFT, left),
+      ...repeat(PreferredFoot.BOTH, both)
+    ].slice(0, count),
+    random
+  );
 }
 
 function shuffle<T>(items: T[], random: () => number) {

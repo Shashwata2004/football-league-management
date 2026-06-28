@@ -79,7 +79,9 @@ publicRouter.get(
   asyncHandler(async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from("player_season_stats")
-      .select("player_registration_id,goals,assists,appearances,yellow_cards,red_cards,average_rating,player_season_registrations(players(full_name),position,shirt_number)")
+      .select(
+        "player_registration_id,appearances,starts,minutes_played,goals,assists,shots,shots_on_target,chances_created,big_chances_created,total_passes,accurate_passes,dribbles_attempted,successful_dribbles,dispossessed,tackles,interceptions,yellow_cards,red_cards,average_rating,best_match_rating,lowest_match_rating,player_of_match_count,player_season_registrations(players(full_name),position,football_position,shirt_number)"
+      )
       .eq("season_id", req.params.seasonId)
       .order("goals", { ascending: false });
     if (error) throw error;

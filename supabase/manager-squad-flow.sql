@@ -50,6 +50,10 @@ where p.id = target.id;
 
 alter table public.teams add column if not exists secondary_color text;
 alter table public.teams add column if not exists accent_color text;
+alter table public.teams add column if not exists home_jersey_url text;
+alter table public.teams add column if not exists away_jersey_url text;
+alter table public.teams add column if not exists gk_home_jersey_url text;
+alter table public.teams add column if not exists gk_away_jersey_url text;
 
 alter table public.player_season_registrations add column if not exists player_code text;
 alter table public.player_season_registrations add column if not exists football_position public.football_position;

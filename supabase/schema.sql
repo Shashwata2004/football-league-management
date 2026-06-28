@@ -293,6 +293,10 @@ create table if not exists public.teams (
   primary_color text,
   secondary_color text,
   accent_color text,
+  home_jersey_url text,
+  away_jersey_url text,
+  gk_home_jersey_url text,
+  gk_away_jersey_url text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -300,6 +304,10 @@ create table if not exists public.teams (
 alter table public.teams add column if not exists logo_url text;
 alter table public.teams add column if not exists secondary_color text;
 alter table public.teams add column if not exists accent_color text;
+alter table public.teams add column if not exists home_jersey_url text;
+alter table public.teams add column if not exists away_jersey_url text;
+alter table public.teams add column if not exists gk_home_jersey_url text;
+alter table public.teams add column if not exists gk_away_jersey_url text;
 
 create table if not exists public.team_registrations (
   id uuid primary key default gen_random_uuid(),
@@ -545,6 +553,7 @@ create table if not exists public.team_match_stats (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references public.fixtures(id) on delete cascade,
   team_registration_id uuid not null references public.team_registrations(id),
+  rating numeric(3,1) check (rating is null or rating between 4.8 and 9.8),
   possession integer not null check (possession between 0 and 100),
   shots integer not null check (shots >= 0),
   shots_on_target integer not null check (shots_on_target between 0 and shots),
@@ -571,6 +580,7 @@ create table if not exists public.player_match_stats (
   shots integer not null check (shots >= 0),
   shots_on_target integer not null default 0 check (shots_on_target between 0 and shots),
   chances_created integer not null default 0 check (chances_created >= 0),
+  big_chances_created integer not null default 0 check (big_chances_created >= 0),
   big_chances_missed integer not null default 0 check (big_chances_missed >= 0),
   passes integer not null check (passes >= 0),
   accurate_passes integer not null check (accurate_passes between 0 and passes),
@@ -648,6 +658,7 @@ create table if not exists public.player_season_stats (
   shots integer not null default 0,
   shots_on_target integer not null default 0,
   chances_created integer not null default 0,
+  big_chances_created integer not null default 0,
   total_passes integer not null default 0,
   accurate_passes integer not null default 0,
   dribbles_attempted integer not null default 0,
@@ -670,6 +681,7 @@ alter table public.player_season_stats add column if not exists minutes_played i
 alter table public.player_season_stats add column if not exists shots integer not null default 0;
 alter table public.player_season_stats add column if not exists shots_on_target integer not null default 0;
 alter table public.player_season_stats add column if not exists chances_created integer not null default 0;
+alter table public.player_season_stats add column if not exists big_chances_created integer not null default 0;
 alter table public.player_season_stats add column if not exists total_passes integer not null default 0;
 alter table public.player_season_stats add column if not exists accurate_passes integer not null default 0;
 alter table public.player_season_stats add column if not exists dribbles_attempted integer not null default 0;
@@ -693,6 +705,7 @@ alter table public.player_season_stats
     and shots_on_target >= 0
     and shots_on_target <= shots
     and chances_created >= 0
+    and big_chances_created >= 0
     and total_passes >= 0
     and accurate_passes >= 0
     and accurate_passes <= total_passes
