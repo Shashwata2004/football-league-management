@@ -61,10 +61,16 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   create type public.fixture_status as enum (
     'SCHEDULED',
+    'WAITING_FOR_TEAMS',
+    'LINEUP_PENDING',
     'LINEUPS_SUBMITTED',
     'LINEUPS_CONFIRMED',
+    'READY_TO_SIMULATE',
+    'SIMULATED',
     'SIMULATED_PENDING_ADMIN_CONFIRMATION',
+    'COMPLETED',
     'FINAL',
+    'POSTPONED',
     'CANCELLED'
   );
 exception when duplicate_object then null; end $$;
@@ -169,6 +175,8 @@ create table if not exists public.seasons (
   registration_deadline date,
   phase public.season_phase not null default 'REGISTRATION_OPEN',
   format public.season_format not null,
+  round_format public.season_format not null default 'SINGLE_ROUND_ROBIN',
+  fixture_status text not null default 'NOT_GENERATED',
   start_date date,
   end_date date,
   total_teams integer,
@@ -223,6 +231,8 @@ alter table public.seasons add column if not exists season_year integer;
 alter table public.seasons add column if not exists registration_start_date date;
 alter table public.seasons add column if not exists registration_deadline date;
 alter table public.seasons add column if not exists phase public.season_phase not null default 'REGISTRATION_OPEN';
+alter table public.seasons add column if not exists round_format public.season_format not null default 'SINGLE_ROUND_ROBIN';
+alter table public.seasons add column if not exists fixture_status text not null default 'NOT_GENERATED';
 alter table public.seasons add column if not exists total_teams integer;
 alter table public.seasons add column if not exists min_players_per_team integer;
 alter table public.seasons add column if not exists max_players_per_team integer;
@@ -495,17 +505,24 @@ create table if not exists public.player_abilities (
 
 create table if not exists public.fixtures (
   id uuid primary key default gen_random_uuid(),
+  league_id uuid references public.leagues(id) on delete cascade,
   season_id uuid not null references public.seasons(id) on delete cascade,
   round_no integer not null,
+  matchday_number integer,
   stage text not null default 'LEAGUE',
+  group_id uuid references public.season_groups(id) on delete set null,
   group_name text,
-  home_team_registration_id uuid not null references public.team_registrations(id),
-  away_team_registration_id uuid not null references public.team_registrations(id),
+  home_team_registration_id uuid references public.team_registrations(id),
+  away_team_registration_id uuid references public.team_registrations(id),
+  home_source text,
+  away_source text,
   kickoff_at timestamptz,
   venue text,
   status public.fixture_status not null default 'SCHEDULED',
+  result_confirmed boolean not null default false,
   home_score integer,
   away_score integer,
+  winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
   simulation_seed text,
   simulated_at timestamptz,
   extra_time_played boolean not null default false,
@@ -515,23 +532,43 @@ create table if not exists public.fixtures (
   finalized_by uuid references public.profiles(id),
   finalized_at timestamptz,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   constraint fixture_distinct_teams check (home_team_registration_id <> away_team_registration_id),
   constraint fixture_non_negative_scores check (
     (home_score is null or home_score >= 0) and (away_score is null or away_score >= 0)
   )
 );
 
+alter table public.fixtures add column if not exists league_id uuid references public.leagues(id) on delete cascade;
+alter table public.fixtures add column if not exists group_id uuid references public.season_groups(id) on delete set null;
+alter table public.fixtures add column if not exists matchday_number integer;
+alter table public.fixtures add column if not exists home_source text;
+alter table public.fixtures add column if not exists away_source text;
+alter table public.fixtures add column if not exists result_confirmed boolean not null default false;
+alter table public.fixtures add column if not exists winner_team_registration_id uuid references public.team_registrations(id) on delete set null;
+alter table public.fixtures add column if not exists updated_at timestamptz not null default now();
+alter table public.fixtures alter column home_team_registration_id drop not null;
+alter table public.fixtures alter column away_team_registration_id drop not null;
+
 create table if not exists public.lineups (
   id uuid primary key default gen_random_uuid(),
   fixture_id uuid not null references public.fixtures(id) on delete cascade,
   team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  season_id uuid references public.seasons(id) on delete cascade,
+  manager_id uuid references public.profiles(id) on delete set null,
   side public.venue_side not null,
   formation text not null,
+  playing_style text not null default 'BALANCED',
   status public.lineup_status not null default 'PENDING',
+  captain_id uuid references public.player_season_registrations(id) on delete set null,
+  submitted_at timestamptz,
   reviewed_by uuid references public.profiles(id),
   reviewed_at timestamptz,
+  confirmed_at timestamptz,
   rejection_reason text,
+  blocked_reason text,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   unique (fixture_id, team_registration_id),
   unique (fixture_id, side)
 );
@@ -543,10 +580,27 @@ create table if not exists public.lineup_players (
   is_starter boolean not null,
   position public.player_position not null,
   football_position public.football_position,
+  player_natural_position public.football_position,
+  slot_key text,
+  display_role text,
   shirt_number integer,
+  is_substitute boolean not null default false,
   is_captain boolean not null default false,
+  display_order integer,
   created_at timestamptz not null default now(),
   unique (lineup_id, player_registration_id)
+);
+
+create table if not exists public.manager_team_preferences (
+  id uuid primary key default gen_random_uuid(),
+  manager_id uuid not null references public.profiles(id) on delete cascade,
+  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  season_id uuid not null references public.seasons(id) on delete cascade,
+  preferred_formation text not null default '4-3-3',
+  preferred_playing_style text not null default 'BALANCED',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (manager_id, team_registration_id, season_id)
 );
 
 create table if not exists public.team_match_stats (
@@ -812,6 +866,19 @@ create index if not exists idx_team_registrations_removed on public.team_registr
 create index if not exists idx_player_regs_team_status on public.player_season_registrations(team_registration_id, status);
 create index if not exists idx_player_regs_lifecycle on public.player_season_registrations(team_registration_id, player_status);
 create index if not exists idx_fixtures_season_round on public.fixtures(season_id, round_no);
+create index if not exists idx_fixtures_season_stage_matchday on public.fixtures(season_id, stage, matchday_number, round_no);
+create index if not exists idx_fixtures_group_id on public.fixtures(group_id);
+create unique index if not exists fixtures_unique_real_team_pair_per_stage
+  on public.fixtures(
+    season_id,
+    stage,
+    coalesce(group_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    home_team_registration_id,
+    away_team_registration_id
+  )
+  where home_team_registration_id is not null
+    and away_team_registration_id is not null
+    and status <> 'CANCELLED';
 create index if not exists idx_lineups_fixture on public.lineups(fixture_id);
 create index if not exists idx_standings_season_sort on public.standings(season_id, points desc, goal_difference desc, goals_for desc, fair_play_score asc);
 create index if not exists idx_player_stats_season_goals on public.player_season_stats(season_id, goals desc);

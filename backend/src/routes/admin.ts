@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import {
   createLeagueSchema,
   createSeasonSchema,
@@ -12,12 +13,21 @@ import {
   RegistrationStatus,
   registrationDecisionSchema,
   roleRequestDecisionSchema,
+  SeasonFormat,
   simulateMatchSchema,
   updateSeasonScheduleSchema,
   UserRole,
   VenueSide
 } from "@flms/shared";
 import { generateSeasonPairings } from "../domain/fixtures.js";
+import {
+  assertPowerOfTwoQualifiers,
+  generateGroupFixturePreview,
+  generateKnockoutFixturePreview,
+  generateLeagueFixturePreview,
+  type FixtureGroup,
+  type ScheduledFixturePreview
+} from "../domain/fixtures.js";
 import { applyFinalResultToStandings, emptyStanding } from "../domain/standings.js";
 import {
   generateAbilityScores,
@@ -33,6 +43,16 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 
 export const adminRouter = Router();
 adminRouter.use(requireAuth, requireRole(UserRole.ADMIN));
+
+const fixturePreviewSchema = z.object({ stage: z.enum(["all", "group", "knockout"]).optional().default("all") });
+const groupAssignmentSchema = z.object({
+  groups: z.array(
+    z.object({
+      group_id: z.string().uuid(),
+      team_registration_ids: z.array(z.string().uuid())
+    })
+  )
+});
 
 adminRouter.post(
   "/leagues",
@@ -105,6 +125,7 @@ adminRouter.patch(
   asyncHandler(async (req, res) => {
     const allowed = [
       "format",
+      "round_format",
       "phase",
       "registration_start_date",
       "registration_deadline",
@@ -994,6 +1015,166 @@ adminRouter.get(
   })
 );
 
+adminRouter.get(
+  "/seasons/:seasonId/groups",
+  asyncHandler(async (req, res) => {
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    const [teams, groups] = await Promise.all([loadApprovedFixtureTeams(season.id), loadSeasonGroups(season.id)]);
+    res.json({
+      season,
+      approved_teams: teams,
+      groups,
+      groups_ready: groups.length === Number(season.group_count ?? 0) && groups.every((group) => group.teams.length === Number(season.teams_per_group ?? 0))
+    });
+  })
+);
+
+adminRouter.post(
+  "/seasons/:seasonId/groups/randomize",
+  asyncHandler(async (req, res) => {
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    if (season.format !== SeasonFormat.GROUP_STAGE_KNOCKOUT) throw new AppError(400, "Groups are only available for group + knockout seasons.");
+    const groupCount = Number(season.group_count ?? 0);
+    const teamsPerGroup = Number(season.teams_per_group ?? 0);
+    if (!groupCount || !teamsPerGroup) throw new AppError(400, "Group settings are missing.");
+    const teams = await loadApprovedFixtureTeams(season.id);
+    if (teams.length !== groupCount * teamsPerGroup) {
+      throw new AppError(400, `Approved teams must be exactly ${groupCount * teamsPerGroup} before group division.`);
+    }
+    const groups = await recreateGroups(season.id, groupCount);
+    const shuffled = shuffleRows(teams, `${season.id}:groups`);
+    const inserts = shuffled.map((team, index) => ({
+      group_id: groups[Math.floor(index / teamsPerGroup)]!.id,
+      team_registration_id: team.id,
+      seed_no: (index % teamsPerGroup) + 1
+    }));
+    const { error } = await supabaseAdmin.from("season_group_teams").insert(inserts);
+    if (error) throw error;
+    res.status(201).json({ groups: await loadSeasonGroups(season.id) });
+  })
+);
+
+adminRouter.patch(
+  "/seasons/:seasonId/groups/assign",
+  asyncHandler(async (req, res) => {
+    const input = groupAssignmentSchema.parse(req.body);
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    if (season.format !== SeasonFormat.GROUP_STAGE_KNOCKOUT) throw new AppError(400, "Groups are only available for group + knockout seasons.");
+    const teamsPerGroup = Number(season.teams_per_group ?? 0);
+    const flatTeamIds = input.groups.flatMap((group) => group.team_registration_ids);
+    if (new Set(flatTeamIds).size !== flatTeamIds.length) throw new AppError(400, "A team cannot appear in more than one group.");
+    if (input.groups.some((group) => group.team_registration_ids.length !== teamsPerGroup)) {
+      throw new AppError(400, `Each group must have exactly ${teamsPerGroup} teams.`);
+    }
+    const approved = new Set((await loadApprovedFixtureTeams(season.id)).map((team) => team.id));
+    if (flatTeamIds.some((teamId) => !approved.has(teamId))) throw new AppError(400, "Only approved teams can be assigned to groups.");
+    let existingGroups = await loadSeasonGroups(season.id);
+    if (existingGroups.length === 0) {
+      await recreateGroups(season.id, Number(season.group_count ?? 0));
+      existingGroups = await loadSeasonGroups(season.id);
+    }
+    const validGroups = new Set(existingGroups.map((group) => group.id));
+    if (input.groups.some((group) => !validGroups.has(group.group_id))) throw new AppError(400, "Invalid group selected.");
+
+    const { error: deleteError } = await supabaseAdmin
+      .from("season_group_teams")
+      .delete()
+      .in("group_id", existingGroups.map((group) => group.id));
+    if (deleteError) throw deleteError;
+    const inserts = input.groups.flatMap((group) =>
+      group.team_registration_ids.map((teamId, index) => ({ group_id: group.group_id, team_registration_id: teamId, seed_no: index + 1 }))
+    );
+    const { error } = await supabaseAdmin.from("season_group_teams").insert(inserts);
+    if (error) throw error;
+    res.json({ groups: await loadSeasonGroups(season.id) });
+  })
+);
+
+adminRouter.get(
+  "/seasons/:seasonId/fixtures",
+  asyncHandler(async (req, res) => {
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    const [teams, groups, fixtures] = await Promise.all([
+      loadApprovedFixtureTeams(season.id),
+      loadSeasonGroups(season.id),
+      loadSeasonFixtures(season.id)
+    ]);
+    res.json({
+      season,
+      approved_teams: teams,
+      groups,
+      fixtures,
+      can_regenerate: canRegenerateFixtures(fixtures),
+      fixture_status: fixtureStatus(fixtures)
+    });
+  })
+);
+
+adminRouter.post(
+  "/seasons/:seasonId/fixtures/preview",
+  asyncHandler(async (req, res) => {
+    const input = fixturePreviewSchema.parse(req.body ?? {});
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    const preview = await buildFixturePreview(season, input.stage);
+    res.json(preview);
+  })
+);
+
+adminRouter.post(
+  "/seasons/:seasonId/fixtures/confirm",
+  asyncHandler(async (req, res) => {
+    const input = fixturePreviewSchema.parse(req.body ?? {});
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    const existing = await loadSeasonFixtures(season.id);
+    if (!canRegenerateFixtures(existing)) throw new AppError(400, "Fixtures cannot be regenerated because matches have already started or completed.");
+    const preview = await buildFixturePreview(season, input.stage);
+    await replaceFixtures(season, preview.fixtures, input.stage);
+    const fixtures = await loadSeasonFixtures(season.id);
+    res.status(201).json({ fixtures, warnings: preview.warnings });
+  })
+);
+
+adminRouter.delete(
+  "/seasons/:seasonId/fixtures/regenerate",
+  asyncHandler(async (req, res) => {
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    const existing = await loadSeasonFixtures(season.id);
+    if (!canRegenerateFixtures(existing)) throw new AppError(400, "Fixtures cannot be regenerated because matches have already started or completed.");
+    const { error } = await supabaseAdmin.from("fixtures").delete().eq("season_id", season.id);
+    if (error) throw error;
+    await supabaseAdmin.from("seasons").update({ fixture_status: "NOT_GENERATED", updated_at: new Date().toISOString() }).eq("id", season.id);
+    res.status(204).send();
+  })
+);
+
+adminRouter.post("/seasons/:seasonId/fixtures/group/preview", asyncHandler(async (req, res) => {
+  const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+  res.json(await buildFixturePreview(season, "group"));
+}));
+
+adminRouter.post("/seasons/:seasonId/fixtures/group/confirm", asyncHandler(async (req, res) => {
+  const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+  const existing = await loadSeasonFixtures(season.id);
+  if (!canRegenerateFixtures(existing.filter((fixture) => fixture.stage === "GROUP"))) throw new AppError(400, "Group fixtures cannot be regenerated because matches have already started or completed.");
+  const preview = await buildFixturePreview(season, "group");
+  await replaceFixtures(season, preview.fixtures, "group");
+  res.status(201).json({ fixtures: await loadSeasonFixtures(season.id), warnings: preview.warnings });
+}));
+
+adminRouter.post("/seasons/:seasonId/fixtures/knockout/preview", asyncHandler(async (req, res) => {
+  const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+  res.json(await buildFixturePreview(season, "knockout"));
+}));
+
+adminRouter.post("/seasons/:seasonId/fixtures/knockout/confirm", asyncHandler(async (req, res) => {
+  const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+  const existing = await loadSeasonFixtures(season.id);
+  if (!canRegenerateFixtures(existing.filter((fixture) => fixture.stage !== "GROUP"))) throw new AppError(400, "Knockout fixtures cannot be regenerated because matches have already started or completed.");
+  const preview = await buildFixturePreview(season, "knockout");
+  await replaceFixtures(season, preview.fixtures, "knockout");
+  res.status(201).json({ fixtures: await loadSeasonFixtures(season.id), warnings: preview.warnings });
+}));
+
 adminRouter.patch(
   "/fixtures/:id/schedule",
   asyncHandler(async (req, res) => {
@@ -1233,14 +1414,24 @@ adminRouter.post(
     if (standingsError) throw standingsError;
 
     await rollupPlayerStats(fixture.id, fixture.season_id);
+    const winnerTeamRegistrationId =
+      fixture.penalty_winner_team_registration_id ??
+      (homeScore > awayScore ? fixture.home_team_registration_id : awayScore > homeScore ? fixture.away_team_registration_id : null);
 
     const { data, error } = await supabaseAdmin
       .from("fixtures")
-      .update({ status: FixtureStatus.FINAL, finalized_by: req.auth!.userId, finalized_at: new Date().toISOString() })
+      .update({
+        status: FixtureStatus.FINAL,
+        result_confirmed: true,
+        winner_team_registration_id: winnerTeamRegistrationId,
+        finalized_by: req.auth!.userId,
+        finalized_at: new Date().toISOString()
+      })
       .eq("id", fixture.id)
       .select("*")
       .single();
     if (error) throw error;
+    if (winnerTeamRegistrationId) await advanceKnockoutWinner(data, winnerTeamRegistrationId);
     await maybeSetChampion(fixture.season_id);
     res.json({ fixture: data });
   })
@@ -1668,6 +1859,277 @@ function makeTeamLeaderboard<T extends { id: string; name: string; logoUrl: stri
       numericValue
     }));
   return { id, title, entries };
+}
+
+async function loadFixtureSeason(seasonId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("seasons")
+    .select("*,leagues(id,name)")
+    .eq("id", seasonId)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function loadApprovedFixtureTeams(seasonId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("team_registrations")
+    .select("id,team_id,season_id,status,created_at,teams(name,short_name,logo_url)")
+    .eq("season_id", seasonId)
+    .eq("status", RegistrationStatus.APPROVED)
+    .order("created_at");
+  if (error) throw error;
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    team_id: row.team_id,
+    name: relatedName(row.teams, "name") ?? row.id,
+    short_name: relatedName(row.teams, "short_name"),
+    logo_url: relatedName(row.teams, "logo_url")
+  }));
+}
+
+async function loadSeasonGroups(seasonId: string): Promise<FixtureGroup[]> {
+  const { data, error } = await supabaseAdmin
+    .from("season_groups")
+    .select("id,name,locked,season_group_teams(id,team_registration_id,seed_no,team_registrations(id,teams(name,short_name,logo_url)))")
+    .eq("season_id", seasonId)
+    .order("name");
+  if (error) throw error;
+  return (data ?? []).map((group) => ({
+    id: group.id,
+    name: group.name,
+    teams: ((group.season_group_teams ?? []) as Array<Record<string, unknown>>)
+      .sort((a, b) => Number(a.seed_no ?? 0) - Number(b.seed_no ?? 0))
+      .map((groupTeam) => {
+        const registration = Array.isArray(groupTeam.team_registrations) ? groupTeam.team_registrations[0] : groupTeam.team_registrations;
+        return {
+          id: String(groupTeam.team_registration_id),
+          name: relatedName((registration as Record<string, unknown> | null)?.teams, "name"),
+          short_name: relatedName((registration as Record<string, unknown> | null)?.teams, "short_name"),
+          logo_url: relatedName((registration as Record<string, unknown> | null)?.teams, "logo_url")
+        };
+      })
+  }));
+}
+
+async function recreateGroups(seasonId: string, groupCount: number) {
+  const existing = await loadSeasonGroups(seasonId);
+  if (existing.length > 0) {
+    const { error } = await supabaseAdmin.from("season_groups").delete().eq("season_id", seasonId);
+    if (error) throw error;
+  }
+  const rows = Array.from({ length: groupCount }, (_, index) => ({
+    season_id: seasonId,
+    name: `Group ${String.fromCharCode(65 + index)}`
+  }));
+  const { data, error } = await supabaseAdmin.from("season_groups").insert(rows).select("*").order("name");
+  if (error) throw error;
+  return data ?? [];
+}
+
+async function loadSeasonFixtures(seasonId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("fixtures")
+    .select(
+      "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)),season_groups(id,name)"
+    )
+    .eq("season_id", seasonId)
+    .order("round_no", { ascending: true })
+    .order("kickoff_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+function seasonRoundFormat(season: Record<string, unknown>): "SINGLE_ROUND_ROBIN" | "DOUBLE_ROUND_ROBIN" {
+  const roundFormat = season.round_format;
+  if (roundFormat === SeasonFormat.DOUBLE_ROUND_ROBIN) return SeasonFormat.DOUBLE_ROUND_ROBIN;
+  if (season.format === SeasonFormat.DOUBLE_ROUND_ROBIN) return SeasonFormat.DOUBLE_ROUND_ROBIN;
+  return SeasonFormat.SINGLE_ROUND_ROBIN;
+}
+
+async function buildFixturePreview(season: Record<string, unknown>, stage: "all" | "group" | "knockout") {
+  if (season.format === SeasonFormat.GROUP_STAGE_KNOCKOUT) {
+    if (stage === "knockout") return buildKnockoutPreview(season);
+    if (stage === "all") stage = "group";
+    const groups = await loadSeasonGroups(String(season.id));
+    return generateGroupFixturePreview({
+      groups,
+      roundFormat: seasonRoundFormat(season),
+      teamsPerGroup: Number(season.teams_per_group ?? 0),
+      qualifiersPerGroup: Number(season.qualifiers_per_group ?? 0),
+      startDate: String(season.start_date ?? ""),
+      endDate: String(season.end_date ?? "")
+    });
+  }
+
+  if (stage === "knockout" || stage === "group") throw new AppError(400, "This season is not a group + knockout season.");
+  const teams = await loadApprovedFixtureTeams(String(season.id));
+  return generateLeagueFixturePreview({
+    seasonId: String(season.id),
+    leagueId: String(season.league_id ?? ""),
+    teams,
+    roundFormat: seasonRoundFormat(season),
+    startDate: String(season.start_date ?? ""),
+    endDate: String(season.end_date ?? "")
+  });
+}
+
+async function buildKnockoutPreview(season: Record<string, unknown>) {
+  const groupFixtures = (await loadSeasonFixtures(String(season.id))).filter((fixture) => fixture.stage === "GROUP");
+  if (groupFixtures.length === 0) throw new AppError(400, "Generate group fixtures first.");
+  if (groupFixtures.some((fixture) => fixture.status !== FixtureStatus.FINAL && fixture.status !== "COMPLETED")) {
+    throw new AppError(400, "Knockout fixtures will unlock after all group stage results are confirmed.");
+  }
+  const groups = await loadSeasonGroups(String(season.id));
+  const { data: standings, error } = await supabaseAdmin
+    .from("standings")
+    .select("*")
+    .eq("season_id", String(season.id));
+  if (error) throw error;
+  const standingByTeam = new Map((standings ?? []).map((row) => [row.team_registration_id, row]));
+  const qualifiersPerGroup = Number(season.qualifiers_per_group ?? 0);
+  const qualifiers = groups.flatMap((group) => {
+    const ranked = [...group.teams].sort((a, b) => compareStanding(standingByTeam.get(a.id), standingByTeam.get(b.id)));
+    return ranked.slice(0, qualifiersPerGroup).map((team, index) => ({
+      groupName: group.name,
+      rank: index + 1,
+      team_registration_id: team.id
+    }));
+  });
+  assertPowerOfTwoQualifiers(qualifiers.length);
+  return generateKnockoutFixturePreview({
+    qualifiers,
+    startDate: nextDateAfterFixtures(groupFixtures, String(season.start_date ?? "")),
+    endDate: String(season.end_date ?? "")
+  });
+}
+
+function compareStanding(a?: Record<string, unknown>, b?: Record<string, unknown>) {
+  const pointDiff = Number(b?.points ?? 0) - Number(a?.points ?? 0);
+  if (pointDiff) return pointDiff;
+  const gdDiff = Number(b?.goal_difference ?? 0) - Number(a?.goal_difference ?? 0);
+  if (gdDiff) return gdDiff;
+  const gfDiff = Number(b?.goals_for ?? 0) - Number(a?.goals_for ?? 0);
+  if (gfDiff) return gfDiff;
+  return Number(a?.fair_play_score ?? 0) - Number(b?.fair_play_score ?? 0);
+}
+
+function nextDateAfterFixtures(fixtures: Array<Record<string, unknown>>, fallback: string) {
+  const dates = fixtures
+    .map((fixture) => String(fixture.kickoff_at ?? "").slice(0, 10))
+    .filter(Boolean)
+    .sort();
+  return dates.at(-1) ?? fallback;
+}
+
+async function replaceFixtures(season: Record<string, unknown>, fixtures: ScheduledFixturePreview[], mode: "all" | "group" | "knockout") {
+  const seasonId = String(season.id);
+  if (mode === "group") {
+    const { error } = await supabaseAdmin.from("fixtures").delete().eq("season_id", seasonId).eq("stage", "GROUP");
+    if (error) throw error;
+  } else if (mode === "knockout") {
+    const { error } = await supabaseAdmin.from("fixtures").delete().eq("season_id", seasonId).not("stage", "in", "(LEAGUE,GROUP)");
+    if (error) throw error;
+  } else {
+    const { error } = await supabaseAdmin.from("fixtures").delete().eq("season_id", seasonId);
+    if (error) throw error;
+  }
+  if (fixtures.length === 0) return;
+  const rows = fixtures.map((fixture) => ({
+    league_id: season.league_id ?? null,
+    season_id: seasonId,
+    round_no: fixture.round_no,
+    matchday_number: fixture.matchday_number,
+    stage: fixture.stage,
+    group_id: fixture.group_id ?? null,
+    group_name: fixture.group_name ?? null,
+    home_team_registration_id: fixture.home_team_registration_id ?? null,
+    away_team_registration_id: fixture.away_team_registration_id ?? null,
+    home_source: fixture.home_source ?? null,
+    away_source: fixture.away_source ?? null,
+    kickoff_at: fixture.kickoff_at ?? null,
+    status: fixture.status,
+    result_confirmed: false
+  }));
+  const { error } = await supabaseAdmin.from("fixtures").insert(rows);
+  if (error) throw error;
+  await supabaseAdmin.from("seasons").update({ fixture_status: "GENERATED", updated_at: new Date().toISOString() }).eq("id", seasonId);
+}
+
+function canRegenerateFixtures(fixtures: Array<Record<string, unknown>>) {
+  return fixtures.every((fixture) => {
+    const status = fixture.status;
+    return (
+      status === FixtureStatus.SCHEDULED ||
+      status === FixtureStatus.CANCELLED ||
+      status === "WAITING_FOR_TEAMS" ||
+      status === "POSTPONED" ||
+      status === "LINEUP_PENDING"
+    ) && !fixture.finalized_at && fixture.result_confirmed !== true;
+  });
+}
+
+function fixtureStatus(fixtures: Array<Record<string, unknown>>) {
+  if (fixtures.length === 0) return "NOT_GENERATED";
+  if (fixtures.some((fixture) => fixture.status === FixtureStatus.FINAL || fixture.result_confirmed === true)) return "IN_PROGRESS";
+  return "GENERATED";
+}
+
+async function advanceKnockoutWinner(fixture: Record<string, unknown>, winnerTeamRegistrationId: string) {
+  if (fixture.stage === "LEAGUE" || fixture.stage === "GROUP") return;
+  const fixtures = (await loadSeasonFixtures(String(fixture.season_id)))
+    .filter((row) => row.stage !== "LEAGUE" && row.stage !== "GROUP")
+    .sort((a, b) => {
+      const roundDiff = Number(a.round_no ?? 0) - Number(b.round_no ?? 0);
+      if (roundDiff) return roundDiff;
+      const dateDiff = String(a.kickoff_at ?? "").localeCompare(String(b.kickoff_at ?? ""));
+      if (dateDiff) return dateDiff;
+      return String(a.id).localeCompare(String(b.id));
+    });
+  const currentIndex = fixtures.findIndex((row) => row.id === fixture.id);
+  if (currentIndex < 0) return;
+  const sourceLabel = `Winner of KO${currentIndex + 1}`;
+  const nextFixture = fixtures.find((row) => row.home_source === sourceLabel || row.away_source === sourceLabel);
+  if (!nextFixture) return;
+  const updates: Record<string, unknown> = {};
+  if (nextFixture.home_source === sourceLabel) {
+    updates.home_team_registration_id = winnerTeamRegistrationId;
+    updates.home_source = null;
+  }
+  if (nextFixture.away_source === sourceLabel) {
+    updates.away_team_registration_id = winnerTeamRegistrationId;
+    updates.away_source = null;
+  }
+  const homeReady = updates.home_team_registration_id || nextFixture.home_team_registration_id;
+  const awayReady = updates.away_team_registration_id || nextFixture.away_team_registration_id;
+  if (homeReady && awayReady) updates.status = FixtureStatus.SCHEDULED;
+  const { error } = await supabaseAdmin.from("fixtures").update(updates).eq("id", nextFixture.id);
+  if (error) throw error;
+}
+
+function shuffleRows<T>(rows: T[], seed: string) {
+  const random = seededRandomForFixtures(seed);
+  const copy = [...rows];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1));
+    [copy[index], copy[swap]] = [copy[swap]!, copy[index]!];
+  }
+  return copy;
+}
+
+function seededRandomForFixtures(seed: string) {
+  let state = 2166136261;
+  for (const char of seed) {
+    state ^= char.charCodeAt(0);
+    state = Math.imul(state, 16777619);
+  }
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 async function getOrCreateStanding(seasonId: string, teamRegistrationId: string) {

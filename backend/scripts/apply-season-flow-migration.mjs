@@ -17,7 +17,9 @@ const sql = [
   readFileSync(resolve(process.cwd(), "../supabase/admin-dashboard-flow.sql"), "utf8"),
   readFileSync(resolve(process.cwd(), "../supabase/team-player-dashboard-flow.sql"), "utf8"),
   readFileSync(resolve(process.cwd(), "../supabase/advanced-simulation-flow.sql"), "utf8"),
-  readFileSync(resolve(process.cwd(), "../supabase/manager-squad-flow.sql"), "utf8")
+  readFileSync(resolve(process.cwd(), "../supabase/manager-squad-flow.sql"), "utf8"),
+  readFileSync(resolve(process.cwd(), "../supabase/fixture-generation-flow.sql"), "utf8"),
+  readFileSync(resolve(process.cwd(), "../supabase/manager-lineup-builder-flow.sql"), "utf8")
 ].join("\n\n");
 const client = new Client({
   connectionString,
@@ -45,7 +47,8 @@ try {
         (table_name = 'seasons' and column_name in (
           'phase', 'total_teams', 'season_year', 'registration_start_date', 'registration_deadline',
           'min_players_per_team', 'max_players_per_team', 'lineup_size', 'substitute_limit',
-          'lineup_submission_deadline_hours', 'teams_per_group', 'best_third_place_teams', 'total_knockout_teams'
+          'lineup_submission_deadline_hours', 'teams_per_group', 'best_third_place_teams', 'total_knockout_teams',
+          'round_format', 'fixture_status'
         ))
         or
         (table_name = 'player_season_registrations' and column_name in (
@@ -70,9 +73,19 @@ try {
           'diving', 'distribution', 'communication', 'overall_rating'
         ))
         or
-        (table_name = 'lineup_players' and column_name in ('football_position', 'shirt_number', 'is_captain'))
+        (table_name = 'lineups' and column_name in (
+          'season_id', 'manager_id', 'playing_style', 'captain_id', 'submitted_at',
+          'confirmed_at', 'blocked_reason', 'updated_at'
+        ))
+        or
+        (table_name = 'lineup_players' and column_name in (
+          'football_position', 'shirt_number', 'is_captain', 'slot_key',
+          'display_role', 'player_natural_position', 'is_substitute', 'display_order'
+        ))
         or
         (table_name = 'fixtures' and column_name in (
+          'league_id', 'group_id', 'matchday_number', 'home_source', 'away_source',
+          'result_confirmed', 'winner_team_registration_id', 'updated_at',
           'simulation_seed', 'simulated_at', 'extra_time_played', 'penalty_winner_team_registration_id',
           'penalties_home', 'penalties_away'
         ))
@@ -98,7 +111,8 @@ try {
         'knockout_brackets',
         'knockout_matches',
         'player_abilities',
-        'match_substitutions'
+        'match_substitutions',
+        'manager_team_preferences'
       )
     order by table_name;
   `);

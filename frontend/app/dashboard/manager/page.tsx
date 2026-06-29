@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { CSSProperties, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Bell,
   CalendarDays,
@@ -101,6 +101,7 @@ interface PlayerRecord {
   rejection_reason?: string | null;
   removal_reason?: string | null;
   suspension_reason?: string | null;
+  league_rating?: number | null;
   players?: {
     full_name: string;
     date_of_birth?: string | null;
@@ -111,8 +112,89 @@ interface PlayerRecord {
   } | null;
   player_abilities?: Array<{
     rating_tier?: "LOW" | "MODERATE" | "HIGH" | null;
+    shooting?: number | null;
+    passing?: number | null;
+    dribbling?: number | null;
+    defending?: number | null;
+    physical?: number | null;
+    pace?: number | null;
+    stamina?: number | null;
+    shot_stopping?: number | null;
+    reflexes?: number | null;
+    positioning?: number | null;
+    handling?: number | null;
+    diving?: number | null;
+    distribution?: number | null;
+    communication?: number | null;
     overall_rating?: number | null;
   }> | null;
+}
+
+type PlayingStyle =
+  | "BALANCED"
+  | "HOLDING_POSSESSION"
+  | "COUNTER_ATTACKING"
+  | "HIGH_PRESS"
+  | "TIKI_TAKA"
+  | "WING_PLAY"
+  | "LOW_BLOCK";
+
+interface FormationSlot {
+  slotKey: string;
+  displayRole: string;
+  line: "GK" | "DEF" | "MID" | "ATT";
+  x: number;
+  y: number;
+  primaryPositions: FootballPosition[];
+  compatiblePositions: FootballPosition[];
+  emergencyPositions: FootballPosition[];
+}
+
+interface LineupSelection {
+  player_registration_id: string;
+  is_starter: boolean;
+  position: string;
+  slot_key?: string | null;
+  display_role?: string | null;
+  player_natural_position?: FootballPosition | null;
+  display_order?: number | null;
+  is_captain?: boolean | null;
+  fit_label?: string | null;
+  score?: number | null;
+}
+
+interface LineupBuilderPayload {
+  match: FixtureRecord;
+  team: TeamRecord;
+  previousLineup: unknown | null;
+  existingLineup: unknown | null;
+  preferredFormation: string;
+  preferredPlayingStyle: PlayingStyle;
+  selectedFormation: string;
+  selectedPlayingStyle: PlayingStyle;
+  availableFormations: Record<string, string>;
+  availablePlayingStyles: Record<PlayingStyle, string>;
+  formationSlots: FormationSlot[];
+  approvedPlayers: PlayerRecord[];
+  benchSize: number;
+  initialLineupMode: string;
+  warnings: string[];
+  initialLineup: {
+    formation: string;
+    playing_style: PlayingStyle;
+    players: LineupSelection[];
+  };
+}
+
+interface LineupAlternativesPayload {
+  slot: FormationSlot;
+  alternatives: Array<{
+    player: PlayerRecord;
+    natural_position: FootballPosition;
+    fitScore: number;
+    fitLabel: string;
+    score: number;
+  }>;
 }
 
 type PositionBreakdown = Record<FootballPosition, number>;
@@ -148,7 +230,7 @@ interface FixtureRecord {
   away_team_registration_id: string;
   home_team?: { id: string; teams?: TeamRecord["teams"] } | null;
   away_team?: { id: string; teams?: TeamRecord["teams"] } | null;
-  lineups?: Array<{ team_registration_id: string; status: string; formation: string }>;
+  lineups?: Array<{ team_registration_id: string; status: string; formation: string; playing_style?: string | null }>;
 }
 
 interface StandingRecord {
@@ -186,6 +268,12 @@ interface DashboardPayload {
 interface PlayerLeagueStatsPayload {
   season_stats: Record<string, number | string | null> | null;
   match_stats: Array<Record<string, number | string | null>>;
+}
+
+interface PlayerProfilePayload extends PlayerLeagueStatsPayload {
+  player: PlayerRecord;
+  ability: NonNullable<PlayerRecord["player_abilities"]>[number] | null;
+  league_rating: number | null;
 }
 
 const menu: { label: Section; icon: ReactNode }[] = [
@@ -275,8 +363,35 @@ function playerOverall(player: PlayerRecord) {
   return one(player.player_abilities)?.overall_rating ?? null;
 }
 
+function playerAbility(player: PlayerRecord) {
+  return one(player.player_abilities);
+}
+
 function playerRatingTier(player: PlayerRecord) {
   return one(player.player_abilities)?.rating_tier ?? null;
+}
+
+function naturalPlayerPosition(player: PlayerRecord): FootballPosition {
+  if (player.football_position) return player.football_position;
+  if (player.position === "GK") return FootballPosition.GK;
+  if (player.position === "DEF") return FootballPosition.CB;
+  if (player.position === "MID") return FootballPosition.CM;
+  return FootballPosition.ST;
+}
+
+function coarseFromNatural(position: FootballPosition) {
+  if (position === FootballPosition.GK) return "GK";
+  if (position === FootballPosition.CB || position === FootballPosition.LB || position === FootballPosition.RB) return "DEF";
+  if (position === FootballPosition.DM || position === FootballPosition.CM || position === FootballPosition.AM) return "MID";
+  return "FWD";
+}
+
+function fitBorderClass(fit?: string | null) {
+  if (!fit) return "border-white/70";
+  if (fit.includes("Exact") || fit.includes("Role")) return "border-emerald-300";
+  if (fit.includes("Compatible")) return "border-yellow-300";
+  if (fit.includes("Emergency")) return "border-orange-300";
+  return "border-red-300";
 }
 
 function overallCapsule(value?: number | null, tier?: string | null) {
@@ -288,6 +403,14 @@ function overallCapsule(value?: number | null, tier?: string | null) {
         ? "bg-green-100 text-green-700 ring-green-200"
         : "bg-amber-100 text-amber-700 ring-amber-200";
   return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${cls}`}>{value}</span>;
+}
+
+function overallCapsuleClass(tier?: string | null) {
+  return tier === "HIGH"
+    ? "bg-sky-100 text-sky-700 ring-sky-200"
+    : tier === "MODERATE"
+      ? "bg-green-100 text-green-700 ring-green-200"
+      : "bg-amber-100 text-amber-700 ring-amber-200";
 }
 
 function formatDate(value?: string | null) {
@@ -876,48 +999,494 @@ function FixturesSection({ fixtures, activeTeam }: Parameters<typeof SectionView
 }
 
 function SubmitLineupSection({ fixtures, players, activeTeam, onPlayerClick }: Parameters<typeof SectionView>[0]) {
-  const approved = players.filter((player) => player.status === RegistrationStatus.APPROVED && player.player_status === "ACTIVE");
-  const nextMatch = fixtures.find((fixture) => fixture.status !== "FINAL");
+  const upcomingFixtures = fixtures.filter((fixture) => fixture.status !== "FINAL" && fixture.status !== "COMPLETED");
+  const [matchId, setMatchId] = useState(upcomingFixtures[0]?.id ?? "");
+  const [builder, setBuilder] = useState<LineupBuilderPayload | null>(null);
+  const [loadingBuilder, setLoadingBuilder] = useState(false);
+  const [formation, setFormation] = useState("4-3-3");
+  const [playingStyle, setPlayingStyle] = useState<PlayingStyle>("BALANCED");
+  const [slots, setSlots] = useState<FormationSlot[]>([]);
+  const [lineupPlayers, setLineupPlayers] = useState<LineupSelection[]>([]);
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [positionFilter, setPositionFilter] = useState("ALL");
+  const [alternativesSlot, setAlternativesSlot] = useState<FormationSlot | null>(null);
+  const [alternatives, setAlternatives] = useState<LineupAlternativesPayload["alternatives"]>([]);
+  const [draggedSlotKey, setDraggedSlotKey] = useState<string | null>(null);
+  const selectedMatch = upcomingFixtures.find((fixture) => fixture.id === matchId) ?? null;
+  const playerMap = useMemo(() => new Map((builder?.approvedPlayers ?? []).map((player) => [player.id, player])), [builder]);
+  const starters = lineupPlayers.filter((player) => player.is_starter);
+  const starterIds = new Set(starters.map((player) => player.player_registration_id));
+  const bench = lineupPlayers.filter((player) => !player.is_starter);
+  const unavailablePlayers = players.filter((player) => player.player_status === "SUSPENDED");
+
+  useEffect(() => {
+    if (!matchId && upcomingFixtures[0]?.id) setMatchId(upcomingFixtures[0].id);
+  }, [matchId, upcomingFixtures]);
+
+  useEffect(() => {
+    if (!activeTeam || !matchId) return;
+    void loadBuilder();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTeam?.id, matchId]);
+
+  function applyBuilder(payload: LineupBuilderPayload) {
+    setBuilder(payload);
+    setFormation(payload.initialLineup.formation);
+    setPlayingStyle(payload.initialLineup.playing_style);
+    setSlots(payload.formationSlots);
+    setLineupPlayers(payload.initialLineup.players);
+    setMessage(payload.warnings?.[0] ?? "");
+  }
+
+  async function loadBuilder() {
+    if (!activeTeam || !matchId) return;
+    setLoadingBuilder(true);
+    setMessage("");
+    try {
+      const payload = await api<LineupBuilderPayload>(`/manager/matches/${matchId}/lineup-builder?teamId=${activeTeam.id}`);
+      applyBuilder(payload);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Failed to load lineup builder");
+    } finally {
+      setLoadingBuilder(false);
+    }
+  }
+
+  async function autoPick(nextFormation = formation, nextStyle = playingStyle) {
+    if (!activeTeam || !builder) return;
+    setLoadingBuilder(true);
+    setMessage("");
+    try {
+      const payload = await api<{ formationSlots: FormationSlot[]; lineup: LineupBuilderPayload["initialLineup"] }>(`/manager/matches/${matchId}/lineup/auto-pick`, {
+        method: "POST",
+        body: JSON.stringify({
+          teamId: activeTeam.id,
+          seasonId: activeTeam.season_id,
+          formation: nextFormation,
+          playingStyle: nextStyle
+        })
+      });
+      setFormation(payload.lineup.formation);
+      setPlayingStyle(payload.lineup.playing_style);
+      setSlots(payload.formationSlots);
+      setLineupPlayers(payload.lineup.players);
+      setMessage(nextFormation !== formation ? "Formation changed. Best-fit XI was recalculated." : "Best-fit XI selected.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Failed to auto-pick lineup");
+    } finally {
+      setLoadingBuilder(false);
+    }
+  }
+
+  async function savePreference(nextFormation = formation, nextStyle = playingStyle) {
+    if (!activeTeam) return;
+    await api(`/manager/teams/${activeTeam.id}/preferences`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        seasonId: activeTeam.season_id,
+        preferredFormation: nextFormation,
+        preferredPlayingStyle: nextStyle
+      })
+    });
+  }
+
+  function changeFormation(next: string) {
+    setFormation(next);
+    void autoPick(next, playingStyle);
+  }
+
+  async function openAlternatives(slot: FormationSlot) {
+    if (!activeTeam) return;
+    setAlternativesSlot(slot);
+    try {
+      const payload = await api<LineupAlternativesPayload>(
+        `/manager/matches/${matchId}/lineup/alternatives?teamId=${activeTeam.id}&slotKey=${encodeURIComponent(slot.slotKey)}&formation=${encodeURIComponent(formation)}&playingStyle=${encodeURIComponent(playingStyle)}`
+      );
+      setAlternatives(payload.alternatives);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Failed to load alternatives");
+    }
+  }
+
+  function selectAlternative(slot: FormationSlot, nextPlayer: PlayerRecord) {
+    setLineupPlayers((current) => {
+      const existingStarter = current.find((item) => item.is_starter && item.slot_key === slot.slotKey);
+      const nextExisting = current.find((item) => item.player_registration_id === nextPlayer.id);
+      const nextNatural = naturalPlayerPosition(nextPlayer);
+      return current.map((item) => {
+        if (item.slot_key === slot.slotKey) {
+          return {
+            ...item,
+            player_registration_id: nextPlayer.id,
+            position: coarseFromNatural(nextNatural),
+            player_natural_position: nextNatural,
+            display_role: slot.displayRole
+          };
+        }
+        if (nextExisting && existingStarter && item.player_registration_id === nextPlayer.id) {
+          return { ...item, player_registration_id: existingStarter.player_registration_id };
+        }
+        return item;
+      });
+    });
+    setAlternativesSlot(null);
+  }
+
+  function swapStarterSlots(sourceSlotKey: string, targetSlotKey: string) {
+    if (sourceSlotKey === targetSlotKey) return;
+    const sourceSlot = slots.find((slot) => slot.slotKey === sourceSlotKey);
+    const targetSlot = slots.find((slot) => slot.slotKey === targetSlotKey);
+    if (!sourceSlot || !targetSlot) return;
+    setLineupPlayers((current) => {
+      const source = current.find((item) => item.is_starter && item.slot_key === sourceSlotKey);
+      const target = current.find((item) => item.is_starter && item.slot_key === targetSlotKey);
+      if (!source) return current;
+      return current.map((item) => {
+        if (item.is_starter && item.slot_key === sourceSlotKey) {
+          const sourcePlayer = playerMap.get(source.player_registration_id);
+          const sourceNatural = sourcePlayer ? naturalPlayerPosition(sourcePlayer) : (item.player_natural_position ?? null);
+          return {
+            ...item,
+            slot_key: targetSlotKey,
+            display_role: targetSlot.displayRole,
+            position: sourceNatural ? coarseFromNatural(sourceNatural) : item.position,
+            player_natural_position: sourceNatural,
+            fit_label: null,
+            score: null
+          };
+        }
+        if (target && item.is_starter && item.slot_key === targetSlotKey) {
+          const targetPlayer = playerMap.get(target.player_registration_id);
+          const targetNatural = targetPlayer ? naturalPlayerPosition(targetPlayer) : (item.player_natural_position ?? null);
+          return {
+            ...item,
+            slot_key: sourceSlotKey,
+            display_role: sourceSlot.displayRole,
+            position: targetNatural ? coarseFromNatural(targetNatural) : item.position,
+            player_natural_position: targetNatural,
+            fit_label: null,
+            score: null
+          };
+        }
+        return item;
+      });
+    });
+  }
+
+  function handleSlotDrop(event: DragEvent<HTMLElement>, targetSlotKey: string) {
+    event.preventDefault();
+    const sourceSlotKey = event.dataTransfer.getData("text/scoreline-slot") || draggedSlotKey;
+    if (sourceSlotKey) swapStarterSlots(sourceSlotKey, targetSlotKey);
+    setDraggedSlotKey(null);
+  }
+
+  async function submitLineup() {
+    if (!activeTeam || !selectedMatch) return;
+    setSubmitting(true);
+    setMessage("");
+    try {
+      if (starters.length !== 11) throw new Error("Exactly 11 starters are required.");
+      if (starters.filter((item) => item.player_natural_position === FootballPosition.GK || playerMap.get(item.player_registration_id)?.football_position === FootballPosition.GK).length !== 1) {
+        throw new Error("Exactly one goalkeeper is required in the starting XI.");
+      }
+      const captainId = starters[0]?.player_registration_id ?? null;
+      const selectedIds = new Set(lineupPlayers.map((item) => item.player_registration_id));
+      const completeLineupPlayers = [
+        ...lineupPlayers,
+        ...(builder?.approvedPlayers ?? [])
+          .filter((player) => !selectedIds.has(player.id))
+          .map((player, index) => {
+            const natural = naturalPlayerPosition(player);
+            return {
+              player_registration_id: player.id,
+              is_starter: false,
+              position: coarseFromNatural(natural),
+              display_role: "SUB",
+              player_natural_position: natural,
+              display_order: lineupPlayers.length + index,
+              is_captain: false
+            };
+          })
+      ];
+      await api(`/manager/matches/${selectedMatch.id}/lineup`, {
+        method: "POST",
+        body: JSON.stringify({
+          team_registration_id: activeTeam.id,
+          side: selectedMatch.home_team_registration_id === activeTeam.id ? "HOME" : "AWAY",
+          formation,
+          playing_style: playingStyle,
+          captain_id: captainId,
+          players: completeLineupPlayers.map((item) => ({
+            ...item,
+            is_captain: item.player_registration_id === captainId
+          }))
+        })
+      });
+      setMessage("Lineup submitted. Admin can now review it.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Failed to submit lineup");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const filteredAvailable = (builder?.approvedPlayers ?? []).filter((player) => {
+    const text = `${player.players?.full_name ?? ""} ${player.player_code ?? ""} ${player.shirt_number ?? ""}`.toLowerCase();
+    const matchesSearch = text.includes(search.trim().toLowerCase());
+    const matchesPosition = positionFilter === "ALL" || naturalPlayerPosition(player) === positionFilter;
+    return matchesSearch && matchesPosition;
+  });
+  const visibleAlternatives = alternatives.filter((item) => !starterIds.has(item.player.id));
+
   return (
     <div className="space-y-6">
-      <PageTitle title="Submit Lineup" subtitle="Only approved, active players can be selected. Full visual lineup submission will use these real records." />
-      {!nextMatch ? <EmptyState label="No upcoming fixture is available for lineup submission." /> : null}
-      {nextMatch ? (
-        <Panel title={`Lineup for ${opponentName(nextMatch, activeTeam?.id)}`}>
-          <div className="mb-4 rounded-2xl bg-purple-50 p-4 text-sm text-purple-800">
-            Fixture: {formatDate(nextMatch.kickoff_at)} · Venue: {nextMatch.venue ?? "TBA"}
-          </div>
-          {approved.length < 11 ? (
-            <EmptyState label="You need at least 11 approved active players before submitting a lineup." />
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-              <div className="rounded-3xl bg-gradient-to-b from-green-500 to-green-700 p-6 text-white">
-                <p className="mb-4 font-bold">Pitch Preview</p>
-                <div className="grid grid-cols-4 gap-3">
-                  {approved.slice(0, 11).map((player) => (
-                    <button key={player.id} className="rounded-2xl bg-white/15 p-3 text-center text-xs backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/25" onClick={() => onPlayerClick(player)}>
-                      <Avatar name={player.players?.full_name ?? "Player"} small />
-                      <p className="mt-2 font-bold">#{player.shirt_number}</p>
-                      <p className="truncate">{player.players?.full_name}</p>
-                    </button>
+      <PageTitle title="Submit Lineup" subtitle="Select your formation, playing style, review your XI, and submit your match lineup." />
+      {upcomingFixtures.length === 0 ? <EmptyState label="No upcoming fixture is available for lineup submission." /> : null}
+      {selectedMatch ? (
+        <>
+          <Panel title="Lineup Controls">
+            <div className="grid gap-3 lg:grid-cols-5">
+              <label className="text-sm font-bold lg:col-span-2">
+                Match
+                <select className="manager-input mt-2" value={matchId} onChange={(event) => setMatchId(event.target.value)}>
+                  {upcomingFixtures.map((fixture) => (
+                    <option key={fixture.id} value={fixture.id}>{matchLabel(fixture)} · {formatDate(fixture.kickoff_at)}</option>
                   ))}
+                </select>
+              </label>
+              <label className="text-sm font-bold">
+                Formation
+                <select
+                  className="manager-input mt-2"
+                  value={formation}
+                  onChange={(event) => changeFormation(event.target.value)}
+                >
+                  {Object.entries(builder?.availableFormations ?? { "4-3-3": "4-3-3" }).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </label>
+              <label className="text-sm font-bold">
+                Playing Style
+                <select
+                  className="manager-input mt-2"
+                  value={playingStyle}
+                  onChange={(event) => {
+                    const next = event.target.value as PlayingStyle;
+                    setPlayingStyle(next);
+                    void savePreference(formation, next).catch((error) => setMessage(error.message));
+                  }}
+                >
+                  {Object.entries(builder?.availablePlayingStyles ?? { BALANCED: "Balanced Play" }).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </label>
+              <div className="flex items-end gap-2">
+                <button className="rounded-2xl bg-[var(--team-primary)] px-4 py-3 text-sm font-black text-[var(--team-primary-text)] transition hover:-translate-y-0.5 disabled:opacity-50" disabled={loadingBuilder} onClick={() => void autoPick()}>
+                  Auto Pick Best XI
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+              <button className="rounded-2xl border border-slate-200 bg-white px-4 py-2 font-bold text-slate-700 transition hover:border-[var(--team-primary)] hover:text-[var(--team-primary)]" onClick={() => void loadBuilder()}>
+                Reset to Previous Lineup
+              </button>
+              <span className="rounded-full bg-slate-100 px-3 py-1 font-bold text-slate-600">Mode: {builder?.initialLineupMode?.replaceAll("_", " ") ?? "Loading"}</span>
+              <span className="rounded-full bg-green-50 px-3 py-1 font-bold text-green-700">Preference saved after formation/style changes</span>
+            </div>
+            {message ? <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-sm font-bold text-amber-700">{message}</p> : null}
+          </Panel>
+          {loadingBuilder ? <LoadingState label="Preparing lineup builder..." /> : null}
+          {!loadingBuilder && builder ? (
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,760px)_420px]">
+              <div className="relative h-[820px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
+                <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
+                <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
+                <div className="absolute left-1/2 top-1/2 h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/5" />
+                <div className="absolute left-1/2 top-0 h-24 w-44 -translate-x-1/2 rounded-b-3xl border-x-[5px] border-b-[5px] border-white/10" />
+                <div className="absolute left-1/2 top-0 h-12 w-20 -translate-x-1/2 rounded-b-2xl border-x-[5px] border-b-[5px] border-white/10" />
+                <div className="absolute bottom-0 left-1/2 h-24 w-44 -translate-x-1/2 rounded-t-3xl border-x-[5px] border-t-[5px] border-white/10" />
+                <div className="absolute bottom-0 left-1/2 h-12 w-20 -translate-x-1/2 rounded-t-2xl border-x-[5px] border-t-[5px] border-white/10" />
+                <div className="absolute inset-y-0 left-[35%] w-1 bg-white/5" />
+                <div className="absolute inset-y-0 right-[35%] w-1 bg-white/5" />
+                {slots.map((slot) => {
+                  const selected = lineupPlayers.find((item) => item.is_starter && item.slot_key === slot.slotKey);
+                  const player = selected ? playerMap.get(selected.player_registration_id) : null;
+                  return (
+                    <div
+                      key={slot.slotKey}
+                      className={`absolute z-10 w-[112px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center transition ${draggedSlotKey && draggedSlotKey !== slot.slotKey ? "bg-white/10 ring-2 ring-white/25" : ""}`}
+                      style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => handleSlotDrop(event, slot.slotKey)}
+                    >
+                      {player ? (
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          draggable
+                          className="group inline-flex flex-col items-center outline-none"
+                          onDragStart={(event) => {
+                            setDraggedSlotKey(slot.slotKey);
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/scoreline-slot", slot.slotKey);
+                          }}
+                          onDragEnd={() => setDraggedSlotKey(null)}
+                          onClick={() => onPlayerClick(player)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") onPlayerClick(player);
+                          }}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            void openAlternatives(slot);
+                          }}
+                        >
+                          <div className={`relative grid h-14 w-14 place-items-center rounded-full border-[3px] bg-white shadow-md transition group-hover:scale-110 ${fitBorderClass(selected?.fit_label)}`}>
+                            {player.players?.avatar_url ? (
+                              <img src={player.players.avatar_url} alt={player.players?.full_name ?? "Player"} className="h-full w-full rounded-full object-cover" />
+                            ) : (
+                              <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">{initials(player.players?.full_name)}</span>
+                            )}
+                          </div>
+                          <p className="mt-1 w-28 truncate text-[13px] font-black text-white drop-shadow">{player.shirt_number ? `${player.shirt_number} ` : ""}{player.players?.full_name ?? "Player"}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-white/70">{slot.displayRole}</p>
+                        </div>
+                      ) : (
+                        <div className="group inline-flex flex-col items-center">
+                          <span className="relative grid h-14 w-14 place-items-center rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20 text-emerald-100 shadow-inner transition group-hover:scale-110 group-hover:border-white">
+                            <User size={28} className="opacity-40" />
+                          </span>
+                          <span className="mt-1 text-[11px] font-black uppercase tracking-wide text-white/80">{slot.displayRole}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="absolute bottom-4 left-4">
+                  <select
+                    className="max-w-[280px] rounded-full border border-white/15 bg-emerald-700/80 px-4 py-2 text-sm font-black text-white shadow outline-none transition hover:bg-emerald-800/90"
+                    value={formation}
+                    onChange={(event) => changeFormation(event.target.value)}
+                    aria-label="Select formation"
+                  >
+                    {Object.entries(builder.availableFormations).map(([key, label]) => (
+                      <option key={key} value={key} className="bg-emerald-900 text-white">
+                        {label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
-              <div className="rounded-3xl border border-slate-200 bg-white p-5">
-                <p className="font-bold">Available Players</p>
-                <div className="mt-3 max-h-96 space-y-2 overflow-auto">
-                  {approved.map((player) => (
-                    <button key={player.id} className="flex w-full items-center justify-between rounded-2xl bg-slate-50 p-3 text-left text-sm transition hover:bg-purple-50" onClick={() => onPlayerClick(player)}>
-                      <span>{player.players?.full_name}</span>
-                      <span className="font-bold text-[var(--team-primary)]">{player.football_position ?? player.position}</span>
-                    </button>
+              <Panel title="Players">
+                <div className="space-y-3">
+                  <input className="manager-input" placeholder="Search players" value={search} onChange={(event) => setSearch(event.target.value)} />
+                  <select className="manager-input" value={positionFilter} onChange={(event) => setPositionFilter(event.target.value)}>
+                    {["ALL", ...positions].map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                  <div>
+                    <p className="font-black">Squad Selection · Bench {bench.length}</p>
+                    <div className="mt-2 max-h-[540px] space-y-2 overflow-auto pr-1">
+                      {filteredAvailable.map((player) => {
+                        const status = starterIds.has(player.id) ? "Starter" : "Bench";
+                        return (
+                          <LineupPlayerRow
+                            key={player.id}
+                            player={player}
+                            label={status}
+                            onOpen={() => onPlayerClick(player)}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {unavailablePlayers.length ? (
+                    <div className="rounded-3xl border border-red-100 bg-red-50 p-4">
+                      <p className="font-black text-red-700">Suspended / Injured</p>
+                      <div className="mt-2 max-h-44 space-y-2 overflow-auto">
+                        {unavailablePlayers.map((player) => (
+                          <LineupPlayerRow key={player.id} player={player} label={player.player_status ?? "Unavailable"} onOpen={() => onPlayerClick(player)} />
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <button className="w-full rounded-2xl bg-[var(--team-primary)] px-5 py-4 text-sm font-black text-[var(--team-primary-text)] transition hover:-translate-y-0.5 disabled:opacity-50" disabled={submitting || starters.length !== 11} onClick={() => void submitLineup()}>
+                    {submitting ? "Submitting..." : "Submit Lineup"}
+                  </button>
+                </div>
+              </Panel>
+            </div>
+          ) : null}
+          {alternativesSlot ? (
+            <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur" onClick={() => setAlternativesSlot(null)}>
+              <div className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-[0.24em] text-[var(--team-primary)]">Alternatives</p>
+                    <h3 className="text-2xl font-black">{alternativesSlot.displayRole} role</h3>
+                  </div>
+                  <button className="rounded-full bg-slate-100 px-4 py-2 font-bold" onClick={() => setAlternativesSlot(null)}>Close</button>
+                </div>
+                <div className="mt-5 space-y-2">
+                  {visibleAlternatives.map((item) => (
+                    <div key={item.player.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 p-3">
+                      <div role="button" tabIndex={0} className="flex min-w-0 items-center gap-3 text-left" onClick={() => onPlayerClick(item.player)} onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") onPlayerClick(item.player);
+                      }}>
+                        <Avatar name={item.player.players?.full_name ?? "Player"} src={item.player.players?.avatar_url} small />
+                        <span className="min-w-0">
+                          <span className="block truncate font-black">{item.player.players?.full_name}</span>
+                          <span className="block text-xs font-bold text-slate-500">{item.natural_position} · {item.fitLabel} · OVR {playerOverall(item.player) ?? "N/A"} · LG {item.player.league_rating?.toFixed(2) ?? "—"}</span>
+                        </span>
+                      </div>
+                      <button className="rounded-xl bg-[var(--team-primary)] px-4 py-2 text-xs font-black text-[var(--team-primary-text)]" onClick={() => selectAlternative(alternativesSlot, item.player)}>
+                        Select / Swap
+                      </button>
+                    </div>
                   ))}
+                  {!visibleAlternatives.length ? <EmptyState label="No bench alternatives available for this role." /> : null}
                 </div>
               </div>
             </div>
-          )}
-        </Panel>
+          ) : null}
+        </>
       ) : null}
+    </div>
+  );
+}
+
+function LineupPlayerRow({
+  player,
+  label,
+  actionLabel,
+  onOpen,
+  onAction
+}: {
+  player: PlayerRecord;
+  label: string;
+  actionLabel?: string;
+  onOpen: () => void;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 p-3">
+      <div role="button" tabIndex={0} className="flex min-w-0 items-center gap-3 text-left" onClick={onOpen} onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") onOpen();
+      }}>
+        <Avatar name={player.players?.full_name ?? "Player"} src={player.players?.avatar_url} small />
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-black">{player.players?.full_name}</span>
+          <span className="block text-xs font-bold text-slate-500">
+            {naturalPlayerPosition(player)} · #{player.shirt_number ?? "-"} · OVR {playerOverall(player) ?? "N/A"} · LG {player.league_rating?.toFixed(2) ?? "—"}
+          </span>
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase text-slate-500 ring-1 ring-slate-200">{label}</span>
+        {actionLabel && onAction ? (
+          <button className="rounded-xl bg-purple-50 px-3 py-2 text-xs font-black text-[var(--team-primary)] transition hover:bg-[var(--team-primary)] hover:text-[var(--team-primary-text)]" onClick={onAction}>
+            {actionLabel}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1478,8 +2047,8 @@ function PlayerTable({
   const canEdit = (player: PlayerRecord) => player.status === RegistrationStatus.DRAFT || player.status === RegistrationStatus.PENDING;
   const showMinifaceEditor = Boolean(minifaceDrafts && onMinifaceChange);
   const tableHeads = showMinifaceEditor
-    ? ["Avatar", "Miniface URL", "Code", "Player Name", "Position", "Category", "No.", "ID Type", "ID Number", "Foot", "OVR", "Status", "Action"]
-    : ["Avatar", "Code", "Player Name", "Position", "Category", "No.", "ID Type", "ID Number", "Foot", "OVR", "Status", "Action"];
+    ? ["Avatar", "Miniface URL", "Code", "Player Name", "Age", "Position", "Category", "No.", "ID Type", "ID Number", "Foot", "OVR", "Status", "Action"]
+    : ["Avatar", "Code", "Player Name", "Age", "Position", "Category", "No.", "ID Type", "ID Number", "Foot", "OVR", "Status", "Action"];
   return (
     <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-white">
       <table className={`w-full text-left text-sm ${showMinifaceEditor ? "min-w-[1320px]" : "min-w-[980px]"}`}>
@@ -1512,6 +2081,7 @@ function PlayerTable({
                     {player.players?.full_name ?? "-"}
                   </button>
                 </td>
+                <td className="px-4 py-3 font-bold">{calculateAge(player.players?.date_of_birth)}</td>
                 <td className="px-4 py-3">{player.football_position ?? player.position}</td>
                 <td className="px-4 py-3">{player.position_category ?? "-"}</td>
                 <td className="px-4 py-3 font-bold">#{player.shirt_number ?? "-"}</td>
@@ -1630,22 +2200,30 @@ function EditDraftPlayerModal({ player, onClose, onSaved }: { player: PlayerReco
 }
 
 function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecord; onClose: () => void; onDeleted: () => void }) {
-  const [tab, setTab] = useState<"Personal Data" | "League Stats">("Personal Data");
+  const [tab, setTab] = useState<"League Stats" | "Hidden Ability" | "Personal Data">("League Stats");
   const [error, setError] = useState("");
   const [avatarUrl, setAvatarUrl] = useState(player.players?.avatar_url ?? "");
   const [savingAvatar, setSavingAvatar] = useState(false);
-  const [stats, setStats] = useState<PlayerLeagueStatsPayload | null>(null);
+  const [profilePayload, setProfilePayload] = useState<PlayerProfilePayload | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const canDelete = player.status === RegistrationStatus.DRAFT || player.status === RegistrationStatus.PENDING;
   const canEditMiniface = player.status === RegistrationStatus.DRAFT || player.status === RegistrationStatus.PENDING;
-  const isGoalkeeper = (player.football_position ?? player.position) === FootballPosition.GK;
+  const activePlayer = profilePayload?.player ?? player;
+  const activeAbility = profilePayload?.ability ?? playerAbility(player);
+  const isGoalkeeper = (activePlayer.football_position ?? activePlayer.position) === FootballPosition.GK;
+  const activeName = activePlayer.players?.full_name ?? player.players?.full_name ?? "Player";
+  const activeAvatar = activePlayer.players?.avatar_url ?? player.players?.avatar_url;
+  const activeCode = activePlayer.player_code ?? player.player_code ?? "-";
+  const activePosition = activePlayer.football_position ?? player.football_position ?? activePlayer.position ?? player.position ?? "-";
+  const activeOverall = activeAbility?.overall_rating ?? playerOverall(activePlayer) ?? playerOverall(player);
+  const activeTier = activeAbility?.rating_tier ?? playerRatingTier(activePlayer) ?? playerRatingTier(player);
 
   useEffect(() => {
     let alive = true;
     setStatsLoading(true);
-    api<PlayerLeagueStatsPayload>(`/manager/players/${player.id}/league-stats`)
+    api<PlayerProfilePayload>(`/manager/players/${player.id}/profile`)
       .then((payload) => {
-        if (alive) setStats(payload);
+        if (alive) setProfilePayload(payload);
       })
       .catch((err) => {
         if (alive) setError(err instanceof Error ? err.message : "Failed to load player stats");
@@ -1687,39 +2265,54 @@ function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecor
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 backdrop-blur">
-      <div className="mx-auto my-6 max-h-[calc(100vh-3rem)] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Avatar name={player.players?.full_name ?? "Player"} src={player.players?.avatar_url} />
-            <div>
-              <h2 className="text-2xl font-black">{player.players?.full_name}</h2>
-              <p className="text-sm text-slate-500">{player.football_position ?? player.position} · #{player.shirt_number ?? "-"}</p>
+      <div className="mx-auto my-6 max-h-[calc(100vh-3rem)] w-full max-w-3xl overflow-y-auto rounded-[2rem] bg-white shadow-2xl">
+        <div className="bg-gradient-to-br from-[var(--team-primary)] to-[var(--team-secondary)] p-6 text-[var(--team-primary-text)]">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <Avatar name={activeName} src={activeAvatar} />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="truncate text-3xl font-black">{activeName}</h2>
+                  <span className={`inline-flex rounded-full px-4 py-1.5 text-sm font-black ring-1 ${overallCapsuleClass(activeTier)}`}>
+                    OVR {activeOverall ?? "N/A"}
+                  </span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-[var(--team-primary)] px-4 py-1.5 text-sm font-black text-[var(--team-primary-text)] ring-1 ring-white/30">
+                    {activePosition}
+                  </span>
+                  <span className="rounded-full bg-white/15 px-4 py-1.5 text-sm font-bold ring-1 ring-white/20">#{activePlayer.shirt_number ?? "-"}</span>
+                  <span className="rounded-full bg-white/15 px-4 py-1.5 text-sm font-bold ring-1 ring-white/20">LG {profilePayload?.league_rating?.toFixed(2) ?? "—"}</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              {canDelete ? (
+                <button className="rounded-full bg-red-50 px-4 py-2 font-bold text-red-700 transition hover:bg-red-100" onClick={() => void deletePlayer()}>Delete</button>
+              ) : null}
+              <button className="rounded-full bg-white/90 px-4 py-2 font-bold text-slate-950 transition hover:bg-white" onClick={onClose}>Close</button>
             </div>
           </div>
-          <div className="flex gap-2">
-            {canDelete ? (
-              <button className="rounded-full bg-red-50 px-4 py-2 font-bold text-red-700 transition hover:bg-red-100" onClick={() => void deletePlayer()}>Delete</button>
-            ) : null}
-            <button className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200" onClick={onClose}>Close</button>
-          </div>
         </div>
+        <div className="p-6">
         {error ? <p className="mt-3 rounded-2xl bg-red-50 p-3 text-sm font-semibold text-red-600">{error}</p> : null}
-        <Tabs values={["Personal Data", "League Stats"]} value={tab} onChange={(value) => setTab(value as typeof tab)} />
+        <Tabs values={["League Stats", "Hidden Ability", "Personal Data"]} value={tab} onChange={(value) => setTab(value as typeof tab)} />
         {tab === "Personal Data" ? (
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <Detail label="Player Code" value={player.player_code ?? "-"} />
-            <Detail label="Full Name" value={player.players?.full_name} />
-            <Detail label="Date of Birth" value={player.players?.date_of_birth ?? "Not provided"} />
-            <Detail label="Age" value={player.players?.date_of_birth ? calculateAge(player.players.date_of_birth) : "-"} />
-            <Detail label="Position" value={player.football_position ?? player.position} />
-            <Detail label="Jersey Number" value={player.shirt_number ? `#${player.shirt_number}` : "-"} />
-            <Detail label="Preferred Foot" value={player.preferred_foot ?? "UNKNOWN"} />
-            <Detail label="Overall Rating" value={playerOverall(player) ?? "Not rated"} />
-            <Detail label="ID Type" value={player.players?.id_type ?? "-"} />
-            <Detail label="ID Number" value={player.players?.generated_identity_number ?? "-"} />
-            <Detail label="Masked ID" value={player.players?.id_number_last4 ? `****${player.players.id_number_last4}` : "-"} />
-            <Detail label="Approval Status" value={player.status} />
-            <Detail label="Player Status" value={player.player_status ?? "ACTIVE"} />
+            <Detail label="Player Code" value={activeCode} />
+            <Detail label="Full Name" value={activeName} />
+            <Detail label="Date of Birth" value={activePlayer.players?.date_of_birth ?? "Not provided"} />
+            <Detail label="Age" value={activePlayer.players?.date_of_birth ? calculateAge(activePlayer.players.date_of_birth) : "-"} />
+            <Detail label="Position" value={activePosition} />
+            <Detail label="Jersey Number" value={activePlayer.shirt_number ? `#${activePlayer.shirt_number}` : "-"} />
+            <Detail label="Preferred Foot" value={activePlayer.preferred_foot ?? "UNKNOWN"} />
+            <Detail label="Overall Rating" value={activeOverall ?? "Not rated"} />
+            <Detail label="League Rating" value={profilePayload?.league_rating?.toFixed(2) ?? "No league rating yet"} />
+            <Detail label="ID Type" value={activePlayer.players?.id_type ?? "-"} />
+            <Detail label="ID Number" value={activePlayer.players?.generated_identity_number ?? "-"} />
+            <Detail label="Masked ID" value={activePlayer.players?.id_number_last4 ? `****${activePlayer.players.id_number_last4}` : "-"} />
+            <Detail label="Approval Status" value={activePlayer.status} />
+            <Detail label="Player Status" value={activePlayer.player_status ?? "ACTIVE"} />
             <div className="rounded-2xl bg-slate-50 p-4 sm:col-span-2">
               <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Miniface / Avatar URL</p>
               <div className="mt-3 flex flex-col gap-3 sm:flex-row">
@@ -1742,14 +2335,23 @@ function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecor
               {!canEditMiniface ? <p className="mt-2 text-xs font-semibold text-slate-500">Approved players cannot be edited by manager.</p> : null}
             </div>
           </div>
+        ) : tab === "Hidden Ability" ? (
+          <div className="mt-5 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Detail label="Overall" value={activeOverall ?? "Not rated"} />
+              <Detail label="Rating Tier" value={activeTier ?? "Not rated"} />
+              <Detail label="League Rating" value={profilePayload?.league_rating?.toFixed(2) ?? "No league rating yet"} />
+            </div>
+            <AbilityScoresPanel player={activePlayer} ability={activeAbility ?? null} />
+          </div>
         ) : (
           <div className="mt-5 space-y-5">
             {statsLoading ? <LoadingState label="Loading player league stats..." /> : null}
             {!statsLoading ? (
               <>
-                <PlayerStatsGrid stats={stats?.season_stats ?? null} isGoalkeeper={isGoalkeeper} />
+                <PlayerStatsGrid stats={profilePayload?.season_stats ?? null} isGoalkeeper={isGoalkeeper} />
                 <Panel title="Match-by-match">
-                  {stats?.match_stats?.length ? (
+                  {profilePayload?.match_stats?.length ? (
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[760px] text-left text-sm">
                         <thead className="text-xs uppercase text-slate-500">
@@ -1760,7 +2362,7 @@ function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecor
                           </tr>
                         </thead>
                         <tbody>
-                          {stats.match_stats.map((row, index) => (
+                          {profilePayload.match_stats.map((row, index) => (
                             <tr key={`${row.id ?? index}`} className="border-t">
                               <td className="px-3 py-2 font-semibold">{String(row.fixture_id ?? "Match")}</td>
                               <td className="px-3 py-2">{statValue(row.minutes_played)}</td>
@@ -1775,14 +2377,60 @@ function PlayerDetailModal({ player, onClose, onDeleted }: { player: PlayerRecor
                       </table>
                     </div>
                   ) : (
-                    <EmptyState label="No confirmed match stats yet. Hidden ability scores are not shown to managers." />
+                    <EmptyState label="No confirmed match stats yet." />
                   )}
                 </Panel>
               </>
             ) : null}
           </div>
         )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function AbilityScoresPanel({ player, ability }: { player: PlayerRecord; ability: NonNullable<PlayerRecord["player_abilities"]>[number] | null }) {
+  const isGoalkeeper = (player.football_position ?? player.position) === FootballPosition.GK;
+  const fields: Array<[string, keyof NonNullable<PlayerRecord["player_abilities"]>[number]]> = isGoalkeeper
+    ? [
+        ["Tier", "rating_tier"],
+        ["Overall", "overall_rating"],
+        ["Shot Stopping", "shot_stopping"],
+        ["Reflexes", "reflexes"],
+        ["Positioning", "positioning"],
+        ["Handling", "handling"],
+        ["Diving", "diving"],
+        ["Distribution", "distribution"],
+        ["Physical", "physical"],
+        ["Communication", "communication"]
+      ]
+    : [
+        ["Tier", "rating_tier"],
+        ["Overall", "overall_rating"],
+        ["Shooting", "shooting"],
+        ["Passing", "passing"],
+        ["Dribbling", "dribbling"],
+        ["Defending", "defending"],
+        ["Physical", "physical"],
+        ["Pace", "pace"],
+        ["Stamina", "stamina"]
+      ];
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-purple-50 to-sky-50 p-4">
+      <h3 className="text-lg font-black">Ability Scores</h3>
+      {!ability ? (
+        <p className="mt-3 rounded-2xl bg-white/70 p-4 text-sm font-bold text-slate-500">No ability rating has been assigned yet.</p>
+      ) : (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {fields.map(([label, key]) => (
+            <div key={String(key)} className="rounded-2xl bg-white/80 p-3 ring-1 ring-white">
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</p>
+              <p className="mt-1 text-xl font-black text-slate-950">{String(ability[key] ?? "-")}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1994,7 +2642,8 @@ function Detail({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function calculateAge(dateOfBirth: string) {
+function calculateAge(dateOfBirth?: string | null) {
+  if (!dateOfBirth) return "-";
   const dob = new Date(dateOfBirth);
   if (Number.isNaN(dob.getTime())) return "-";
   const today = new Date();

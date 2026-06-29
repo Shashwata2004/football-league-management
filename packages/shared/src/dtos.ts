@@ -35,6 +35,8 @@ export interface SeasonDto {
   registration_start_date: string | null;
   registration_deadline: string | null;
   format: SeasonFormat;
+  round_format?: SeasonFormat | null;
+  fixture_status?: string | null;
   phase: SeasonPhase;
   start_date: string | null;
   end_date: string | null;

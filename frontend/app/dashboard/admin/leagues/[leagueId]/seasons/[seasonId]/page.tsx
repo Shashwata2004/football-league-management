@@ -46,6 +46,7 @@ type TabId =
   | "reports"
   | "team-stats"
   | "messages"
+  | "divide-groups"
   | "groups"
   | "knockout"
   | "settings";
@@ -384,14 +385,75 @@ type PlayerRegistrationApiRow = {
 type FixtureApiRow = {
   id: string;
   round_no?: number;
+  matchday_number?: number | null;
   stage?: string | null;
-  home_team_registration_id: string;
-  away_team_registration_id: string;
+  group_id?: string | null;
+  group_name?: string | null;
+  home_team_registration_id?: string | null;
+  away_team_registration_id?: string | null;
+  home_source?: string | null;
+  away_source?: string | null;
   kickoff_at?: string | null;
   venue?: string | null;
   status: string;
   home_score?: number | null;
   away_score?: number | null;
+  result_confirmed?: boolean | null;
+  home_team?: { id: string; teams?: { name?: string | null; short_name?: string | null; logo_url?: string | null } | null } | null;
+  away_team?: { id: string; teams?: { name?: string | null; short_name?: string | null; logo_url?: string | null } | null } | null;
+  season_groups?: { id: string; name?: string | null } | null;
+};
+
+type AdminFixtureTeam = {
+  id: string;
+  team_id?: string;
+  name?: string | null;
+  short_name?: string | null;
+  logo_url?: string | null;
+};
+
+type AdminFixtureGroup = {
+  id: string;
+  name: string;
+  teams: AdminFixtureTeam[];
+};
+
+type FixturePreviewRow = {
+  round_no: number;
+  matchday_number: number;
+  stage: string;
+  group_id?: string | null;
+  group_name?: string | null;
+  home_team_registration_id?: string | null;
+  away_team_registration_id?: string | null;
+  home_source?: string | null;
+  away_source?: string | null;
+  kickoff_at?: string | null;
+  status: string;
+};
+
+type FixturePreviewResponse = {
+  fixtures: FixturePreviewRow[];
+  warnings: string[];
+};
+
+type AdminFixturesResponse = {
+  season: SeasonDto & {
+    round_format?: SeasonFormat | null;
+    fixture_status?: string | null;
+  };
+  approved_teams: AdminFixtureTeam[];
+  groups: AdminFixtureGroup[];
+  fixtures: FixtureApiRow[];
+  can_regenerate: boolean;
+  fixture_status: string;
+};
+
+type AdminGroupsResponse = {
+  season: SeasonDto;
+  approved_teams: AdminFixtureTeam[];
+  groups: AdminFixtureGroup[];
+  groups_ready: boolean;
 };
 
 type MatchDetailLineupPlayer = {
@@ -690,8 +752,8 @@ function buildAdminSeasonData(input: {
       .map((fixture) => ({
         id: fixture.id,
         date: safeDate(fixture.kickoff_at),
-        home: teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team",
-        away: teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team",
+        home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
+        away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
         stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
         status: statusLabel(fixture.status),
         venue: fixture.venue ?? "Not set"
@@ -768,8 +830,8 @@ function buildAdminSeasonData(input: {
   const fixtures = input.fixtures.map((fixture) => ({
     id: fixture.id,
     date: safeDate(fixture.kickoff_at),
-    home: teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team",
-    away: teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team",
+    home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
+    away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
     stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
     status: statusLabel(fixture.status),
     venue: fixture.venue ?? "Not set"
@@ -779,8 +841,8 @@ function buildAdminSeasonData(input: {
     .filter((fixture) => fixture.status === FixtureStatus.FINAL)
     .map((fixture) => ({
       date: safeDate(fixture.kickoff_at),
-      home: teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team",
-      away: teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team",
+      home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
+      away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
       score: `${fixture.home_score ?? 0} - ${fixture.away_score ?? 0}`
     }));
 
@@ -806,8 +868,8 @@ function buildAdminSeasonData(input: {
     .filter((fixture) => fixture.status === FixtureStatus.LINEUPS_CONFIRMED || fixture.status === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION)
     .map((fixture) => ({
       id: fixture.id,
-      home: teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team",
-      away: teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team",
+      home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
+      away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
       stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
       kickoff: fixture.kickoff_at ? safeDate(fixture.kickoff_at) : "Kickoff not set",
       status: statusLabel(fixture.status)
@@ -919,6 +981,7 @@ export default function AdminLeagueSeasonDashboard() {
   const [league, setLeague] = useState<LeagueDto | null>(null);
   const [season, setSeason] = useState<SeasonDto | null>(null);
   const [adminData, setAdminData] = useState<AdminSeasonData>(emptyAdminSeasonData);
+  const [groupsReady, setGroupsReady] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [playerAction, setPlayerAction] = useState<{ action: PlayerLifecycleAction; player: AdminPlayer } | null>(null);
   const [error, setError] = useState("");
@@ -935,6 +998,7 @@ export default function AdminLeagueSeasonDashboard() {
     setSeason(selectedSeason);
     if (!selectedSeason) {
       setAdminData(emptyAdminSeasonData);
+      setGroupsReady(false);
       return;
     }
     const [teamRegistrationData, playerRegistrationData, fixtureData, standingData, playerStatData, statsReportData] = await Promise.all([
@@ -956,6 +1020,12 @@ export default function AdminLeagueSeasonDashboard() {
         statsReport: statsReportData ?? emptyStatsReport
       })
     );
+    if (selectedSeason.format === SeasonFormat.GROUP_STAGE_KNOCKOUT) {
+      const groupData = await api<AdminGroupsResponse>(`/admin/seasons/${selectedSeason.id}/groups`);
+      setGroupsReady(groupData.groups_ready);
+    } else {
+      setGroupsReady(false);
+    }
   }
 
   useEffect(() => {
@@ -1133,16 +1203,17 @@ export default function AdminLeagueSeasonDashboard() {
     []
   );
 
-  const tournamentItems = useMemo(
-    () =>
-      isGroupKnockout
-        ? ([
-          { id: "groups", label: "Groups", icon: Users },
-          { id: "knockout", label: "Knockout Bracket", icon: GitBranch }
-        ] as const)
-        : [],
-    [isGroupKnockout]
-  );
+  const groupTeamRequirement = Number(season?.group_count ?? 0) * Number(season?.teams_per_group ?? 0);
+  const shouldShowGroupDivision =
+    Boolean(isGroupKnockout && !groupsReady && groupTeamRequirement > 0 && adminData.teams.length >= groupTeamRequirement);
+  const tournamentItems = useMemo(() => {
+    if (!isGroupKnockout) return [];
+    return [
+      ...(shouldShowGroupDivision ? [{ id: "divide-groups", label: "Divide Teams Into Groups", icon: GitBranch }] : []),
+      { id: "groups", label: "Groups", icon: Users },
+      { id: "knockout", label: "Knockout Bracket", icon: GitBranch }
+    ] as Array<{ id: TabId; label: string; icon: typeof Users }>;
+  }, [isGroupKnockout, shouldShowGroupDivision]);
 
   if (error) {
     return (
@@ -1266,13 +1337,14 @@ export default function AdminLeagueSeasonDashboard() {
 		          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onBulkRatePending={bulkRatePendingPlayers} onBulkApproveRated={bulkApproveRatedPlayers} onPlayerAction={(action, player) => setPlayerAction({ action, player })} onAbilityScoresUpdate={updateAbilityScores} /> : null}
           {activeTab === "team-requests" ? <TeamRequestsView teamRequests={adminData.teamRequests} onDecision={decideTeamRequest} /> : null}
           {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} /> : null}
-          {activeTab === "fixtures" ? <FixturesView fixtures={adminData.fixtures} teams={adminData.teams} onGenerateFixtures={generateFixtures} onScheduleFixture={scheduleFixture} onPostponeFixture={postponeFixture} onCancelFixture={cancelFixture} /> : null}
+          {activeTab === "fixtures" ? <FixturesView season={season} /> : null}
           {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} onSimulate={simulateReadyMatch} /> : null}
           {activeTab === "standings" ? <StandingsView groupMode={isGroupKnockout} teams={adminData.standings} /> : null}
           {activeTab === "reports" ? <PlayerStatsView data={adminData} /> : null}
           {activeTab === "team-stats" ? <TeamStatsView data={adminData} /> : null}
           {activeTab === "messages" ? <MessagesView messages={adminData.messages} /> : null}
-          {activeTab === "groups" ? <GroupsView teams={adminData.teams} /> : null}
+          {activeTab === "divide-groups" ? <DivideGroupsView season={season} onSaved={async () => { await loadDashboardData(); setActiveTab("fixtures"); }} /> : null}
+          {activeTab === "groups" ? <GroupsView season={season} /> : null}
           {activeTab === "knockout" ? <KnockoutView /> : null}
           {activeTab === "settings" ? <SettingsView league={league} season={season} onSaved={loadDashboardData} /> : null}
         </main>
@@ -2514,105 +2586,260 @@ function PlayerRequestsView({
   );
 }
 
-function FixturesView({
-  fixtures,
-  teams,
-  onGenerateFixtures,
-  onScheduleFixture,
-  onPostponeFixture,
-  onCancelFixture
-}: {
-  fixtures: FixtureRow[];
-  teams: AdminTeam[];
-  onGenerateFixtures: () => Promise<void>;
-  onScheduleFixture: (id: string, currentVenue: string) => Promise<void>;
-  onPostponeFixture: (id: string, currentVenue: string) => Promise<void>;
-  onCancelFixture: (id: string) => Promise<void>;
-}) {
-  const [showTeams, setShowTeams] = useState(false);
-  const [openFixture, setOpenFixture] = useState<FixtureRow | null>(null);
+function FixturesView({ season }: { season: SeasonDto }) {
+  const [data, setData] = useState<AdminFixturesResponse | null>(null);
+  const [preview, setPreview] = useState<FixturePreviewResponse | null>(null);
+  const [previewMode, setPreviewMode] = useState<"all" | "group" | "knockout" | null>(null);
+  const [tab, setTab] = useState<"group" | "knockout" | "all">("all");
+  const [message, setMessage] = useState("");
+  const isGroupKnockout = season.format === SeasonFormat.GROUP_STAGE_KNOCKOUT;
+
+  async function loadFixtures() {
+    const result = await api<AdminFixturesResponse>(`/admin/seasons/${season.id}/fixtures`);
+    setData(result);
+  }
+
+  useEffect(() => {
+    setPreview(null);
+    setPreviewMode(null);
+    setTab(isGroupKnockout ? "group" : "all");
+    void loadFixtures().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load fixtures"));
+  }, [season.id, isGroupKnockout]);
+
+  const teamById = useMemo(() => new Map((data?.approved_teams ?? []).map((team) => [team.id, team])), [data?.approved_teams]);
+  const groupById = useMemo(() => new Map((data?.groups ?? []).map((group) => [group.id, group])), [data?.groups]);
+  const rows = preview?.fixtures ?? data?.fixtures ?? [];
+  const filteredRows = rows.filter((row) => {
+    if (!isGroupKnockout || tab === "all") return true;
+    if (tab === "group") return row.stage === "GROUP";
+    return row.stage !== "GROUP" && row.stage !== "LEAGUE";
+  });
+  const groupFixtures = data?.fixtures.filter((fixture) => fixture.stage === "GROUP") ?? [];
+  const groupStageComplete =
+    groupFixtures.length > 0 && groupFixtures.every((fixture) => fixture.status === FixtureStatus.FINAL || fixture.status === "COMPLETED" || fixture.result_confirmed);
+  const hasSavedFixtures = (data?.fixtures.length ?? 0) > 0;
+
+  function rowTeamName(row: FixtureApiRow | FixturePreviewRow, side: "home" | "away") {
+    const id = side === "home" ? row.home_team_registration_id : row.away_team_registration_id;
+    const source = side === "home" ? row.home_source : row.away_source;
+    const embedded = "home_team" in row && side === "home" ? row.home_team : "away_team" in row && side === "away" ? row.away_team : null;
+    return embedded?.teams?.name ?? (id ? teamById.get(id)?.name : null) ?? source ?? "TBD";
+  }
+
+  function rowGroupName(row: FixtureApiRow | FixturePreviewRow) {
+    return ("season_groups" in row ? row.season_groups?.name : null) ?? row.group_name ?? (row.group_id ? groupById.get(row.group_id)?.name : null) ?? "—";
+  }
+
+  async function makePreview(mode: "all" | "group" | "knockout") {
+    setMessage("");
+    const endpoint =
+      mode === "group"
+        ? `/admin/seasons/${season.id}/fixtures/group/preview`
+        : mode === "knockout"
+          ? `/admin/seasons/${season.id}/fixtures/knockout/preview`
+          : `/admin/seasons/${season.id}/fixtures/preview`;
+    const result = await api<FixturePreviewResponse>(endpoint, {
+      method: "POST",
+      body: JSON.stringify({ stage: mode })
+    });
+    setPreview(result);
+    setPreviewMode(mode);
+    setTab(mode === "knockout" ? "knockout" : mode === "group" ? "group" : "all");
+  }
+
+  async function confirmPreview() {
+    if (!previewMode) return;
+    const endpoint =
+      previewMode === "group"
+        ? `/admin/seasons/${season.id}/fixtures/group/confirm`
+        : previewMode === "knockout"
+          ? `/admin/seasons/${season.id}/fixtures/knockout/confirm`
+          : `/admin/seasons/${season.id}/fixtures/confirm`;
+    await api(endpoint, {
+      method: "POST",
+      body: JSON.stringify({ stage: previewMode })
+    });
+    setPreview(null);
+    setPreviewMode(null);
+    await loadFixtures();
+  }
+
+  async function regenerateFixtures() {
+    if (!window.confirm("Delete generated fixtures and allow a fresh generation?")) return;
+    await api(`/admin/seasons/${season.id}/fixtures/regenerate`, { method: "DELETE" });
+    setPreview(null);
+    setPreviewMode(null);
+    await loadFixtures();
+  }
+
+  function exportFixtures() {
+    const fixtureRows = data?.fixtures ?? [];
+    const header = ["Matchday", "Date", "Stage", "Group", "Home Team", "Away Team", "Status"];
+    const body = fixtureRows.map((row) => [
+      row.matchday_number ?? row.round_no ?? "",
+      row.kickoff_at ? safeDate(row.kickoff_at) : "",
+      row.stage ?? "",
+      rowGroupName(row),
+      rowTeamName(row, "home"),
+      rowTeamName(row, "away"),
+      row.status
+    ]);
+    const csv = [header, ...body].map((line) => line.map((cell) => `"${String(cell).replaceAll("\"", "\"\"")}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${season.name.replace(/\s+/g, "-").toLowerCase()}-fixtures.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (!data) {
+    return (
+      <div>
+        <PageTitle title="Fixtures" subtitle="Generate and manage season fixtures" />
+        <EmptyState label={message || "Loading fixture settings..."} />
+      </div>
+    );
+  }
+
   return (
     <div>
-      <PageTitle title="Fixtures" subtitle="Generate, schedule, postpone, cancel, and review all matches." />
-      <div className="mb-5 flex gap-3">
-        <button type="button" onClick={() => void onGenerateFixtures()} className="rounded-lg bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98]">Generate Fixtures</button>
-        <button type="button" onClick={() => setShowTeams(true)} className="rounded-lg border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition-all duration-200 hover:-translate-y-1 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 hover:shadow-md active:translate-y-0 active:scale-[0.98]">Check Team List</button>
+      <PageTitle title="Fixtures" subtitle="Generate and manage season fixtures" />
+
+      {message ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{message}</div> : null}
+
+      <div className="mb-6 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <SummaryCard label="Season Format" value={formatLabel(season.format)} />
+        <SummaryCard label="Round Format" value={formatLabel(data.season.round_format ?? season.format)} />
+        <SummaryCard label="Season Start" value={safeDate(season.start_date)} />
+        <SummaryCard label="Season End" value={safeDate(season.end_date)} />
+        <SummaryCard label="Approved Teams" value={String(data.approved_teams.length)} />
+        <SummaryCard label="Fixture Status" value={data.fixture_status} />
       </div>
-      <CrudPage
-        title="Fixture List"
-        subtitle="Completed matches stay inside Fixtures."
-        columns={["Date", "Home", "Away", "Stage", "Venue", "Status", "Actions"]}
-        rows={fixtures.map((row) => [
-          row.date,
-          row.home,
-          row.away,
-          row.stage,
-          row.venue,
-          <StatusPill key="status" tone={row.status === "Completed" ? "green" : row.status === "Postponed" ? "orange" : "blue"}>{row.status}</StatusPill>,
-          <ActionGroup
-            key="actions"
-            actions={[
-              { label: "Edit Date", onClick: () => void onScheduleFixture(row.id, row.venue) },
-              { label: "Edit Venue", onClick: () => void onScheduleFixture(row.id, row.venue) },
-              { label: "Postpone", onClick: () => void onPostponeFixture(row.id, row.venue) },
-              { label: "Cancel", onClick: () => void onCancelFixture(row.id), danger: true },
-              { label: "Open", onClick: () => setOpenFixture(row) }
-            ]}
-          />
-        ])}
-      />
-      {showTeams ? (
-        <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
-          <div className="max-h-[86vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-5 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">Approved Team List</p>
-                <h2 className="mt-1 text-2xl font-black">Teams available for fixture generation</h2>
-              </div>
-              <button type="button" onClick={() => setShowTeams(false)} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
-            </div>
-            {teams.length === 0 ? <EmptyState label="No approved teams yet. Approve teams first before generating fixtures." /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px] text-sm">
-                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                    <tr>{["Team", "Manager", "Squad", "Approved", "Pending"].map((header) => <th key={header} className="px-4 py-3 text-left font-black">{header}</th>)}</tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {teams.map((team) => (
-                      <tr key={team.id}>
-                        <td className="px-4 py-3"><TeamCompact name={team.name} logoUrl={team.logoUrl} /></td>
-                        <td className="px-4 py-3 font-semibold">{team.managerName}</td>
-                        <td className="px-4 py-3">{team.squadCount}</td>
-                        <td className="px-4 py-3">{team.approvedPlayers}</td>
-                        <td className="px-4 py-3">{team.pendingPlayers}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+
+      {isGroupKnockout ? (
+        <div className="mb-6 grid gap-4 md:grid-cols-4">
+          <SummaryCard label="Group Count" value={String(season.group_count ?? 0)} />
+          <SummaryCard label="Teams Per Group" value={String(season.teams_per_group ?? 0)} />
+          <SummaryCard label="Qualifiers Per Group" value={String(season.qualifiers_per_group ?? 0)} />
+          <SummaryCard label="Total Knockout Qualifiers" value={String(Number(season.group_count ?? 0) * Number(season.qualifiers_per_group ?? 0))} />
         </div>
       ) : null}
-      {openFixture ? (
-        <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
-          <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">Fixture Detail</p>
-                <h2 className="mt-1 text-2xl font-black">{openFixture.home} vs {openFixture.away}</h2>
-              </div>
-              <button type="button" onClick={() => setOpenFixture(null)} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
-            </div>
-            <div className="grid gap-3">
-              <DetailRow label="Date" value={openFixture.date} />
-              <DetailRow label="Stage" value={openFixture.stage} />
-              <DetailRow label="Venue" value={openFixture.venue} />
-              <DetailRow label="Status" value={openFixture.status} />
-            </div>
+
+      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          {!hasSavedFixtures && !preview && !isGroupKnockout ? (
+            <button type="button" onClick={() => void makePreview("all").catch((error) => setMessage(error.message))} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700">
+              Generate Fixtures
+            </button>
+          ) : null}
+
+          {isGroupKnockout && !preview ? (
+            <>
+              <button type="button" onClick={() => void makePreview("group").catch((error) => setMessage(error.message))} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700">
+                Generate Group Fixtures
+              </button>
+              <button
+                type="button"
+                disabled={!groupStageComplete}
+                title={!groupStageComplete ? "Knockout fixtures will unlock after all group stage results are confirmed." : undefined}
+                onClick={() => void makePreview("knockout").catch((error) => setMessage(error.message))}
+                className="rounded-xl border border-indigo-200 bg-white px-5 py-3 text-sm font-black text-indigo-700 transition hover:-translate-y-0.5 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
+              >
+                Generate Knockout Fixtures
+              </button>
+            </>
+          ) : null}
+
+          {preview ? (
+            <>
+              <button type="button" onClick={() => void confirmPreview().catch((error) => setMessage(error.message))} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700">
+                Confirm & Save Fixtures
+              </button>
+              <button type="button" onClick={() => { setPreview(null); setPreviewMode(null); }} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50">
+                Cancel Preview
+              </button>
+            </>
+          ) : null}
+
+          {hasSavedFixtures && !preview ? (
+            <>
+              <button type="button" onClick={exportFixtures} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50">
+                Export Fixtures
+              </button>
+              <button
+                type="button"
+                disabled={!data.can_regenerate}
+                title={!data.can_regenerate ? "Fixtures cannot be regenerated because matches have already started or completed." : undefined}
+                onClick={() => void regenerateFixtures().catch((error) => setMessage(error.message))}
+                className="rounded-xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-black text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
+              >
+                Regenerate Fixtures
+              </button>
+            </>
+          ) : null}
+        </div>
+
+        {preview?.warnings.length ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+            {preview.warnings.map((warning) => <p key={warning}>{warning}</p>)}
           </div>
+        ) : null}
+      </div>
+
+      {isGroupKnockout ? (
+        <div className="mb-5 flex flex-wrap gap-2">
+          {[
+            ["group", "Group Stage Fixtures"],
+            ["knockout", "Knockout Fixtures"],
+            ["all", "All Fixtures"]
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id as "group" | "knockout" | "all")}
+              className={`rounded-full px-4 py-2 text-sm font-black transition ${tab === id ? "bg-indigo-600 text-white shadow" : "border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       ) : null}
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 p-5">
+          <h3 className="text-xl font-black">{preview ? "Fixture Preview" : "Fixture List"}</h3>
+          <p className="mt-1 text-sm text-slate-500">Season settings are read from the database. Dates are auto-distributed inside the saved season range.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[920px] text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Matchday", "Date", "Stage", "Group", "Home Team", "Away Team", "Status"].map((header) => (
+                  <th key={header} className="px-5 py-4 text-left font-black">{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredRows.length === 0 ? (
+                <tr><td colSpan={7} className="px-5 py-10 text-center font-semibold text-slate-500">No fixtures generated yet.</td></tr>
+              ) : (
+                filteredRows.map((row, index) => (
+                  <tr key={`${row.stage}-${row.round_no}-${row.home_team_registration_id ?? row.home_source}-${row.away_team_registration_id ?? row.away_source}-${index}`} className="hover:bg-slate-50">
+                    <td className="px-5 py-4 font-bold">{row.matchday_number ?? row.round_no ?? "—"}</td>
+                    <td className="px-5 py-4">{row.kickoff_at ? safeDate(row.kickoff_at) : "Not set"}</td>
+                    <td className="px-5 py-4 font-semibold">{formatLabel(row.stage ?? "")}</td>
+                    <td className="px-5 py-4">{rowGroupName(row)}</td>
+                    <td className="px-5 py-4 font-bold">{rowTeamName(row, "home")}</td>
+                    <td className="px-5 py-4 font-bold">{rowTeamName(row, "away")}</td>
+                    <td className="px-5 py-4"><StatusPill tone={row.status === "WAITING_FOR_TEAMS" ? "orange" : row.status === "FINAL" || row.status === "COMPLETED" ? "green" : "blue"}>{statusLabel(row.status)}</StatusPill></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3263,32 +3490,159 @@ function MessagesView({ messages }: { messages: AdminMessageRow[] }) {
   );
 }
 
-function GroupsView({ teams }: { teams: AdminTeam[] }) {
+function DivideGroupsView({ season, onSaved }: { season: SeasonDto; onSaved: () => Promise<void> }) {
+  const [data, setData] = useState<AdminGroupsResponse | null>(null);
+  const [draftGroups, setDraftGroups] = useState<AdminFixtureGroup[]>([]);
+  const [message, setMessage] = useState("");
+
+  async function loadGroups() {
+    const result = await api<AdminGroupsResponse>(`/admin/seasons/${season.id}/groups`);
+    setData(result);
+    setDraftGroups(result.groups);
+  }
+
+  useEffect(() => {
+    void loadGroups().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load group data"));
+  }, [season.id]);
+
+  const assignedTeamIds = new Set(draftGroups.flatMap((group) => group.teams.map((team) => team.id)));
+  const unassignedTeams = (data?.approved_teams ?? []).filter((team) => !assignedTeamIds.has(team.id));
+  const requiredTeams = Number(season.group_count ?? 0) * Number(season.teams_per_group ?? 0);
+  const canSave =
+    draftGroups.length === Number(season.group_count ?? 0) &&
+    draftGroups.every((group) => group.teams.length === Number(season.teams_per_group ?? 0)) &&
+    unassignedTeams.length === 0;
+
+  async function randomizeGroups() {
+    setMessage("");
+    const result = await api<{ groups: AdminFixtureGroup[] }>(`/admin/seasons/${season.id}/groups/randomize`, { method: "POST" });
+    setDraftGroups(result.groups);
+    await loadGroups();
+  }
+
+  function moveTeam(teamId: string, targetGroupId: string) {
+    const team = (data?.approved_teams ?? []).find((item) => item.id === teamId);
+    if (!team) return;
+    setDraftGroups((groups) =>
+      groups.map((group) => ({
+        ...group,
+        teams:
+          group.id === targetGroupId
+            ? group.teams.some((item) => item.id === teamId)
+              ? group.teams
+              : [...group.teams, team]
+            : group.teams.filter((item) => item.id !== teamId)
+      }))
+    );
+  }
+
+  async function saveGroups() {
+    await api(`/admin/seasons/${season.id}/groups/assign`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        groups: draftGroups.map((group) => ({
+          group_id: group.id,
+          team_registration_ids: group.teams.map((team) => team.id)
+        }))
+      })
+    });
+    await onSaved();
+  }
+
+  if (!data) {
+    return (
+      <div>
+        <PageTitle title="Divide Teams Into Groups" subtitle="Loading group settings from the database." />
+        <EmptyState label={message || "Loading groups..."} />
+      </div>
+    );
+  }
+
   return (
     <div>
-      <PageTitle title="Groups" subtitle="Generate groups, lock groups, then generate group fixtures." />
-      <div className="mb-5 flex gap-3">
-        <button className="rounded-lg bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98]">Generate Groups</button>
-        <button className="rounded-lg border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition-all duration-200 hover:-translate-y-1 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 hover:shadow-md active:translate-y-0 active:scale-[0.98]">Lock Groups</button>
+      <PageTitle title="Divide Teams Into Groups" subtitle="Generate groups randomly, then manually move or swap teams before saving." />
+      {message ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{message}</div> : null}
+      <div className="mb-6 grid gap-4 md:grid-cols-4">
+        <SummaryCard label="Group Count" value={String(season.group_count ?? 0)} />
+        <SummaryCard label="Teams Per Group" value={String(season.teams_per_group ?? 0)} />
+        <SummaryCard label="Approved Teams" value={`${data.approved_teams.length}/${requiredTeams}`} />
+        <SummaryCard label="Groups Ready" value={canSave ? "Yes" : "No"} color={canSave ? "green" : "orange"} />
       </div>
-      <div className="grid gap-5 xl:grid-cols-2">
-        <Panel title="Group A">
-          {teams.length === 0 ? <EmptyState label="No approved teams available for group assignment." /> : teams.slice(0, Math.ceil(teams.length / 2)).map((team) => (
-            <div key={team.id} className="flex items-center justify-between border-b border-slate-100 py-3 last:border-b-0">
-              <TeamCompact name={team.name} />
-              <StatusPill tone="blue">Available</StatusPill>
-            </div>
-          ))}
-        </Panel>
-        <Panel title="Group B">
-          {teams.length === 0 ? <EmptyState label="No approved teams available for group assignment." /> : teams.slice(Math.ceil(teams.length / 2)).map((team) => (
-            <div key={team.id} className="flex items-center justify-between border-b border-slate-100 py-3 last:border-b-0">
-              <TeamCompact name={team.name} />
-              <StatusPill tone="blue">Available</StatusPill>
-            </div>
-          ))}
-        </Panel>
+      <div className="mb-6 flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <button type="button" onClick={() => void randomizeGroups().catch((error) => setMessage(error.message))} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700">
+          Generate Groups Randomly
+        </button>
+        <button type="button" disabled={!canSave} onClick={() => void saveGroups().catch((error) => setMessage(error.message))} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0">
+          Save Group Division
+        </button>
+        {!canSave ? <p className="self-center text-sm font-semibold text-slate-500">Each group must have exactly {season.teams_per_group ?? 0} approved teams.</p> : null}
       </div>
+      {draftGroups.length === 0 ? (
+        <EmptyState label="No groups created yet. Click Generate Groups Randomly first, then adjust manually if needed." />
+      ) : (
+        <div className="grid gap-5 xl:grid-cols-2">
+          {draftGroups.map((group) => (
+            <Panel key={group.id} title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}>
+              {group.teams.length === 0 ? <EmptyState label="No teams in this group yet." /> : group.teams.map((team) => (
+                <div key={team.id} className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0">
+                  <TeamCompact name={team.name ?? "Unnamed team"} logoUrl={team.logo_url ?? null} />
+                  <select
+                    value={group.id}
+                    onChange={(event) => moveTeam(team.id, event.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+                  >
+                    {draftGroups.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+                  </select>
+                </div>
+              ))}
+            </Panel>
+          ))}
+          {unassignedTeams.length > 0 ? (
+            <Panel title="Unassigned Teams">
+              {unassignedTeams.map((team) => (
+                <div key={team.id} className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0">
+                  <TeamCompact name={team.name ?? "Unnamed team"} logoUrl={team.logo_url ?? null} />
+                  <select defaultValue="" onChange={(event) => moveTeam(team.id, event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
+                    <option value="" disabled>Move to...</option>
+                    {draftGroups.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+                  </select>
+                </div>
+              ))}
+            </Panel>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GroupsView({ season }: { season: SeasonDto }) {
+  const [data, setData] = useState<AdminGroupsResponse | null>(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    void api<AdminGroupsResponse>(`/admin/seasons/${season.id}/groups`)
+      .then(setData)
+      .catch((error) => setMessage(error instanceof Error ? error.message : "Could not load groups"));
+  }, [season.id]);
+
+  return (
+    <div>
+      <PageTitle title="Groups" subtitle="Saved group division for this season." />
+      {!data ? <EmptyState label={message || "Loading groups..."} /> : data.groups.length === 0 ? <EmptyState label="Groups are not divided yet." /> : (
+        <div className="grid gap-5 xl:grid-cols-2">
+          {data.groups.map((group) => (
+            <Panel key={group.id} title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}>
+              {group.teams.length === 0 ? <EmptyState label="No teams in this group." /> : group.teams.map((team) => (
+                <div key={team.id} className="flex items-center justify-between border-b border-slate-100 py-3 last:border-b-0">
+                  <TeamCompact name={team.name ?? "Unnamed team"} logoUrl={team.logo_url ?? null} />
+                  <StatusPill tone="blue">Assigned</StatusPill>
+                </div>
+              ))}
+            </Panel>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -3435,13 +3789,14 @@ function SummaryCard({
   action,
   onAction
 }: {
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   label: string;
   value: string;
-  color: "blue" | "green" | "orange" | "purple" | "cyan";
-  action: string;
+  color?: "blue" | "green" | "orange" | "purple" | "cyan";
+  action?: string;
   onAction?: () => void;
 }) {
+  const cardColor = color ?? "blue";
   const tones = {
     blue: "bg-blue-100 text-blue-700",
     green: "bg-green-100 text-green-700",
@@ -3459,16 +3814,20 @@ function SummaryCard({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex gap-4">
-        <div className={`grid h-[70px] w-[70px] place-items-center rounded-xl ${tones[color]}`}>{icon}</div>
+        {icon ? <div className={`grid h-[70px] w-[70px] place-items-center rounded-xl ${tones[cardColor]}`}>{icon}</div> : null}
         <div className="min-w-0">
-          <p className="min-h-[48px] text-base font-black leading-snug">{label}</p>
-          <p className={`mt-2 text-4xl font-black ${text[color]}`}>{value}</p>
+          <p className={`${icon ? "min-h-[48px]" : ""} text-base font-black leading-snug`}>{label}</p>
+          <p className={`mt-2 ${icon ? "text-4xl" : "text-2xl"} font-black ${text[cardColor]}`}>{value}</p>
         </div>
       </div>
-      <div className="my-4 h-px bg-slate-200" />
-      <button className="w-full rounded-lg py-2 text-center text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 hover:text-indigo-900 active:translate-y-0 active:scale-[0.98]" onClick={onAction}>
-        {action} →
-      </button>
+      {action ? (
+        <>
+          <div className="my-4 h-px bg-slate-200" />
+          <button className="w-full rounded-lg py-2 text-center text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 hover:text-indigo-900 active:translate-y-0 active:scale-[0.98]" onClick={onAction}>
+            {action} →
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }

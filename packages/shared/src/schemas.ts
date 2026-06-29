@@ -41,6 +41,7 @@ export const createSeasonSchema = z
       SeasonFormat.DOUBLE_ROUND_ROBIN,
       SeasonFormat.GROUP_STAGE_KNOCKOUT
     ]),
+    round_format: z.enum([SeasonFormat.SINGLE_ROUND_ROBIN, SeasonFormat.DOUBLE_ROUND_ROBIN]).optional(),
     start_date: z.string().date().optional(),
     end_date: z.string().date().optional(),
     total_teams: z.number().int().min(2).max(128).optional(),
@@ -291,7 +292,23 @@ export const hiddenAttributesSchema = z.object({
 export const lineupPlayerInputSchema = z.object({
   player_registration_id: uuidSchema,
   is_starter: z.boolean(),
-  position: z.enum([PlayerPosition.GK, PlayerPosition.DEF, PlayerPosition.MID, PlayerPosition.FWD])
+  position: z.enum([PlayerPosition.GK, PlayerPosition.DEF, PlayerPosition.MID, PlayerPosition.FWD]),
+  slot_key: z.string().trim().max(80).optional(),
+  display_role: z.string().trim().max(20).optional(),
+  player_natural_position: z.enum([
+    FootballPosition.GK,
+    FootballPosition.CB,
+    FootballPosition.LB,
+    FootballPosition.RB,
+    FootballPosition.DM,
+    FootballPosition.CM,
+    FootballPosition.AM,
+    FootballPosition.LW,
+    FootballPosition.RW,
+    FootballPosition.ST
+  ]).optional(),
+  display_order: z.number().int().min(0).max(30).optional(),
+  is_captain: z.boolean().optional()
 });
 
 export const lineupSubmissionSchema = z.object({
@@ -299,7 +316,9 @@ export const lineupSubmissionSchema = z.object({
   team_registration_id: uuidSchema,
   side: z.enum([VenueSide.HOME, VenueSide.AWAY]),
   formation: z.string().trim().min(3).max(30),
-  players: z.array(lineupPlayerInputSchema).min(11).max(20)
+  playing_style: z.string().trim().min(3).max(50).optional(),
+  captain_id: uuidSchema.optional().nullable(),
+  players: z.array(lineupPlayerInputSchema).min(11).max(60)
 });
 
 export const generateFixturesSchema = z.object({

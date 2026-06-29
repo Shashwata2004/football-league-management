@@ -21,10 +21,8 @@ export function validateLineupSubmission(
   );
   const seen = new Set<string>();
   const starters = input.players.filter((player) => player.is_starter);
-  const bench = input.players.filter((player) => !player.is_starter);
 
   if (starters.length !== 11) throw new AppError(400, "Lineup must contain exactly 11 starters");
-  if (bench.length > 9) throw new AppError(400, "Bench can contain at most 9 players");
   if (starters.filter((player) => player.position === PlayerPosition.GK).length !== 1) {
     throw new AppError(400, "Lineup must contain exactly one starting goalkeeper");
   }
