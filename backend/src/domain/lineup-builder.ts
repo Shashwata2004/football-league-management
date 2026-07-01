@@ -273,6 +273,29 @@ function overall(player: LineupCandidate) {
   return val(abilityOf(player).overall_rating, 55);
 }
 
+function roleAbilityScore(slot: FormationSlot, player: LineupCandidate) {
+  const ability = abilityOf(player);
+  const role = slot.displayRole;
+  if (role === "GK") {
+    return (
+      val(ability.shot_stopping) * 0.25 +
+      val(ability.reflexes) * 0.2 +
+      val(ability.positioning) * 0.2 +
+      val(ability.handling) * 0.15 +
+      val(ability.diving) * 0.15 +
+      val(ability.distribution) * 0.05
+    );
+  }
+  if (role === "CB") return val(ability.defending) * 0.35 + val(ability.physical) * 0.2 + val(ability.stamina) * 0.15 + val(ability.passing) * 0.15 + val(ability.pace) * 0.1 + val(ability.dribbling) * 0.05;
+  if (role === "LB" || role === "RB") return val(ability.defending) * 0.25 + val(ability.pace) * 0.2 + val(ability.stamina) * 0.18 + val(ability.passing) * 0.15 + val(ability.dribbling) * 0.12 + val(ability.physical) * 0.1;
+  if (role === "DM") return val(ability.defending) * 0.25 + val(ability.passing) * 0.22 + val(ability.stamina) * 0.18 + val(ability.physical) * 0.15 + val(ability.dribbling) * 0.1 + val(ability.pace) * 0.1;
+  if (role === "CM") return val(ability.passing) * 0.28 + val(ability.stamina) * 0.2 + val(ability.dribbling) * 0.16 + val(ability.defending) * 0.14 + val(ability.physical) * 0.12 + val(ability.shooting) * 0.1;
+  if (role === "AM" || role === "SS") return val(ability.passing) * 0.26 + val(ability.dribbling) * 0.22 + val(ability.shooting) * 0.2 + val(ability.pace) * 0.14 + val(ability.stamina) * 0.1 + val(ability.physical) * 0.08;
+  if (role === "LW" || role === "RW" || role === "LM" || role === "RM") return val(ability.pace) * 0.25 + val(ability.dribbling) * 0.24 + val(ability.shooting) * 0.18 + val(ability.passing) * 0.16 + val(ability.stamina) * 0.1 + val(ability.physical) * 0.07;
+  if (role === "LWB" || role === "RWB") return val(ability.pace) * 0.22 + val(ability.stamina) * 0.2 + val(ability.defending) * 0.2 + val(ability.passing) * 0.16 + val(ability.dribbling) * 0.14 + val(ability.physical) * 0.08;
+  return val(ability.shooting) * 0.3 + val(ability.pace) * 0.2 + val(ability.physical) * 0.15 + val(ability.dribbling) * 0.14 + val(ability.passing) * 0.11 + val(ability.stamina) * 0.1;
+}
+
 function specialRoleBonus(slot: FormationSlot, player: LineupCandidate) {
   const ability = abilityOf(player);
   const pos = naturalPosition(player);
@@ -308,46 +331,115 @@ export function fitForSlot(slot: FormationSlot, player: LineupCandidate, style: 
   let fitScore = 0;
   let fitLabel = "Out of Position";
   if (slot.primaryPositions.includes(pos)) {
-    fitScore = 1000;
+    fitScore = 170;
     fitLabel = ["LWB", "RWB", "SS", "LM", "RM"].includes(slot.displayRole) ? `${slot.displayRole} Role Fit` : "Exact Fit";
   } else if (slot.compatiblePositions.includes(pos)) {
-    fitScore = 750;
+    fitScore = 115;
     fitLabel = "Compatible Fit";
   } else if (slot.emergencyPositions.includes(pos)) {
-    fitScore = 500;
+    fitScore = 65;
     fitLabel = "Emergency Fit";
+  }
+  const ability = abilityOf(player);
+  if (slot.displayRole === "CB" && (pos === FootballPosition.LB || pos === FootballPosition.RB) && val(ability.defending) >= 66 && val(ability.physical) >= 60) {
+    fitScore = Math.max(fitScore, 115);
+    fitLabel = "Defensive Fullback Fit";
+  }
+  if (slot.displayRole === "AM" && (pos === FootballPosition.LW || pos === FootballPosition.RW) && val(ability.passing) >= 64 && val(ability.dribbling) >= 68) {
+    fitScore = Math.max(fitScore, 115);
+    fitLabel = "Creative Wing Fit";
+  }
+  if ((slot.displayRole === "LW" || slot.displayRole === "RW") && pos === FootballPosition.AM && val(ability.pace) >= 66 && val(ability.dribbling) >= 68) {
+    fitScore = Math.max(fitScore, 115);
+    fitLabel = "Wide AM Fit";
   }
   const score =
     fitScore +
-    overall(player) * 4 +
-    (player.league_rating ?? 0) * 20 +
+    roleAbilityScore(slot, player) * 5.2 +
+    overall(player) * 1.15 +
+    (player.league_rating ?? 0) * 8 +
     specialRoleBonus(slot, player) +
     styleSuitability(style, slot, player) * 0.15;
   return { fitScore, fitLabel, score };
 }
 
+function adjustedFitForSlot(slot: FormationSlot, player: LineupCandidate, style: PlayingStyle, allSlots: FormationSlot[]) {
+  const fit = fitForSlot(slot, player, style);
+  const bestOtherRoleScore = Math.max(
+    0,
+    ...allSlots
+      .filter((candidateSlot) => candidateSlot.slotKey !== slot.slotKey)
+      .map((candidateSlot) => fitForSlot(candidateSlot, player, style).score)
+  );
+  const opportunityCost = Math.max(0, bestOtherRoleScore - fit.score) * 0.28;
+  const score = fit.score - opportunityCost;
+  return { ...fit, score };
+}
+
 export function autoPickBestXI(players: LineupCandidate[], formation: string, playingStyle: PlayingStyle) {
-  const selected = new Set<string>();
-  const picks: PickedLineupPlayer[] = [];
-  for (const slot of getFormationSlots(formation)) {
-    const ranked = players
-      .filter((player) => !selected.has(player.id))
-      .map((player) => ({ player, ...fitForSlot(slot, player, playingStyle) }))
-      .sort((a, b) => b.score - a.score || (a.player.players?.full_name ?? "").localeCompare(b.player.players?.full_name ?? ""));
-    const best = ranked[0];
-    if (!best) continue;
-    selected.add(best.player.id);
-    picks.push({
-      slotKey: slot.slotKey,
-      displayRole: slot.displayRole,
-      playerNaturalPosition: naturalPosition(best.player),
-      player_registration_id: best.player.id,
-      fitLabel: best.fitLabel,
-      fitScore: best.fitScore,
-      score: Number(best.score.toFixed(2))
-    });
+  const slots = getFormationSlots(formation);
+  const candidatesBySlot = slots.map((slot) =>
+    players
+      .map((player) => ({ player, ...adjustedFitForSlot(slot, player, playingStyle, slots) }))
+      .sort((a, b) => b.score - a.score || (a.player.players?.full_name ?? "").localeCompare(b.player.players?.full_name ?? ""))
+      .slice(0, Math.min(players.length, 16))
+  );
+  const slotOrder = slots
+    .map((slot, index) => ({ slot, index, candidates: candidatesBySlot[index] ?? [] }))
+    .sort((a, b) => a.candidates.length - b.candidates.length || b.slot.line.localeCompare(a.slot.line));
+  const optimisticRemaining = Array.from({ length: slotOrder.length + 1 }, () => 0);
+  for (let index = slotOrder.length - 1; index >= 0; index -= 1) {
+    optimisticRemaining[index] = optimisticRemaining[index + 1]! + (slotOrder[index]?.candidates[0]?.score ?? 0);
   }
-  return picks;
+
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let bestAssignments: Array<{ slot: FormationSlot; player: LineupCandidate; fitScore: number; fitLabel: string; score: number }> = [];
+
+  function search(
+    depth: number,
+    used: Set<string>,
+    assignments: Array<{ slot: FormationSlot; player: LineupCandidate; fitScore: number; fitLabel: string; score: number }>,
+    totalScore: number
+  ) {
+    if (totalScore + (optimisticRemaining[depth] ?? 0) <= bestScore) return;
+    if (depth >= slotOrder.length) {
+      if (totalScore > bestScore) {
+        bestScore = totalScore;
+        bestAssignments = [...assignments];
+      }
+      return;
+    }
+    const entry = slotOrder[depth];
+    if (!entry) return;
+    for (const candidate of entry.candidates) {
+      if (used.has(candidate.player.id)) continue;
+      used.add(candidate.player.id);
+      assignments.push({
+        slot: entry.slot,
+        player: candidate.player,
+        fitScore: candidate.fitScore,
+        fitLabel: candidate.fitLabel,
+        score: candidate.score
+      });
+      search(depth + 1, used, assignments, totalScore + candidate.score);
+      assignments.pop();
+      used.delete(candidate.player.id);
+    }
+  }
+
+  search(0, new Set<string>(), [], 0);
+
+  return bestAssignments
+    .sort((a, b) => slots.findIndex((slot) => slot.slotKey === a.slot.slotKey) - slots.findIndex((slot) => slot.slotKey === b.slot.slotKey))
+    .map((assignment) => ({
+      slotKey: assignment.slot.slotKey,
+      displayRole: assignment.slot.displayRole,
+      playerNaturalPosition: naturalPosition(assignment.player),
+      player_registration_id: assignment.player.id,
+      fitLabel: assignment.fitLabel,
+      fitScore: assignment.fitScore,
+      score: Number(assignment.score.toFixed(2))
+    }));
 }
 
 export function positionToCoarse(position: NaturalPosition) {

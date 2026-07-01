@@ -132,6 +132,191 @@ function relatedOne<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
+function relatedName(value: unknown, key: string) {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (!row || typeof row !== "object" || !(key in row)) return null;
+  const resolved = (row as Record<string, unknown>)[key];
+  return typeof resolved === "string" && resolved.trim() ? resolved : null;
+}
+
+function per90(value: number, minutes: number) {
+  if (!minutes || minutes <= 0) return 0;
+  return Number(((value / minutes) * 90).toFixed(2));
+}
+
+function perMatch(value: number, matches: number) {
+  if (!matches || matches <= 0) return 0;
+  return Number((value / matches).toFixed(2));
+}
+
+function avg(values: number[]) {
+  const valid = values.filter((value) => Number.isFinite(value) && value > 0);
+  if (valid.length === 0) return 0;
+  return Number((valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(2));
+}
+
+type LeaderboardDirection = "asc" | "desc";
+type LeaderboardFormat = "number" | "decimal" | "percent";
+
+function formatLeaderboardValue(value: number, format: LeaderboardFormat) {
+  if (format === "percent") return `${Math.round(value)}%`;
+  if (format === "decimal") return value.toFixed(2).replace(/\.00$/, "");
+  return String(Math.round(value));
+}
+
+function makeLeaderboard<T extends { id: string; name: string; team: string; teamLogoUrl: string | null; avatarUrl: string | null }>(
+  id: string,
+  title: string,
+  rows: T[],
+  field: keyof T,
+  format: LeaderboardFormat,
+  direction: LeaderboardDirection = "desc"
+) {
+  const entries = rows
+    .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
+    .filter(({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0)
+    .sort((a, b) => (direction === "asc" ? a.numericValue - b.numericValue : b.numericValue - a.numericValue))
+    .map(({ row, numericValue }) => ({
+      id: row.id,
+      name: row.name,
+      subLabel: row.team,
+      logoUrl: row.avatarUrl,
+      teamLogoUrl: row.teamLogoUrl,
+      initials:
+        row.name
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0]?.toUpperCase() ?? "")
+          .join("") || "NA",
+      value: formatLeaderboardValue(numericValue, format),
+      numericValue
+    }));
+  return { id, title, entries };
+}
+
+function makeTeamLeaderboard<T extends { id: string; name: string; logoUrl: string | null }>(
+  id: string,
+  title: string,
+  rows: T[],
+  field: keyof T,
+  format: LeaderboardFormat,
+  direction: LeaderboardDirection = "desc"
+) {
+  const entries = rows
+    .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
+    .filter(({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0)
+    .sort((a, b) => (direction === "asc" ? a.numericValue - b.numericValue : b.numericValue - a.numericValue))
+    .map(({ row, numericValue }) => ({
+      id: row.id,
+      name: row.name,
+      subLabel: "Team",
+      logoUrl: row.logoUrl,
+      teamLogoUrl: row.logoUrl,
+      initials:
+        row.name
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0]?.toUpperCase() ?? "")
+          .join("") || "TM",
+      value: formatLeaderboardValue(numericValue, format),
+      numericValue
+    }));
+  return { id, title, entries };
+}
+
+function makeStatsReport(playerRows: Array<Record<string, unknown> & { id: string; name: string; team: string; teamLogoUrl: string | null; avatarUrl: string | null }>, teamRows: Array<Record<string, unknown> & { id: string; name: string; logoUrl: string | null }>) {
+  return {
+    player_sections: [
+      {
+        title: "General",
+        cards: [
+          makeLeaderboard("minutes_played", "Minutes Played", playerRows, "minutes", "number"),
+          makeLeaderboard("rating", "Rating", playerRows, "rating", "decimal")
+        ]
+      },
+      {
+        title: "Attack",
+        cards: [
+          makeLeaderboard("top_scorer", "Top Scorer", playerRows, "goals", "number"),
+          makeLeaderboard("assists", "Assists", playerRows, "assists", "number"),
+          makeLeaderboard("goal_assists", "Goal + Assists", playerRows, "goalAssists", "number"),
+          makeLeaderboard("successful_dribbles_per_90", "Successful Dribbles per 90", playerRows, "successfulDribblesPer90", "decimal"),
+          makeLeaderboard("shots_on_target_per_90", "Shots on Target per 90", playerRows, "shotsOnTargetPer90", "decimal"),
+          makeLeaderboard("accurate_passes_per_90", "Accurate Passes per 90", playerRows, "accuratePassesPer90", "decimal"),
+          makeLeaderboard("big_chances_created", "Big Chances Created", playerRows, "bigChancesCreated", "number"),
+          makeLeaderboard("big_chances_missed", "Big Chances Missed", playerRows, "bigChancesMissed", "number")
+        ]
+      },
+      {
+        title: "Defense",
+        cards: [
+          makeLeaderboard("tackles_per_90", "Tackles per 90", playerRows, "tacklesPer90", "decimal"),
+          makeLeaderboard("interceptions_per_90", "Interceptions per 90", playerRows, "interceptionsPer90", "decimal"),
+          makeLeaderboard("blocks_per_90", "Blocks per 90", playerRows, "blocksPer90", "decimal"),
+          makeLeaderboard("clearances_per_90", "Clearances per 90", playerRows, "clearancesPer90", "decimal")
+        ]
+      },
+      {
+        title: "Goalkeeping",
+        cards: [
+          makeLeaderboard("clean_sheets", "Clean Sheets", playerRows, "cleanSheets", "number"),
+          makeLeaderboard("saves_per_90", "Saves per 90", playerRows, "savesPer90", "decimal"),
+          makeLeaderboard("goals_conceded_per_90", "Goals Conceded per 90", playerRows, "goalsConcededPer90", "decimal", "asc")
+        ]
+      },
+      {
+        title: "Discipline",
+        cards: [
+          makeLeaderboard("yellow_cards", "Yellow Cards", playerRows, "yellowCards", "number"),
+          makeLeaderboard("red_cards", "Red Cards", playerRows, "redCards", "number"),
+          makeLeaderboard("fouls_committed_per_90", "Fouls Committed per 90", playerRows, "foulsCommittedPer90", "decimal")
+        ]
+      }
+    ],
+    team_sections: [
+      {
+        title: "General",
+        cards: [
+          makeTeamLeaderboard("avg_possession", "Avg Possession", teamRows, "avgPossession", "percent"),
+          makeTeamLeaderboard("rating", "Rating", teamRows, "rating", "decimal")
+        ]
+      },
+      {
+        title: "Attack",
+        cards: [
+          makeTeamLeaderboard("goals_per_match", "Goals per Match", teamRows, "goalsPerMatch", "decimal"),
+          makeTeamLeaderboard("shots_on_target_per_match", "Shots on Target per Match", teamRows, "shotsOnTargetPerMatch", "decimal"),
+          makeTeamLeaderboard("big_chances", "Big Chances", teamRows, "bigChancesPerMatch", "decimal"),
+          makeTeamLeaderboard("big_chances_missed", "Big Chances Missed", teamRows, "bigChancesMissedPerMatch", "decimal"),
+          makeTeamLeaderboard("accurate_passes_per_match", "Accurate Passes per Match", teamRows, "accuratePassesPerMatch", "decimal"),
+          makeTeamLeaderboard("corners", "Corners", teamRows, "cornersPerMatch", "decimal")
+        ]
+      },
+      {
+        title: "Defense",
+        cards: [
+          makeTeamLeaderboard("clean_sheets", "Clean Sheets", teamRows, "cleanSheets", "number"),
+          makeTeamLeaderboard("goals_conceded_per_match", "Goals Conceded per Match", teamRows, "goalsConcededPerMatch", "decimal", "asc"),
+          makeTeamLeaderboard("tackles_per_match", "Tackles per Match", teamRows, "tacklesPerMatch", "decimal"),
+          makeTeamLeaderboard("clearances_per_match", "Clearances per Match", teamRows, "clearancesPerMatch", "decimal"),
+          makeTeamLeaderboard("penalties_conceded", "Penalties Conceded", teamRows, "penaltiesConceded", "number", "asc"),
+          makeTeamLeaderboard("gk_saves_per_match", "GK Saves per Match", teamRows, "gkSavesPerMatch", "decimal")
+        ]
+      },
+      {
+        title: "Discipline",
+        cards: [
+          makeTeamLeaderboard("fouls_per_match", "Fouls per Match", teamRows, "foulsPerMatch", "decimal", "asc"),
+          makeTeamLeaderboard("yellow_cards", "Yellow Cards", teamRows, "yellowCards", "number", "asc"),
+          makeTeamLeaderboard("red_cards", "Red Cards", teamRows, "redCards", "number", "asc")
+        ]
+      }
+    ]
+  };
+}
+
 function statusCounts(players: Array<{ status?: string | null; player_status?: string | null }>) {
   const squadPlayers = players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED);
   return {
@@ -167,6 +352,45 @@ async function loadManagerTeams(userId: string) {
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
+}
+
+async function assertManagerCanViewSeason(userId: string, seasonId: string) {
+  const teams = await loadManagerTeams(userId);
+  if (!teams.some((team) => team.season_id === seasonId)) throw new AppError(403, "You do not manage a team in this season");
+  return teams;
+}
+
+async function loadSeasonTeamsForManager(seasonId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("team_registrations")
+    .select("id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),manager:profiles!team_registrations_manager_id_fkey(id,full_name,email)")
+    .eq("season_id", seasonId)
+    .eq("status", RegistrationStatus.APPROVED)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+async function loadSeasonGroupsForManager(seasonId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("season_groups")
+    .select("id,name,locked,season_group_teams(id,team_registration_id,seed_no,team_registrations(id,season_id,team_id,status,teams(*)))")
+    .eq("season_id", seasonId)
+    .order("name", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((group) => ({
+    ...group,
+    teams: ((group.season_group_teams ?? []) as Array<Record<string, unknown>>)
+      .sort((a, b) => Number(a.seed_no ?? 0) - Number(b.seed_no ?? 0))
+      .map((groupTeam) => {
+        const registration = relatedOne(groupTeam.team_registrations as Record<string, unknown> | Array<Record<string, unknown>> | null);
+        return {
+          id: String(groupTeam.team_registration_id),
+          seed_no: Number(groupTeam.seed_no ?? 0),
+          team_registration: registration
+        };
+      })
+  }));
 }
 
 async function assertManagerOwnsPlayerRegistration(userId: string, playerRegistrationId: string) {
@@ -496,6 +720,78 @@ managerRouter.get(
       .order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ seasons: data ?? [] });
+  })
+);
+
+managerRouter.get(
+  "/seasons/:seasonId/teams",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    await assertManagerCanViewSeason(req.auth!.userId, seasonId);
+    const teams = await loadSeasonTeamsForManager(seasonId);
+    res.json({ teams });
+  })
+);
+
+managerRouter.get(
+  "/seasons/:seasonId/groups",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    await assertManagerCanViewSeason(req.auth!.userId, seasonId);
+    const groups = await loadSeasonGroupsForManager(seasonId);
+    res.json({ groups });
+  })
+);
+
+managerRouter.get(
+  "/teams/:teamId/view",
+  asyncHandler(async (req, res) => {
+    const teamId = routeParam(req.params.teamId, "teamId");
+    const { data: team, error } = await supabaseAdmin
+      .from("team_registrations")
+      .select("id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,max_players_per_team,league_id,leagues(id,name,short_name,logo_url)),manager:profiles!team_registrations_manager_id_fkey(id,full_name,email)")
+      .eq("id", teamId)
+      .single();
+    if (error) throw error;
+    await assertManagerCanViewSeason(req.auth!.userId, team.season_id);
+    const players = await loadTeamPlayers(team.id);
+    const counts = statusCounts(players);
+    const [{ data: fixtures, error: fixturesError }, { data: results, error: resultsError }] = await Promise.all([
+      supabaseAdmin
+        .from("fixtures")
+        .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
+        .eq("season_id", team.season_id)
+        .or(`home_team_registration_id.eq.${team.id},away_team_registration_id.eq.${team.id}`)
+        .neq("status", FixtureStatus.FINAL)
+        .order("kickoff_at", { ascending: true, nullsFirst: false })
+        .limit(8),
+      supabaseAdmin
+        .from("fixtures")
+        .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
+        .eq("season_id", team.season_id)
+        .or(`home_team_registration_id.eq.${team.id},away_team_registration_id.eq.${team.id}`)
+        .eq("status", FixtureStatus.FINAL)
+        .order("finalized_at", { ascending: false, nullsFirst: false })
+        .limit(8)
+    ]);
+    if (fixturesError) throw fixturesError;
+    if (resultsError) throw resultsError;
+    res.json({
+      team,
+      players,
+      fixtures: fixtures ?? [],
+      results: results ?? [],
+      squad_summary: {
+        ...counts,
+        max_squad_size: Number(relatedOne(team.seasons)?.max_players_per_team ?? 22),
+        remaining_slots: Math.max(
+          0,
+          Number(relatedOne(team.seasons)?.max_players_per_team ?? 22) -
+            players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length
+        ),
+        distribution: currentDistribution(players)
+      }
+    });
   })
 );
 
@@ -1032,17 +1328,31 @@ managerRouter.get(
   "/fixtures",
   asyncHandler(async (req, res) => {
     const teamId = typeof req.query.teamId === "string" ? req.query.teamId : undefined;
-    const teams = await loadManagerTeams(req.auth!.userId);
-    const ids = teamId ? teams.filter((team) => team.id === teamId).map((team) => team.id) : teams.map((team) => team.id);
+    const seasonId = typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
+    const teams = seasonId ? await assertManagerCanViewSeason(req.auth!.userId, seasonId) : await loadManagerTeams(req.auth!.userId);
+    let ids: string[] = [];
+    if (teamId && teamId !== "ALL") {
+      if (seasonId) {
+        const seasonTeams = await loadSeasonTeamsForManager(seasonId);
+        ids = seasonTeams.filter((team) => team.id === teamId).map((team) => team.id);
+      } else {
+        ids = teams.filter((team) => team.id === teamId).map((team) => team.id);
+      }
+    } else if (seasonId) {
+      ids = (await loadSeasonTeamsForManager(seasonId)).map((team) => team.id);
+    } else {
+      ids = teams.map((team) => team.id);
+    }
     if (ids.length === 0) return res.json({ fixtures: [] });
     const clauses = ids.flatMap((id) => [`home_team_registration_id.eq.${id}`, `away_team_registration_id.eq.${id}`]);
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from("fixtures")
       .select(
         "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)),lineups(id,team_registration_id,status,formation,playing_style)"
       )
-      .or(clauses.join(","))
-      .order("kickoff_at", { ascending: true, nullsFirst: false });
+      .or(clauses.join(","));
+    if (seasonId) query = query.eq("season_id", seasonId);
+    const { data, error } = await query.order("kickoff_at", { ascending: true, nullsFirst: false });
     if (error) throw error;
     res.json({ fixtures: data ?? [] });
   })
@@ -1081,6 +1391,163 @@ managerRouter.get(
       .order("goals_for", { ascending: false });
     if (error) throw error;
     res.json({ standings: data ?? [] });
+  })
+);
+
+managerRouter.get(
+  "/seasons/:seasonId/stat-leaderboards",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    const requestedTeamId = typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    await assertManagerCanViewSeason(req.auth!.userId, seasonId);
+
+    const [
+      teamRegistrationsResult,
+      playerRegistrationsResult,
+      standingsResult,
+      fixturesResult
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("team_registrations")
+        .select("id,season_id,status,teams(name,short_name,logo_url)")
+        .eq("season_id", seasonId)
+        .eq("status", RegistrationStatus.APPROVED),
+      supabaseAdmin
+        .from("player_season_registrations")
+        .select("id,season_id,team_registration_id,position,football_position,shirt_number,players(full_name,avatar_url)")
+        .eq("season_id", seasonId),
+      supabaseAdmin.from("standings").select("*").eq("season_id", seasonId),
+      supabaseAdmin
+        .from("fixtures")
+        .select("id,home_team_registration_id,away_team_registration_id,home_score,away_score,status")
+        .eq("season_id", seasonId)
+    ]);
+    if (teamRegistrationsResult.error) throw teamRegistrationsResult.error;
+    if (playerRegistrationsResult.error) throw playerRegistrationsResult.error;
+    if (standingsResult.error) throw standingsResult.error;
+    if (fixturesResult.error) throw fixturesResult.error;
+
+    const allTeams = teamRegistrationsResult.data ?? [];
+    const scopedTeams = requestedTeamId && requestedTeamId !== "ALL" ? allTeams.filter((team) => team.id === requestedTeamId) : allTeams;
+    if (requestedTeamId && requestedTeamId !== "ALL" && scopedTeams.length === 0) throw new AppError(404, "Team not found in this season");
+    const teamIds = scopedTeams.map((team) => team.id);
+    const allPlayerRegistrations = playerRegistrationsResult.data ?? [];
+    const playerRegistrations = allPlayerRegistrations.filter((player) => teamIds.includes(player.team_registration_id));
+    const playerIds = playerRegistrations.map((player) => player.id);
+
+    const [playerSeasonStatsResult, playerMatchStatsResult, teamMatchStatsResult] = await Promise.all([
+      playerIds.length
+        ? supabaseAdmin.from("player_season_stats").select("*").eq("season_id", seasonId).in("player_registration_id", playerIds)
+        : Promise.resolve({ data: [], error: null }),
+      playerIds.length
+        ? supabaseAdmin.from("player_match_stats").select("*").in("player_registration_id", playerIds)
+        : Promise.resolve({ data: [], error: null }),
+      teamIds.length
+        ? supabaseAdmin.from("team_match_stats").select("*").in("team_registration_id", teamIds)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
+    if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
+    if (teamMatchStatsResult.error) throw teamMatchStatsResult.error;
+
+    const allTeamById = new Map(allTeams.map((team) => [team.id, team]));
+    const teamById = new Map(scopedTeams.map((team) => [team.id, team]));
+    const playerById = new Map(playerRegistrations.map((player) => [player.id, player]));
+    const playerMatchStats = playerMatchStatsResult.data ?? [];
+
+    const playerRows = (playerSeasonStatsResult.data ?? []).map((seasonStat) => {
+      const player = playerById.get(seasonStat.player_registration_id);
+      const team = player ? teamById.get(player.team_registration_id) : null;
+      const matchRows = playerMatchStats.filter((row) => row.player_registration_id === seasonStat.player_registration_id);
+      const minutes = Number(seasonStat.minutes_played ?? 0);
+      const sum = (field: string) => matchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+      const gkRows = matchRows.filter((row) => row.position_played === FootballPosition.GK);
+      const cleanSheets = gkRows.filter((row) => Number(row.goals_conceded ?? 0) === 0 && Number(row.minutes ?? 0) >= 45).length;
+      return {
+        id: seasonStat.player_registration_id,
+        name: relatedName(player?.players, "full_name") ?? "Unnamed player",
+        avatarUrl: relatedName(player?.players, "avatar_url"),
+        team: relatedName(team?.teams, "name") ?? "Unassigned team",
+        teamLogoUrl: relatedName(team?.teams, "logo_url"),
+        minutes,
+        matches: Number(seasonStat.appearances ?? 0),
+        goals: Number(seasonStat.goals ?? 0),
+        assists: Number(seasonStat.assists ?? 0),
+        goalAssists: Number(seasonStat.goals ?? 0) + Number(seasonStat.assists ?? 0),
+        successfulDribblesPer90: per90(Number(seasonStat.successful_dribbles ?? 0), minutes),
+        shotsOnTargetPer90: per90(Number(seasonStat.shots_on_target ?? 0), minutes),
+        accuratePassesPer90: per90(Number(seasonStat.accurate_passes ?? 0), minutes),
+        bigChancesCreated: Number(seasonStat.big_chances_created ?? sum("big_chances_created") ?? 0),
+        bigChancesMissed: sum("big_chances_missed"),
+        tacklesPer90: per90(Number(seasonStat.tackles ?? 0), minutes),
+        interceptionsPer90: per90(Number(seasonStat.interceptions ?? 0), minutes),
+        blocksPer90: per90(sum("blocks"), minutes),
+        clearancesPer90: per90(sum("clearances"), minutes),
+        cleanSheets,
+        savesPer90: per90(sum("saves"), minutes),
+        goalsConcededPer90: per90(sum("goals_conceded"), minutes),
+        yellowCards: Number(seasonStat.yellow_cards ?? 0),
+        redCards: Number(seasonStat.red_cards ?? 0),
+        foulsCommittedPer90: per90(sum("fouls_committed"), minutes),
+        rating: Number(seasonStat.average_rating ?? 0)
+      };
+    });
+
+    const standingsByTeam = new Map((standingsResult.data ?? []).map((standing) => [standing.team_registration_id, standing]));
+    const fixtures = fixturesResult.data ?? [];
+    const allPlayerMatchStats = playerMatchStatsResult.data ?? [];
+    const teamMatchStats = teamMatchStatsResult.data ?? [];
+    const teamRows = scopedTeams.map((team) => {
+      const teamStats = teamMatchStats.filter((row) => row.team_registration_id === team.id);
+      const standing = standingsByTeam.get(team.id);
+      const played = Math.max(Number(standing?.played ?? 0), teamStats.length);
+      const teamPlayers = allPlayerRegistrations.filter((player) => player.team_registration_id === team.id).map((player) => player.id);
+      const teamPlayerMatchRows = allPlayerMatchStats.filter((row) => teamPlayers.includes(row.player_registration_id));
+      const sumTeam = (field: string) => teamStats.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+      const sumPlayers = (field: string) => teamPlayerMatchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+      const cleanSheets = fixtures.filter((fixture) => {
+        if (fixture.status !== FixtureStatus.FINAL) return false;
+        if (fixture.home_team_registration_id === team.id) return Number(fixture.away_score ?? 0) === 0;
+        if (fixture.away_team_registration_id === team.id) return Number(fixture.home_score ?? 0) === 0;
+        return false;
+      }).length;
+      const teamMatchRatings = teamStats
+        .map((teamStat) => {
+          const storedRating = Number(teamStat.rating ?? 0);
+          if (storedRating > 0) return storedRating;
+          const matchPlayerRatings = teamPlayerMatchRows
+            .filter((row) => row.fixture_id === teamStat.fixture_id)
+            .map((row) => Number(row.rating ?? 0))
+            .filter((rating) => rating > 0);
+          return avg(matchPlayerRatings);
+        })
+        .filter((rating) => rating > 0);
+      return {
+        id: team.id,
+        name: relatedName(team.teams, "name") ?? relatedName(allTeamById.get(team.id)?.teams, "name") ?? "Unnamed team",
+        logoUrl: relatedName(team.teams, "logo_url"),
+        played,
+        avgPossession: avg(teamStats.map((row) => Number(row.possession ?? 0))),
+        rating: teamMatchRatings.length ? avg(teamMatchRatings) : 0,
+        goalsPerMatch: perMatch(Number(standing?.goals_for ?? 0), played),
+        shotsOnTargetPerMatch: perMatch(sumTeam("shots_on_target"), played),
+        bigChancesPerMatch: perMatch(sumTeam("big_chances"), played),
+        bigChancesMissedPerMatch: perMatch(sumTeam("big_chances_missed"), played),
+        accuratePassesPerMatch: perMatch(sumTeam("accurate_passes"), played),
+        cornersPerMatch: perMatch(sumTeam("corners"), played),
+        cleanSheets,
+        goalsConcededPerMatch: perMatch(Number(standing?.goals_against ?? 0), played),
+        tacklesPerMatch: perMatch(sumPlayers("tackles"), played),
+        clearancesPerMatch: perMatch(sumPlayers("clearances"), played),
+        penaltiesConceded: 0,
+        gkSavesPerMatch: perMatch(sumPlayers("saves"), played),
+        foulsPerMatch: perMatch(sumTeam("fouls"), played),
+        yellowCards: sumTeam("yellow_cards"),
+        redCards: sumTeam("red_cards")
+      };
+    });
+
+    res.json(makeStatsReport(playerRows, teamRows));
   })
 );
 
@@ -1153,7 +1620,7 @@ managerRouter.get(
       .single();
     if (fixtureError) throw fixtureError;
     if (!ids.includes(fixture.home_team_registration_id) && !ids.includes(fixture.away_team_registration_id)) {
-      throw new AppError(403, "This match does not belong to your team");
+      await assertManagerCanViewSeason(req.auth!.userId, fixture.season_id);
     }
     const [{ data: lineups, error: lineupsError }, { data: teamStats, error: teamStatsError }, { data: playerStats, error: playerStatsError }, { data: events, error: eventsError }, { data: substitutions, error: substitutionsError }] =
       await Promise.all([

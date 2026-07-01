@@ -865,7 +865,7 @@ function buildAdminSeasonData(input: {
   });
 
   const readyMatches = input.fixtures
-    .filter((fixture) => fixture.status === FixtureStatus.LINEUPS_CONFIRMED || fixture.status === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION)
+    .filter((fixture) => fixture.status === FixtureStatus.LINEUPS_CONFIRMED || fixture.status === FixtureStatus.READY_TO_SIMULATE || fixture.status === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION)
     .map((fixture) => ({
       id: fixture.id,
       home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
@@ -1084,6 +1084,12 @@ export default function AdminLeagueSeasonDashboard() {
     await loadDashboardData();
   }
 
+  async function jumpToMatchday() {
+    if (!season?.id) return;
+    await api(`/admin/seasons/${season.id}/matches/jump-to-matchday`, { method: "POST" });
+    await loadDashboardData();
+  }
+
   async function updateAbilityScores(id: string, scores: Record<string, number>) {
     await api(`/admin/player-registrations/${id}/ability-scores`, {
       method: "PATCH",
@@ -1195,12 +1201,12 @@ export default function AdminLeagueSeasonDashboard() {
         { id: "player-requests", label: "Player Requests", icon: User },
         { id: "fixtures", label: "Fixtures", icon: CalendarDays },
         { id: "matches-ready", label: "Matches Ready", icon: PlayCircle },
-        { id: "standings", label: "Standings", icon: Trophy },
+        ...(!isGroupKnockout ? [{ id: "standings", label: "Standings", icon: Trophy }] : []),
         { id: "reports", label: "Player Stats", icon: BarChart3 },
         { id: "team-stats", label: "Team Stats", icon: ShieldCheck },
         { id: "messages", label: "Messages", icon: Mail }
       ] as const,
-    []
+    [isGroupKnockout]
   );
 
   const groupTeamRequirement = Number(season?.group_count ?? 0) * Number(season?.teams_per_group ?? 0);
@@ -1214,6 +1220,10 @@ export default function AdminLeagueSeasonDashboard() {
       { id: "knockout", label: "Knockout Bracket", icon: GitBranch }
     ] as Array<{ id: TabId; label: string; icon: typeof Users }>;
   }, [isGroupKnockout, shouldShowGroupDivision]);
+
+  useEffect(() => {
+    if (isGroupKnockout && activeTab === "standings") setActiveTab("dashboard");
+  }, [activeTab, isGroupKnockout]);
 
   if (error) {
     return (
@@ -1235,7 +1245,7 @@ export default function AdminLeagueSeasonDashboard() {
 
   return (
     <div className="fixed inset-0 z-50 flex overflow-hidden bg-[#f6f8fb] text-[#0f172a]">
-      <aside className="flex w-[272px] shrink-0 flex-col overflow-y-auto bg-[#0d2035] bg-[radial-gradient(circle_at_top_left,rgba(58,122,255,0.2),transparent_18rem)] text-white shadow-2xl">
+      <aside className="flex w-[272px] shrink-0 flex-col overflow-y-auto bg-[#0d2035] bg-[radial-gradient(circle_at_top_left,rgba(58,122,255,0.2),transparent_18rem)] text-white shadow-2xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex h-[74px] items-center gap-3 px-6">
           <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-[#1d8aff] to-[#3057dc] shadow-lg">
             <Trophy size={23} />
@@ -1258,7 +1268,7 @@ export default function AdminLeagueSeasonDashboard() {
 
         <nav className="space-y-1 px-3">
           {navItems.map((item) => (
-            <SidebarButton key={item.id} item={item} active={activeTab === item.id} onClick={() => setActiveTab(item.id)} />
+            <SidebarButton key={item.id} item={item} active={activeTab === item.id} onClick={() => setActiveTab(item.id as TabId)} />
           ))}
         </nav>
 
@@ -1338,8 +1348,8 @@ export default function AdminLeagueSeasonDashboard() {
           {activeTab === "team-requests" ? <TeamRequestsView teamRequests={adminData.teamRequests} onDecision={decideTeamRequest} /> : null}
           {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} /> : null}
           {activeTab === "fixtures" ? <FixturesView season={season} /> : null}
-          {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} onSimulate={simulateReadyMatch} /> : null}
-          {activeTab === "standings" ? <StandingsView groupMode={isGroupKnockout} teams={adminData.standings} /> : null}
+          {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} onSimulate={simulateReadyMatch} onJumpToMatchday={jumpToMatchday} /> : null}
+          {activeTab === "standings" && !isGroupKnockout ? <StandingsView groupMode={false} teams={adminData.standings} /> : null}
           {activeTab === "reports" ? <PlayerStatsView data={adminData} /> : null}
           {activeTab === "team-stats" ? <TeamStatsView data={adminData} /> : null}
           {activeTab === "messages" ? <MessagesView messages={adminData.messages} /> : null}
@@ -2591,6 +2601,7 @@ function FixturesView({ season }: { season: SeasonDto }) {
   const [preview, setPreview] = useState<FixturePreviewResponse | null>(null);
   const [previewMode, setPreviewMode] = useState<"all" | "group" | "knockout" | null>(null);
   const [tab, setTab] = useState<"group" | "knockout" | "all">("all");
+  const [teamFilter, setTeamFilter] = useState("ALL");
   const [message, setMessage] = useState("");
   const isGroupKnockout = season.format === SeasonFormat.GROUP_STAGE_KNOCKOUT;
 
@@ -2609,10 +2620,14 @@ function FixturesView({ season }: { season: SeasonDto }) {
   const teamById = useMemo(() => new Map((data?.approved_teams ?? []).map((team) => [team.id, team])), [data?.approved_teams]);
   const groupById = useMemo(() => new Map((data?.groups ?? []).map((group) => [group.id, group])), [data?.groups]);
   const rows = preview?.fixtures ?? data?.fixtures ?? [];
-  const filteredRows = rows.filter((row) => {
+  const stageFilteredRows = rows.filter((row) => {
     if (!isGroupKnockout || tab === "all") return true;
     if (tab === "group") return row.stage === "GROUP";
     return row.stage !== "GROUP" && row.stage !== "LEAGUE";
+  });
+  const filteredRows = stageFilteredRows.filter((row) => {
+    if (teamFilter === "ALL") return true;
+    return row.home_team_registration_id === teamFilter || row.away_team_registration_id === teamFilter;
   });
   const groupFixtures = data?.fixtures.filter((fixture) => fixture.stage === "GROUP") ?? [];
   const groupStageComplete =
@@ -2624,6 +2639,12 @@ function FixturesView({ season }: { season: SeasonDto }) {
     const source = side === "home" ? row.home_source : row.away_source;
     const embedded = "home_team" in row && side === "home" ? row.home_team : "away_team" in row && side === "away" ? row.away_team : null;
     return embedded?.teams?.name ?? (id ? teamById.get(id)?.name : null) ?? source ?? "TBD";
+  }
+
+  function rowTeamLogo(row: FixtureApiRow | FixturePreviewRow, side: "home" | "away") {
+    const id = side === "home" ? row.home_team_registration_id : row.away_team_registration_id;
+    const embedded = "home_team" in row && side === "home" ? row.home_team : "away_team" in row && side === "away" ? row.away_team : null;
+    return embedded?.teams?.logo_url ?? (id ? teamById.get(id)?.logo_url : null) ?? null;
   }
 
   function rowGroupName(row: FixtureApiRow | FixturePreviewRow) {
@@ -2672,25 +2693,10 @@ function FixturesView({ season }: { season: SeasonDto }) {
     await loadFixtures();
   }
 
-  function exportFixtures() {
-    const fixtureRows = data?.fixtures ?? [];
-    const header = ["Matchday", "Date", "Stage", "Group", "Home Team", "Away Team", "Status"];
-    const body = fixtureRows.map((row) => [
-      row.matchday_number ?? row.round_no ?? "",
-      row.kickoff_at ? safeDate(row.kickoff_at) : "",
-      row.stage ?? "",
-      rowGroupName(row),
-      rowTeamName(row, "home"),
-      rowTeamName(row, "away"),
-      row.status
-    ]);
-    const csv = [header, ...body].map((line) => line.map((cell) => `"${String(cell).replaceAll("\"", "\"\"")}"`).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${season.name.replace(/\s+/g, "-").toLowerCase()}-fixtures.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+  async function finalizeFixtures() {
+    if (!window.confirm("Finalize fixtures? Regeneration will be disabled.")) return;
+    await api(`/admin/seasons/${season.id}/fixtures/finalize`, { method: "POST" });
+    await loadFixtures();
   }
 
   if (!data) {
@@ -2701,6 +2707,8 @@ function FixturesView({ season }: { season: SeasonDto }) {
       </div>
     );
   }
+
+  const isFinalized = data.fixture_status === "FINALIZED";
 
   return (
     <div>
@@ -2764,18 +2772,26 @@ function FixturesView({ season }: { season: SeasonDto }) {
 
           {hasSavedFixtures && !preview ? (
             <>
-              <button type="button" onClick={exportFixtures} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:-translate-y-0.5 hover:bg-slate-50">
-                Export Fixtures
-              </button>
-              <button
-                type="button"
-                disabled={!data.can_regenerate}
-                title={!data.can_regenerate ? "Fixtures cannot be regenerated because matches have already started or completed." : undefined}
-                onClick={() => void regenerateFixtures().catch((error) => setMessage(error.message))}
-                className="rounded-xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-black text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
-              >
-                Regenerate Fixtures
-              </button>
+              {isFinalized ? (
+                <span className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-black text-emerald-700">
+                  Fixtures Finalized
+                </span>
+              ) : (
+                <>
+                  <button type="button" onClick={() => void finalizeFixtures().catch((error) => setMessage(error.message))} className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-black text-emerald-700 transition hover:-translate-y-0.5 hover:bg-emerald-100">
+                    Finalize Fixtures
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!data.can_regenerate}
+                    title={!data.can_regenerate ? "Fixtures cannot be regenerated because matches have already started or completed." : undefined}
+                    onClick={() => void regenerateFixtures().catch((error) => setMessage(error.message))}
+                    className="rounded-xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-black text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
+                  >
+                    Regenerate Fixtures
+                  </button>
+                </>
+              )}
             </>
           ) : null}
         </div>
@@ -2788,7 +2804,8 @@ function FixturesView({ season }: { season: SeasonDto }) {
       </div>
 
       {isGroupKnockout ? (
-        <div className="mb-5 flex flex-wrap gap-2">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
           {[
             ["group", "Group Stage Fixtures"],
             ["knockout", "Knockout Fixtures"],
@@ -2803,8 +2820,32 @@ function FixturesView({ season }: { season: SeasonDto }) {
               {label}
             </button>
           ))}
+          </div>
+          <select
+            value={teamFilter}
+            onChange={(event) => setTeamFilter(event.target.value)}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm transition hover:border-indigo-300"
+          >
+            <option value="ALL">All teams</option>
+            {data.approved_teams.map((team) => (
+              <option key={team.id} value={team.id}>{team.name ?? team.short_name ?? "Team"}</option>
+            ))}
+          </select>
         </div>
-      ) : null}
+      ) : (
+        <div className="mb-5 flex justify-end">
+          <select
+            value={teamFilter}
+            onChange={(event) => setTeamFilter(event.target.value)}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm transition hover:border-indigo-300"
+          >
+            <option value="ALL">All teams</option>
+            {data.approved_teams.map((team) => (
+              <option key={team.id} value={team.id}>{team.name ?? team.short_name ?? "Team"}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 p-5">
@@ -2830,8 +2871,12 @@ function FixturesView({ season }: { season: SeasonDto }) {
                     <td className="px-5 py-4">{row.kickoff_at ? safeDate(row.kickoff_at) : "Not set"}</td>
                     <td className="px-5 py-4 font-semibold">{formatLabel(row.stage ?? "")}</td>
                     <td className="px-5 py-4">{rowGroupName(row)}</td>
-                    <td className="px-5 py-4 font-bold">{rowTeamName(row, "home")}</td>
-                    <td className="px-5 py-4 font-bold">{rowTeamName(row, "away")}</td>
+                    <td className="px-5 py-4 font-bold">
+                      <TeamCompact name={rowTeamName(row, "home")} logoUrl={rowTeamLogo(row, "home")} />
+                    </td>
+                    <td className="px-5 py-4 font-bold">
+                      <TeamCompact name={rowTeamName(row, "away")} logoUrl={rowTeamLogo(row, "away")} />
+                    </td>
                     <td className="px-5 py-4"><StatusPill tone={row.status === "WAITING_FOR_TEAMS" ? "orange" : row.status === "FINAL" || row.status === "COMPLETED" ? "green" : "blue"}>{statusLabel(row.status)}</StatusPill></td>
                   </tr>
                 ))
@@ -3019,11 +3064,20 @@ function PlayerLifecycleModal({
   );
 }
 
-function MatchesReadyView({ matches, onSimulate }: { matches: ReadyMatchRow[]; onSimulate: (fixtureId: string) => Promise<void> }) {
+function MatchesReadyView({
+  matches,
+  onSimulate,
+  onJumpToMatchday
+}: {
+  matches: ReadyMatchRow[];
+  onSimulate: (fixtureId: string) => Promise<void>;
+  onJumpToMatchday: () => Promise<void>;
+}) {
   const [selectedMatch, setSelectedMatch] = useState<ReadyMatchRow | null>(null);
   const [detail, setDetail] = useState<MatchDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [simulatingId, setSimulatingId] = useState<string | null>(null);
+  const [jumping, setJumping] = useState(false);
   const [selectedStat, setSelectedStat] = useState<MatchDetailPlayerStat | null>(null);
   const [error, setError] = useState("");
 
@@ -3058,7 +3112,27 @@ function MatchesReadyView({ matches, onSimulate }: { matches: ReadyMatchRow[]; o
 
   return (
     <div>
-      <PageTitle title="Matches Ready" subtitle="Matches appear here only after both lineups are confirmed." />
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <PageTitle title="Matches Ready" subtitle="Matches appear here only after both lineups are confirmed." />
+        <button
+          type="button"
+          onClick={async () => {
+            setJumping(true);
+            setError("");
+            try {
+              await onJumpToMatchday();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Could not jump to matchday");
+            } finally {
+              setJumping(false);
+            }
+          }}
+          disabled={jumping}
+          className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+        >
+          {jumping ? "Jumping..." : "Jump to Matchday"}
+        </button>
+      </div>
       {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</div> : null}
       <div className="grid gap-5 xl:grid-cols-2">
         {matches.length === 0 ? <EmptyState label="No matches are ready for simulation. Confirm both team lineups first." /> : null}
@@ -3350,13 +3424,16 @@ function StandingsView({ groupMode, teams }: { groupMode: boolean; teams: Standi
 
 function PlayerStatsView({ data }: { data: AdminSeasonData }) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
+  const [teamFilter, setTeamFilter] = useState("ALL");
+  const sections = filterStatSections(data.statsReport.player_sections, teamFilter, data.teams, "player");
   return (
     <div>
       <PageTitle
         title="Player Stats"
         subtitle="Player leaderboards update after confirmed match simulations. xG/xA are intentionally not tracked in this project."
       />
-      <LeaderboardSections title="Player Stats" sections={data.statsReport.player_sections} onOpen={setOpenCard} />
+      <AdminStatsFilter value={teamFilter} teams={data.teams} onChange={setTeamFilter} />
+      <LeaderboardSections title="Player Stats" sections={sections} onOpen={setOpenCard} />
       {openCard ? <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} /> : null}
     </div>
   );
@@ -3364,16 +3441,48 @@ function PlayerStatsView({ data }: { data: AdminSeasonData }) {
 
 function TeamStatsView({ data }: { data: AdminSeasonData }) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
+  const [teamFilter, setTeamFilter] = useState("ALL");
+  const sections = filterStatSections(data.statsReport.team_sections, teamFilter, data.teams, "team");
   return (
     <div>
       <PageTitle
         title="Team Stats"
         subtitle="Team leaderboards update after confirmed match simulations. xG/xA are intentionally not tracked in this project."
       />
-      <LeaderboardSections title="Team Stats" sections={data.statsReport.team_sections} onOpen={setOpenCard} />
+      <AdminStatsFilter value={teamFilter} teams={data.teams} onChange={setTeamFilter} />
+      <LeaderboardSections title="Team Stats" sections={sections} onOpen={setOpenCard} />
       {openCard ? <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} /> : null}
     </div>
   );
+}
+
+function AdminStatsFilter({ value, teams, onChange }: { value: string; teams: AdminTeam[]; onChange: (value: string) => void }) {
+  return (
+    <div className="mb-5 flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <button type="button" onClick={() => onChange("ALL")} className={`rounded-xl px-4 py-2 text-sm font-black transition ${value === "ALL" ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-700 hover:bg-indigo-50"}`}>
+        All Stats
+      </button>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700">
+        <option value="ALL">All teams</option>
+        {teams.map((team) => (
+          <option key={team.id} value={team.id}>{team.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function filterStatSections(sections: StatSectionData[], teamFilter: string, teams: AdminTeam[], mode: "player" | "team") {
+  if (teamFilter === "ALL") return sections;
+  const team = teams.find((item) => item.id === teamFilter);
+  if (!team) return sections;
+  return sections.map((section) => ({
+    ...section,
+    cards: section.cards.map((card) => ({
+      ...card,
+      entries: card.entries.filter((entry) => (mode === "team" ? entry.id === team.id : entry.subLabel === team.name))
+    }))
+  }));
 }
 
 function LeaderboardSections({ title, sections, onOpen }: { title: string; sections: StatSectionData[]; onOpen: (card: StatCardData) => void }) {

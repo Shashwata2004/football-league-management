@@ -112,6 +112,70 @@ const tierRanges: Record<PlayerAbilityRating, [number, number]> = {
 
 const outfieldKeys = ["shooting", "passing", "dribbling", "defending", "physical", "pace", "stamina"] as const;
 const gkKeys = ["shot_stopping", "reflexes", "positioning", "handling", "diving", "distribution", "physical", "communication"] as const;
+type OutfieldKey = (typeof outfieldKeys)[number];
+type GkKey = (typeof gkKeys)[number];
+type Range = [number, number];
+type OutfieldRanges = Record<OutfieldKey, Range>;
+
+const positionAbilityRanges: Record<Exclude<FootballPosition, typeof FootballPosition.GK>, Record<PlayerAbilityRating, OutfieldRanges>> = {
+  ST: {
+    LOW: { shooting: [58, 66], passing: [49, 58], dribbling: [52, 62], defending: [10, 20], physical: [50, 60], pace: [56, 66], stamina: [49, 59] },
+    MODERATE: { shooting: [67, 79], passing: [58, 68], dribbling: [62, 74], defending: [15, 30], physical: [59, 70], pace: [66, 78], stamina: [58, 70] },
+    HIGH: { shooting: [78, 92], passing: [67, 80], dribbling: [73, 88], defending: [20, 40], physical: [70, 84], pace: [76, 92], stamina: [68, 84] }
+  },
+  LW: {
+    LOW: { shooting: [55, 64], passing: [51, 60], dribbling: [58, 69], defending: [18, 30], physical: [48, 58], pace: [66, 76], stamina: [52, 63] },
+    MODERATE: { shooting: [62, 76], passing: [58, 70], dribbling: [68, 82], defending: [24, 40], physical: [56, 68], pace: [76, 88], stamina: [62, 76] },
+    HIGH: { shooting: [74, 90], passing: [68, 82], dribbling: [80, 92], defending: [32, 50], physical: [66, 80], pace: [84, 92], stamina: [74, 88] }
+  },
+  RW: {
+    LOW: { shooting: [55, 64], passing: [51, 60], dribbling: [58, 69], defending: [18, 30], physical: [48, 58], pace: [66, 76], stamina: [52, 63] },
+    MODERATE: { shooting: [62, 76], passing: [58, 70], dribbling: [68, 82], defending: [24, 40], physical: [56, 68], pace: [76, 88], stamina: [62, 76] },
+    HIGH: { shooting: [74, 90], passing: [68, 82], dribbling: [80, 92], defending: [32, 50], physical: [66, 80], pace: [84, 92], stamina: [74, 88] }
+  },
+  AM: {
+    LOW: { shooting: [50, 60], passing: [57, 67], dribbling: [54, 66], defending: [24, 38], physical: [48, 58], pace: [50, 62], stamina: [52, 64] },
+    MODERATE: { shooting: [60, 74], passing: [66, 80], dribbling: [64, 78], defending: [32, 46], physical: [56, 68], pace: [60, 74], stamina: [62, 76] },
+    HIGH: { shooting: [72, 88], passing: [78, 92], dribbling: [76, 92], defending: [40, 54], physical: [66, 78], pace: [70, 84], stamina: [72, 86] }
+  },
+  CM: {
+    LOW: { shooting: [42, 54], passing: [55, 66], dribbling: [48, 60], defending: [45, 58], physical: [48, 60], pace: [45, 56], stamina: [55, 66] },
+    MODERATE: { shooting: [52, 66], passing: [66, 80], dribbling: [58, 72], defending: [52, 66], physical: [58, 72], pace: [54, 68], stamina: [66, 80] },
+    HIGH: { shooting: [62, 76], passing: [78, 92], dribbling: [70, 84], defending: [60, 78], physical: [68, 82], pace: [62, 76], stamina: [78, 92] }
+  },
+  DM: {
+    LOW: { shooting: [28, 42], passing: [52, 62], dribbling: [42, 54], defending: [58, 66], physical: [54, 66], pace: [44, 56], stamina: [55, 66] },
+    MODERATE: { shooting: [38, 54], passing: [62, 76], dribbling: [52, 66], defending: [66, 80], physical: [64, 78], pace: [54, 68], stamina: [66, 80] },
+    HIGH: { shooting: [48, 62], passing: [74, 88], dribbling: [62, 76], defending: [78, 92], physical: [76, 92], pace: [62, 76], stamina: [78, 92] }
+  },
+  CB: {
+    LOW: { shooting: [12, 24], passing: [40, 52], dribbling: [20, 35], defending: [58, 66], physical: [55, 66], pace: [40, 54], stamina: [50, 62] },
+    MODERATE: { shooting: [20, 34], passing: [50, 64], dribbling: [32, 50], defending: [66, 80], physical: [66, 80], pace: [50, 64], stamina: [60, 74] },
+    HIGH: { shooting: [28, 42], passing: [60, 74], dribbling: [44, 65], defending: [78, 92], physical: [78, 92], pace: [60, 74], stamina: [70, 84] }
+  },
+  LB: {
+    LOW: { shooting: [18, 30], passing: [46, 58], dribbling: [42, 55], defending: [55, 64], physical: [48, 60], pace: [55, 66], stamina: [54, 66] },
+    MODERATE: { shooting: [28, 42], passing: [56, 70], dribbling: [50, 64], defending: [64, 78], physical: [58, 72], pace: [66, 80], stamina: [66, 80] },
+    HIGH: { shooting: [38, 52], passing: [68, 82], dribbling: [58, 72], defending: [76, 90], physical: [68, 82], pace: [78, 92], stamina: [76, 90] }
+  },
+  RB: {
+    LOW: { shooting: [18, 30], passing: [46, 58], dribbling: [42, 55], defending: [55, 64], physical: [48, 60], pace: [55, 66], stamina: [54, 66] },
+    MODERATE: { shooting: [28, 42], passing: [56, 70], dribbling: [50, 64], defending: [64, 78], physical: [58, 72], pace: [66, 80], stamina: [66, 80] },
+    HIGH: { shooting: [38, 52], passing: [68, 82], dribbling: [58, 72], defending: [76, 90], physical: [68, 82], pace: [78, 92], stamina: [76, 90] }
+  }
+};
+
+const outfieldOverallWeights: Record<Exclude<FootballPosition, typeof FootballPosition.GK>, Record<OutfieldKey, number>> = {
+  ST: { shooting: 0.28, pace: 0.2, dribbling: 0.18, physical: 0.14, passing: 0.12, stamina: 0.08, defending: 0 },
+  LW: { pace: 0.34, dribbling: 0.3, shooting: 0.18, passing: 0.08, stamina: 0.06, physical: 0.04, defending: 0 },
+  RW: { pace: 0.34, dribbling: 0.3, shooting: 0.18, passing: 0.08, stamina: 0.06, physical: 0.04, defending: 0 },
+  AM: { passing: 0.28, dribbling: 0.22, shooting: 0.2, pace: 0.12, stamina: 0.1, physical: 0.08, defending: 0 },
+  CM: { passing: 0.26, stamina: 0.18, dribbling: 0.16, defending: 0.16, physical: 0.12, shooting: 0.12, pace: 0 },
+  DM: { defending: 0.3, passing: 0.2, physical: 0.16, stamina: 0.16, pace: 0.1, dribbling: 0.08, shooting: 0 },
+  CB: { defending: 0.36, physical: 0.18, stamina: 0.14, passing: 0.12, pace: 0.1, dribbling: 0.06, shooting: 0.04 },
+  LB: { defending: 0.24, pace: 0.2, stamina: 0.18, passing: 0.14, dribbling: 0.14, physical: 0.08, shooting: 0.02 },
+  RB: { defending: 0.24, pace: 0.2, stamina: 0.18, passing: 0.14, dribbling: 0.14, physical: 0.08, shooting: 0.02 }
+};
 
 function hashSeed(seed: string) {
   let hash = 2166136261;
@@ -601,6 +665,35 @@ export type GeneratedOutfieldAbility = {
 
 export type GeneratedAbility = GeneratedGoalkeeperAbility | GeneratedOutfieldAbility;
 
+function rollRange(random: () => number, [low, high]: Range, allowHighSpike = false) {
+  const spike = allowHighSpike && random() > 0.94 ? random() * 4 : 0;
+  return clamp(low + random() * (high - low) + spike, low, Math.min(92, high));
+}
+
+function weightedOutfieldOverall(position: Exclude<FootballPosition, typeof FootballPosition.GK>, ability: Record<OutfieldKey, number>) {
+  const weights = outfieldOverallWeights[position];
+  return clamp(
+    outfieldKeys.reduce((total, key) => total + ability[key] * weights[key], 0),
+    1,
+    92
+  );
+}
+
+function weightedGoalkeeperOverall(ability: Record<GkKey, number>) {
+  return clamp(
+    ability.shot_stopping * 0.22 +
+      ability.reflexes * 0.18 +
+      ability.positioning * 0.16 +
+      ability.handling * 0.14 +
+      ability.diving * 0.14 +
+      ability.distribution * 0.08 +
+      ability.physical * 0.05 +
+      ability.communication * 0.03,
+    1,
+    92
+  );
+}
+
 export function generateAbilityScores(tier: PlayerAbilityRating, position: FootballPosition, seed: string): GeneratedAbility {
   const random = rng(`${seed}:ability:${tier}:${position}`);
   const [min, max] = tierRanges[tier];
@@ -609,8 +702,6 @@ export function generateAbilityScores(tier: PlayerAbilityRating, position: Footb
     const veryHigh = tier === "HIGH" && random() > 0.94;
     return clamp(low + random() * (high - low) + (veryHigh ? random() * 4 : 0), low, high);
   };
-  const weak = () => tier === "LOW" ? roll(min, max) : roll(Math.max(30, min - 10), Math.min(60, max - 8));
-  const secondary = () => roll(min, Math.min(75, tierMax));
   const strong = () => roll(min, tierMax);
   const boost = (value: number, amount: number, cap = tierMax) => clamp(value + amount, min, cap);
   if (position === FootballPosition.GK) {
@@ -618,35 +709,16 @@ export function generateAbilityScores(tier: PlayerAbilityRating, position: Footb
     ability.shot_stopping = boost(ability.shot_stopping, 4);
     ability.reflexes = boost(ability.reflexes, 4);
     ability.positioning = boost(ability.positioning, 2);
-    const overall_rating = clamp(Object.values(ability).reduce((sum, value) => sum + value, 0) / gkKeys.length, min, 92);
+    const overall_rating = weightedGoalkeeperOverall(ability);
     return { position: FootballPosition.GK, rating_tier: tier, ...ability, overall_rating, is_hidden_from_manager: true };
   }
-  const ability = Object.fromEntries(outfieldKeys.map((key) => [key, secondary()])) as Record<(typeof outfieldKeys)[number], number>;
-  if (position === FootballPosition.ST || position === FootballPosition.LW || position === FootballPosition.RW) {
-    ability.shooting = boost(strong(), 5);
-    ability.pace = boost(strong(), 4);
-    ability.dribbling = boost(strong(), 4);
-    ability.defending = weak();
-  } else if (position === FootballPosition.CM || position === FootballPosition.AM) {
-    ability.passing = boost(strong(), 5);
-    ability.dribbling = boost(strong(), 3);
-    ability.stamina = boost(strong(), 4);
-    ability.defending = position === FootballPosition.AM ? weak() : secondary();
-    ability.shooting = position === FootballPosition.CM ? secondary() : strong();
-  } else if (position === FootballPosition.DM || position === FootballPosition.CB) {
-    ability.defending = boost(strong(), 5);
-    ability.physical = boost(strong(), 4);
-    ability.shooting = weak();
-    ability.dribbling = position === FootballPosition.CB ? roll(Math.max(30, min - 10), Math.min(65, max - 4)) : secondary();
-  } else if (position === FootballPosition.LB || position === FootballPosition.RB) {
-    ability.pace = boost(strong(), 4);
-    ability.stamina = boost(strong(), 4);
-    ability.defending = boost(strong(), 3);
-    ability.dribbling = roll(min, Math.min(76, tierMax));
-    ability.shooting = roll(Math.max(35, min - 6), Math.min(70, max));
-  }
-  const overall_rating = clamp(Object.values(ability).reduce((sum, value) => sum + value, 0) / outfieldKeys.length, min, 92);
-  return { position, rating_tier: tier, ...ability, overall_rating, is_hidden_from_manager: true };
+  const outfieldPosition = position as Exclude<FootballPosition, typeof FootballPosition.GK>;
+  const ranges = positionAbilityRanges[outfieldPosition][tier];
+  const ability = Object.fromEntries(
+    outfieldKeys.map((key) => [key, rollRange(random, ranges[key], tier === "HIGH" && ["shooting", "passing", "dribbling", "defending", "pace", "stamina"].includes(key))])
+  ) as Record<OutfieldKey, number>;
+  const overall_rating = weightedOutfieldOverall(outfieldPosition, ability);
+  return { position: outfieldPosition, rating_tier: tier, ...ability, overall_rating, is_hidden_from_manager: true };
 }
 
 export function validateSimulationConsistency(result: SimulationResult) {

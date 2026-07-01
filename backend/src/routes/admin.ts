@@ -1104,8 +1104,8 @@ adminRouter.get(
       approved_teams: teams,
       groups,
       fixtures,
-      can_regenerate: canRegenerateFixtures(fixtures),
-      fixture_status: fixtureStatus(fixtures)
+      can_regenerate: season.fixture_status !== "FINALIZED" && canRegenerateFixtures(fixtures),
+      fixture_status: season.fixture_status === "FINALIZED" ? "FINALIZED" : fixtureStatus(fixtures)
     });
   })
 );
@@ -1138,12 +1138,39 @@ adminRouter.delete(
   "/seasons/:seasonId/fixtures/regenerate",
   asyncHandler(async (req, res) => {
     const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    if (season.fixture_status === "FINALIZED") throw new AppError(400, "Fixtures are finalized and cannot be regenerated.");
     const existing = await loadSeasonFixtures(season.id);
     if (!canRegenerateFixtures(existing)) throw new AppError(400, "Fixtures cannot be regenerated because matches have already started or completed.");
     const { error } = await supabaseAdmin.from("fixtures").delete().eq("season_id", season.id);
     if (error) throw error;
     await supabaseAdmin.from("seasons").update({ fixture_status: "NOT_GENERATED", updated_at: new Date().toISOString() }).eq("id", season.id);
     res.status(204).send();
+  })
+);
+
+adminRouter.post(
+  "/seasons/:seasonId/fixtures/finalize",
+  asyncHandler(async (req, res) => {
+    const season = await loadFixtureSeason(routeParam(req.params.seasonId, "seasonId"));
+    const fixtures = await loadSeasonFixtures(season.id);
+    if (fixtures.length === 0) throw new AppError(400, "Generate fixtures before finalizing.");
+    await supabaseAdmin.from("seasons").update({ fixture_status: "FINALIZED", updated_at: new Date().toISOString() }).eq("id", season.id);
+    res.json({ fixture_status: "FINALIZED" });
+  })
+);
+
+adminRouter.post(
+  "/seasons/:seasonId/matches/jump-to-matchday",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    const { data, error } = await supabaseAdmin
+      .from("fixtures")
+      .update({ status: FixtureStatus.READY_TO_SIMULATE, updated_at: new Date().toISOString() })
+      .eq("season_id", seasonId)
+      .eq("status", FixtureStatus.LINEUPS_CONFIRMED)
+      .select("id");
+    if (error) throw error;
+    res.json({ updated_count: data?.length ?? 0 });
   })
 );
 
@@ -1271,7 +1298,7 @@ adminRouter.post(
   asyncHandler(async (req, res) => {
     const input = simulateMatchSchema.parse(req.body);
     const fixture = await getFixture(input.fixture_id);
-    if (fixture.status !== FixtureStatus.LINEUPS_CONFIRMED && fixture.status !== FixtureStatus.SCHEDULED) {
+    if (fixture.status !== FixtureStatus.LINEUPS_CONFIRMED && fixture.status !== FixtureStatus.READY_TO_SIMULATE && fixture.status !== FixtureStatus.SCHEDULED) {
       throw new AppError(400, "Match cannot be simulated in its current status");
     }
     const homePlayers = await getConfirmedLineupPlayers(input.fixture_id, fixture.home_team_registration_id, VenueSide.HOME);

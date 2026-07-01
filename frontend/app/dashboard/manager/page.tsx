@@ -2,6 +2,7 @@
 
 import { CSSProperties, DragEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import {
+  BarChart3,
   Bell,
   CalendarDays,
   CheckCircle2,
@@ -29,6 +30,9 @@ type Section =
   | "Submit Lineup"
   | "Results"
   | "Standings"
+  | "Other Teams"
+  | "Player Stats"
+  | "Team Stats"
   | "Messages"
   | "Profile & Settings";
 
@@ -82,6 +86,7 @@ interface TeamRecord {
     gk_away_jersey_url?: string | null;
   } | null;
   seasons?: Season | Season[] | null;
+  manager?: { id: string; full_name?: string | null; email?: string | null } | Array<{ id: string; full_name?: string | null; email?: string | null }> | null;
 }
 
 interface PlayerRecord {
@@ -233,6 +238,12 @@ interface FixtureRecord {
   lineups?: Array<{ team_registration_id: string; status: string; formation: string; playing_style?: string | null }>;
 }
 
+interface SeasonGroupRecord {
+  id: string;
+  name: string;
+  teams: Array<{ id: string; seed_no?: number | null; team_registration?: TeamRecord | null }>;
+}
+
 interface StandingRecord {
   team_registration_id: string;
   played: number;
@@ -265,6 +276,14 @@ interface DashboardPayload {
   messages: MessageRecord[];
 }
 
+interface TeamViewPayload {
+  team: TeamRecord;
+  players: PlayerRecord[];
+  fixtures: FixtureRecord[];
+  results: FixtureRecord[];
+  squad_summary: SquadSummary;
+}
+
 interface PlayerLeagueStatsPayload {
   season_stats: Record<string, number | string | null> | null;
   match_stats: Array<Record<string, number | string | null>>;
@@ -276,6 +295,33 @@ interface PlayerProfilePayload extends PlayerLeagueStatsPayload {
   league_rating: number | null;
 }
 
+interface StatEntry {
+  id: string;
+  name: string;
+  subLabel: string;
+  logoUrl?: string | null;
+  teamLogoUrl?: string | null;
+  initials: string;
+  value: string;
+  numericValue: number;
+}
+
+interface StatCardData {
+  id: string;
+  title: string;
+  entries: StatEntry[];
+}
+
+interface StatSectionData {
+  title: string;
+  cards: StatCardData[];
+}
+
+interface ManagerStatsReport {
+  player_sections: StatSectionData[];
+  team_sections: StatSectionData[];
+}
+
 const menu: { label: Section; icon: ReactNode }[] = [
   { label: "Dashboard", icon: <LayoutDashboard size={18} /> },
   { label: "My Team", icon: <ShieldAlert size={18} /> },
@@ -284,6 +330,8 @@ const menu: { label: Section; icon: ReactNode }[] = [
   { label: "Submit Lineup", icon: <Home size={18} /> },
   { label: "Results", icon: <Trophy size={18} /> },
   { label: "Standings", icon: <CheckCircle2 size={18} /> },
+  { label: "Player Stats", icon: <BarChart3 size={18} /> },
+  { label: "Team Stats", icon: <ShieldAlert size={18} /> },
   { label: "Messages", icon: <Mail size={18} /> },
   { label: "Profile & Settings", icon: <User size={18} /> }
 ];
@@ -436,6 +484,45 @@ function matchLabel(fixture: FixtureRecord) {
   return `${fixture.home_team?.teams?.name ?? "Home"} vs ${fixture.away_team?.teams?.name ?? "Away"}`;
 }
 
+function teamName(team?: TeamRecord["teams"] | null) {
+  return team?.name ?? "Team";
+}
+
+function TeamLogoName({
+  team,
+  teamId,
+  onTeamClick,
+  muted = false
+}: {
+  team?: TeamRecord["teams"] | null | undefined;
+  teamId?: string | null | undefined;
+  onTeamClick?: ((teamId: string) => void) | undefined;
+  muted?: boolean;
+}) {
+  const text = (
+      <span className="min-w-0">
+        <span className={`block truncate font-black ${muted ? "text-slate-600" : "text-slate-950"}`}>{teamName(team)}</span>
+        {team?.short_name ? <span className="block text-xs font-bold text-slate-500">{team.short_name}</span> : null}
+      </span>
+  );
+  if (teamId && onTeamClick) {
+    return (
+      <div className="flex max-w-full items-center gap-3">
+        <Avatar name={teamName(team)} src={team?.logo_url} small />
+        <button type="button" className="min-w-0 text-left transition hover:text-[var(--team-primary)] hover:underline" onClick={() => onTeamClick(teamId)}>
+          {text}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex max-w-full items-center gap-3">
+      <Avatar name={teamName(team)} src={team?.logo_url} small />
+      {text}
+    </div>
+  );
+}
+
 export default function ManagerDashboardPage() {
   const [section, setSection] = useState<Section>(() => sectionFromPath());
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
@@ -445,6 +532,9 @@ export default function ManagerDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerRecord | null>(null);
+  const [selectedTeamViewId, setSelectedTeamViewId] = useState<string | null>(null);
+  const [teamView, setTeamView] = useState<TeamViewPayload | null>(null);
+  const [teamViewLoading, setTeamViewLoading] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
 
   async function load() {
@@ -480,6 +570,28 @@ export default function ManagerDashboardPage() {
     if (!teamId) return setTeamDetail(null);
     const detail = await api<{ players: PlayerRecord[]; squad_summary: SquadSummary }>(`/manager/teams/${teamId}`);
     setTeamDetail({ players: detail.players, squad_summary: detail.squad_summary });
+  }
+
+  async function openTeamView(teamId: string) {
+    setSelectedTeamViewId(teamId);
+    setSection("Other Teams");
+    setTeamViewLoading(true);
+    setMessage("");
+    try {
+      const detail = await api<TeamViewPayload>(`/manager/teams/${teamId}/view`);
+      setTeamView(detail);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to open team");
+      setSelectedTeamViewId(null);
+      setTeamView(null);
+    } finally {
+      setTeamViewLoading(false);
+    }
+  }
+
+  function closeTeamView() {
+    setSelectedTeamViewId(null);
+    setTeamView(null);
   }
 
   const activeTeam = useMemo(() => {
@@ -552,10 +664,15 @@ export default function ManagerDashboardPage() {
               results={payload?.results ?? []}
               standings={payload?.standings ?? []}
               messages={payload?.messages ?? []}
+              selectedTeamViewId={selectedTeamViewId}
+              teamView={teamView}
+              teamViewLoading={teamViewLoading}
               onRefresh={() => void load().catch((error) => setMessage(error.message))}
               onCreateTeam={() => void load().catch((error) => setMessage(error.message))}
               onGenerate={() => setGenerateOpen(true)}
               onPlayerClick={setSelectedPlayer}
+              onTeamClick={(teamId) => void openTeamView(teamId)}
+              onCloseTeamView={closeTeamView}
               onSectionChange={setSection}
             />
           )}
@@ -595,6 +712,9 @@ function sectionFromPath(): Section {
   if (path.includes("/players")) return "Players";
   if (path.includes("/fixtures")) return "Fixtures";
   if (path.includes("/submit-lineup")) return "Submit Lineup";
+  if (path.includes("/player-stats")) return "Player Stats";
+  if (path.includes("/team-stats")) return "Team Stats";
+  if (path.includes("/other-teams")) return "Other Teams";
   if (path.includes("/results")) return "Results";
   if (path.includes("/standings")) return "Standings";
   if (path.includes("/messages")) return "Messages";
@@ -616,7 +736,7 @@ function ManagerSidebar({
   onSection: (section: Section) => void;
 }) {
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col bg-[var(--team-secondary)] text-[var(--team-sidebar-text)] shadow-2xl lg:flex">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col overflow-hidden bg-[var(--team-secondary)] text-[var(--team-sidebar-text)] shadow-2xl lg:flex">
       <div className="flex items-center gap-3 border-b border-[var(--team-sidebar-border)] px-6 py-6">
         <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--team-primary)]">
           <Trophy size={22} />
@@ -635,7 +755,7 @@ function ManagerSidebar({
           </div>
         </div>
       </div>
-      <nav className="mt-5 flex-1 space-y-1 px-4">
+      <nav className="mt-5 min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {menu.map((item) => (
           <button
             key={item.label}
@@ -734,10 +854,15 @@ function SectionView(props: {
   results: FixtureRecord[];
   standings: StandingRecord[];
   messages: MessageRecord[];
+  selectedTeamViewId: string | null;
+  teamView: TeamViewPayload | null;
+  teamViewLoading: boolean;
   onRefresh: () => void;
   onCreateTeam: () => void;
   onGenerate: () => void;
   onPlayerClick: (player: PlayerRecord) => void;
+  onTeamClick: (teamId: string) => void;
+  onCloseTeamView: () => void;
   onSectionChange: (section: Section) => void;
 }) {
   if (!props.activeTeam && props.section !== "Profile & Settings") {
@@ -750,6 +875,9 @@ function SectionView(props: {
   if (props.section === "Submit Lineup") return <SubmitLineupSection {...props} />;
   if (props.section === "Results") return <ResultsSection {...props} />;
   if (props.section === "Standings") return <StandingsSection {...props} />;
+  if (props.section === "Other Teams") return <OtherTeamsSection {...props} />;
+  if (props.section === "Player Stats") return <StatsSection {...props} mode="player" />;
+  if (props.section === "Team Stats") return <StatsSection {...props} mode="team" />;
   if (props.section === "Messages") return <MessagesSection {...props} />;
   return <ProfileSection profile={props.profile} />;
 }
@@ -989,11 +1117,93 @@ function PlayersSection({ players, summary, onGenerate, onPlayerClick, activeTea
   );
 }
 
-function FixturesSection({ fixtures, activeTeam }: Parameters<typeof SectionView>[0]) {
+function FixturesSection({ fixtures, activeTeam, activeSeason, standings, onTeamClick }: Parameters<typeof SectionView>[0]) {
+  const [seasonTeams, setSeasonTeams] = useState<TeamRecord[]>([]);
+  const [fixtureRows, setFixtureRows] = useState<FixtureRecord[]>(fixtures);
+  const [teamFilter, setTeamFilter] = useState(activeTeam?.id ?? "MY_TEAM");
+  const [showGroups, setShowGroups] = useState(false);
+  const [selectedFixture, setSelectedFixture] = useState<FixtureRecord | null>(null);
+  const [detail, setDetail] = useState<unknown>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const showHomeAway = activeSeason?.format !== "GROUP_STAGE_KNOCKOUT";
+
+  useEffect(() => {
+    setFixtureRows(fixtures);
+  }, [fixtures]);
+
+  useEffect(() => {
+    if (!activeSeason?.id) return;
+    let alive = true;
+    api<{ teams: TeamRecord[] }>(`/manager/seasons/${activeSeason.id}/teams`)
+      .then((payload) => {
+        if (alive) setSeasonTeams(payload.teams);
+      })
+      .catch(() => {
+        if (alive) setSeasonTeams([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeSeason?.id]);
+
+  async function changeFixtureFilter(value: string) {
+    setTeamFilter(value);
+    if (!activeSeason?.id) return;
+    const queryTeamId = value === "MY_TEAM" ? activeTeam?.id : value;
+    const query = queryTeamId === "ALL" ? `seasonId=${activeSeason.id}&teamId=ALL` : `seasonId=${activeSeason.id}&teamId=${queryTeamId ?? activeTeam?.id ?? "ALL"}`;
+    const payload = await api<{ fixtures: FixtureRecord[] }>(`/manager/fixtures?${query}`);
+    setFixtureRows(payload.fixtures);
+  }
+
+  async function openFixture(fixture: FixtureRecord) {
+    setSelectedFixture(fixture);
+    setDetail(null);
+    setDetailLoading(true);
+    try {
+      const payload = await api(`/manager/matches/${fixture.id}/detail`);
+      setDetail(payload);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageTitle title="Fixtures" subtitle="Upcoming and scheduled matches for your selected team." />
-      <FixtureTable fixtures={fixtures.filter((fixture) => fixture.status !== "FINAL")} activeTeamId={activeTeam?.id} emptyLabel="No fixtures yet. Fixtures will appear after admin generates them." />
+      <div className="flex flex-wrap gap-3 rounded-3xl border border-slate-200 bg-white p-4">
+        <button className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === "MY_TEAM" ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`} onClick={() => void changeFixtureFilter("MY_TEAM")}>
+          My Fixtures
+        </button>
+        <button className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === "ALL" ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`} onClick={() => void changeFixtureFilter("ALL")}>
+          All Fixtures
+        </button>
+        <select className="manager-input max-w-xs" value={teamFilter} onChange={(event) => void changeFixtureFilter(event.target.value)}>
+          <option value="MY_TEAM">My team only</option>
+          <option value="ALL">All season fixtures</option>
+          {seasonTeams.map((team) => (
+            <option key={team.id} value={team.id}>{team.teams?.name ?? "Team"}</option>
+          ))}
+        </select>
+        {activeSeason?.format === "GROUP_STAGE_KNOCKOUT" ? (
+          <button className={`rounded-2xl px-4 py-3 text-sm font-black transition ${showGroups ? "bg-green-600 text-white" : "bg-green-50 text-green-700 hover:bg-green-100"}`} onClick={() => setShowGroups((value) => !value)}>
+            Group Current Condition
+          </button>
+        ) : null}
+      </div>
+      {showGroups && activeSeason?.format === "GROUP_STAGE_KNOCKOUT" ? (
+        <GroupConditionPanel standings={standings} activeTeam={activeTeam} activeSeason={activeSeason} onTeamClick={onTeamClick} />
+      ) : null}
+      <FixtureTable
+        fixtures={fixtureRows.filter((fixture) => fixture.status !== "FINAL")}
+        activeTeamId={activeTeam?.id}
+        showHomeAway={showHomeAway}
+        emptyLabel="No fixtures yet. Fixtures will appear after admin generates them."
+        onTeamClick={onTeamClick}
+        onOpen={openFixture}
+      />
+      {selectedFixture ? (
+        <MatchDetailModal fixture={selectedFixture} detail={detail} loading={detailLoading} activeTeamId={activeTeam?.id} onClose={() => setSelectedFixture(null)} onTeamClick={onTeamClick} />
+      ) : null}
     </div>
   );
 }
@@ -1340,14 +1550,19 @@ function SubmitLineupSection({ fixtures, players, activeTeam, onPlayerClick }: P
                             void openAlternatives(slot);
                           }}
                         >
-                          <div className={`relative grid h-14 w-14 place-items-center rounded-full border-[3px] bg-white shadow-md transition group-hover:scale-110 ${fitBorderClass(selected?.fit_label)}`}>
+                          <div className={`relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] bg-white shadow-md transition group-hover:brightness-110 ${fitBorderClass(selected?.fit_label)}`}>
                             {player.players?.avatar_url ? (
-                              <img src={player.players.avatar_url} alt={player.players?.full_name ?? "Player"} className="h-full w-full rounded-full object-cover" />
+                              <img src={player.players.avatar_url} alt={player.players?.full_name ?? "Player"} className="h-[118%] w-full rounded-full object-cover object-top" />
                             ) : (
                               <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">{initials(player.players?.full_name)}</span>
                             )}
                           </div>
-                          <p className="mt-1 w-28 truncate text-[13px] font-black text-white drop-shadow">{player.shirt_number ? `${player.shirt_number} ` : ""}{player.players?.full_name ?? "Player"}</p>
+                          <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
+                            <span className="min-w-0 truncate text-[13px] font-black text-white drop-shadow">{player.shirt_number ? `${player.shirt_number} ` : ""}{player.players?.full_name ?? "Player"}</span>
+                            <span className={`inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[10px] font-black ring-1 ${overallCapsuleClass(playerRatingTier(player))}`}>
+                              {playerOverall(player) ?? "N/A"}
+                            </span>
+                          </div>
                           <p className="text-[10px] font-bold uppercase tracking-wide text-white/70">{slot.displayRole}</p>
                         </div>
                       ) : (
@@ -1473,9 +1688,12 @@ function LineupPlayerRow({
       }}>
         <Avatar name={player.players?.full_name ?? "Player"} src={player.players?.avatar_url} small />
         <span className="min-w-0">
-          <span className="block truncate text-sm font-black">{player.players?.full_name}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-black">{player.players?.full_name}</span>
+            {overallCapsule(playerOverall(player), playerRatingTier(player))}
+          </span>
           <span className="block text-xs font-bold text-slate-500">
-            {naturalPlayerPosition(player)} · #{player.shirt_number ?? "-"} · OVR {playerOverall(player) ?? "N/A"} · LG {player.league_rating?.toFixed(2) ?? "—"}
+            {naturalPlayerPosition(player)} · #{player.shirt_number ?? "-"} · LG {player.league_rating?.toFixed(2) ?? "—"}
           </span>
         </span>
       </div>
@@ -1491,16 +1709,94 @@ function LineupPlayerRow({
   );
 }
 
-function ResultsSection({ results, activeTeam }: Parameters<typeof SectionView>[0]) {
+function ResultsSection({ results, activeTeam, activeSeason, onTeamClick }: Parameters<typeof SectionView>[0]) {
   return (
     <div className="space-y-6">
       <PageTitle title="Results" subtitle="Confirmed results only. Manager cannot edit result or stats." />
-      <FixtureTable fixtures={results} activeTeamId={activeTeam?.id} emptyLabel="No results yet. Results will appear after matches are confirmed." />
+      <FixtureTable
+        fixtures={results}
+        activeTeamId={activeTeam?.id}
+        showHomeAway={activeSeason?.format !== "GROUP_STAGE_KNOCKOUT"}
+        emptyLabel="No results yet. Results will appear after matches are confirmed."
+        onTeamClick={onTeamClick}
+      />
     </div>
   );
 }
 
-function StandingsSection({ standings, activeTeam }: Parameters<typeof SectionView>[0]) {
+function StandingsSection({ standings, activeTeam, activeSeason, onTeamClick }: Parameters<typeof SectionView>[0]) {
+  const [groups, setGroups] = useState<SeasonGroupRecord[]>([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const isGroupKnockout = activeSeason?.format === "GROUP_STAGE_KNOCKOUT";
+  useEffect(() => {
+    if (!isGroupKnockout || !activeSeason?.id) return;
+    let alive = true;
+    setLoadingGroups(true);
+    api<{ groups: SeasonGroupRecord[] }>(`/manager/seasons/${activeSeason.id}/groups`)
+      .then((payload) => {
+        if (alive) setGroups(payload.groups);
+      })
+      .catch(() => {
+        if (alive) setGroups([]);
+      })
+      .finally(() => {
+        if (alive) setLoadingGroups(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeSeason?.id, isGroupKnockout]);
+  const standingByTeam = useMemo(() => new Map(standings.map((row) => [row.team_registration_id, row])), [standings]);
+
+  if (isGroupKnockout) {
+    return (
+      <div className="space-y-6">
+        <PageTitle title="Standings" subtitle="Group tables for the selected group + knockout season." />
+        {loadingGroups ? <LoadingState label="Loading groups..." /> : null}
+        {!loadingGroups && groups.length === 0 ? <EmptyState label="No groups created yet." /> : null}
+        <div className="grid gap-6 xl:grid-cols-2">
+          {groups.map((group) => {
+            const rows = group.teams
+              .map((item) => {
+                const team = item.team_registration;
+                return { team, standing: team ? standingByTeam.get(team.id) : undefined };
+              })
+              .sort((a, b) => Number(b.standing?.points ?? 0) - Number(a.standing?.points ?? 0) || Number(b.standing?.goal_difference ?? 0) - Number(a.standing?.goal_difference ?? 0));
+            return (
+              <Panel key={group.id} title={group.name}>
+                <div className="overflow-hidden rounded-2xl border border-slate-200">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                      <tr>
+                        {["#", "Team", "P", "W", "D", "L", "GD", "Pts"].map((head) => <th key={head} className="px-4 py-3">{head}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map(({ team, standing }, index) => (
+                        <tr key={team?.id ?? index} className={`border-t ${team?.id === activeTeam?.id ? "bg-green-50" : "bg-white"}`}>
+                          <td className="px-4 py-3 font-bold">{index + 1}</td>
+                          <td className="px-4 py-3">
+                            <TeamLogoName team={team?.teams} teamId={team?.id} onTeamClick={onTeamClick} />
+                          </td>
+                          <td className="px-4 py-3">{standing?.played ?? 0}</td>
+                          <td className="px-4 py-3">{standing?.won ?? 0}</td>
+                          <td className="px-4 py-3">{standing?.drawn ?? 0}</td>
+                          <td className="px-4 py-3">{standing?.lost ?? 0}</td>
+                          <td className="px-4 py-3">{standing?.goal_difference ?? 0}</td>
+                          <td className="px-4 py-3 font-black text-[var(--team-primary)]">{standing?.points ?? 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageTitle title="Standings" subtitle="League table for the selected season." />
@@ -1517,9 +1813,11 @@ function StandingsSection({ standings, activeTeam }: Parameters<typeof SectionVi
               </thead>
               <tbody>
                 {standings.map((row, index) => (
-                  <tr key={row.team_registration_id} className={`border-t ${row.team_registration_id === activeTeam?.id ? "bg-purple-50" : "bg-white"}`}>
+                  <tr key={row.team_registration_id} className={`border-t ${row.team_registration_id === activeTeam?.id ? "bg-green-50" : "bg-white"}`}>
                     <td className="px-4 py-3 font-bold">{index + 1}</td>
-                    <td className="px-4 py-3 font-semibold">{row.team_registrations?.teams?.name ?? "Team"}</td>
+                    <td className="px-4 py-3">
+                      <TeamLogoName team={row.team_registrations?.teams} teamId={row.team_registration_id} onTeamClick={onTeamClick} />
+                    </td>
                     <td className="px-4 py-3">{row.played}</td>
                     <td className="px-4 py-3">{row.won}</td>
                     <td className="px-4 py-3">{row.drawn}</td>
@@ -1537,6 +1835,175 @@ function StandingsSection({ standings, activeTeam }: Parameters<typeof SectionVi
           <EmptyState label="No standings yet." />
         )}
       </Panel>
+    </div>
+  );
+}
+
+function GroupConditionPanel({ standings, activeTeam, activeSeason, onTeamClick }: {
+  standings: StandingRecord[];
+  activeTeam: TeamRecord | null;
+  activeSeason: Season | null;
+  onTeamClick: (teamId: string) => void;
+}) {
+  const [groups, setGroups] = useState<SeasonGroupRecord[]>([]);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  useEffect(() => {
+    if (!activeSeason?.id) return;
+    let alive = true;
+    setLoadingGroups(true);
+    api<{ groups: SeasonGroupRecord[] }>(`/manager/seasons/${activeSeason.id}/groups`)
+      .then((payload) => {
+        if (alive) setGroups(payload.groups);
+      })
+      .catch(() => {
+        if (alive) setGroups([]);
+      })
+      .finally(() => {
+        if (alive) setLoadingGroups(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeSeason?.id]);
+  const standingByTeam = useMemo(() => new Map(standings.map((row) => [row.team_registration_id, row])), [standings]);
+  return (
+    <Panel title="Group Current Condition">
+      {loadingGroups ? <LoadingState label="Loading groups..." /> : null}
+      {!loadingGroups && groups.length === 0 ? <EmptyState label="No groups created yet." /> : null}
+      <div className="grid gap-5 xl:grid-cols-2">
+        {groups.map((group) => {
+          const rows = group.teams
+            .map((item) => {
+              const team = item.team_registration;
+              return { team, standing: team ? standingByTeam.get(team.id) : undefined };
+            })
+            .sort((a, b) => Number(b.standing?.points ?? 0) - Number(a.standing?.points ?? 0) || Number(b.standing?.goal_difference ?? 0) - Number(a.standing?.goal_difference ?? 0));
+          return (
+            <div key={group.id} className="overflow-hidden rounded-2xl border border-slate-200">
+              <div className="bg-slate-50 px-4 py-3 font-black">{group.name}</div>
+              <table className="w-full text-left text-sm">
+                <thead className="bg-white text-xs uppercase text-slate-500">
+                  <tr>
+                    {["#", "Team", "P", "GD", "Pts"].map((head) => <th key={head} className="px-4 py-3">{head}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(({ team, standing }, index) => (
+                    <tr key={team?.id ?? index} className={`border-t ${team?.id === activeTeam?.id ? "bg-green-50" : "bg-white"}`}>
+                      <td className="px-4 py-3 font-bold">{index + 1}</td>
+                      <td className="px-4 py-3">
+                        <TeamLogoName team={team?.teams} teamId={team?.id} onTeamClick={onTeamClick} />
+                      </td>
+                      <td className="px-4 py-3">{standing?.played ?? 0}</td>
+                      <td className="px-4 py-3">{standing?.goal_difference ?? 0}</td>
+                      <td className="px-4 py-3 font-black text-[var(--team-primary)]">{standing?.points ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+function StatsSection({ mode, activeTeam, activeSeason }: Parameters<typeof SectionView>[0] & { mode: "player" | "team" }) {
+  const [seasonTeams, setSeasonTeams] = useState<TeamRecord[]>([]);
+  const [teamFilter, setTeamFilter] = useState(activeTeam?.id ?? "MY_TEAM");
+  const [report, setReport] = useState<ManagerStatsReport | null>(null);
+  const [openCard, setOpenCard] = useState<StatCardData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!activeSeason?.id) return;
+    let alive = true;
+    api<{ teams: TeamRecord[] }>(`/manager/seasons/${activeSeason.id}/teams`)
+      .then((payload) => {
+        if (alive) setSeasonTeams(payload.teams);
+      })
+      .catch(() => {
+        if (alive) setSeasonTeams([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeSeason?.id]);
+
+  useEffect(() => {
+    if (!activeTeam?.id) return;
+    setTeamFilter(activeTeam.id);
+  }, [activeTeam?.id]);
+
+  async function loadStats(value = teamFilter) {
+    if (!activeSeason?.id) return;
+    setLoading(true);
+    setError("");
+    try {
+      const teamId = value === "MY_TEAM" ? activeTeam?.id ?? "ALL" : value;
+      const payload = await api<ManagerStatsReport>(`/manager/seasons/${activeSeason.id}/stat-leaderboards?teamId=${teamId}`);
+      setReport(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load stats");
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadStats(activeTeam?.id ?? "ALL");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSeason?.id, activeTeam?.id, mode]);
+
+  const title = mode === "player" ? "Player Stats" : "Team Stats";
+  const sections = mode === "player" ? report?.player_sections ?? [] : report?.team_sections ?? [];
+  return (
+    <div className="space-y-6">
+      <PageTitle
+        title={title}
+        subtitle={`${title} default to your selected team. Choose another team or All Stats to compare the full season.`}
+      />
+      <div className="flex flex-wrap gap-3 rounded-3xl border border-slate-200 bg-white p-4">
+        <button
+          className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === activeTeam?.id ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`}
+          onClick={() => {
+            const id = activeTeam?.id ?? "ALL";
+            setTeamFilter(id);
+            void loadStats(id);
+          }}
+        >
+          My Team Stats
+        </button>
+        <button
+          className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === "ALL" ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`}
+          onClick={() => {
+            setTeamFilter("ALL");
+            void loadStats("ALL");
+          }}
+        >
+          All Stats
+        </button>
+        <select
+          className="manager-input max-w-xs"
+          value={teamFilter}
+          onChange={(event) => {
+            setTeamFilter(event.target.value);
+            void loadStats(event.target.value);
+          }}
+        >
+          <option value={activeTeam?.id ?? "MY_TEAM"}>My team only</option>
+          <option value="ALL">All season teams</option>
+          {seasonTeams.map((team) => (
+            <option key={team.id} value={team.id}>{team.teams?.name ?? "Team"}</option>
+          ))}
+        </select>
+      </div>
+      {error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{error}</div> : null}
+      {loading ? <LoadingState label={`Loading ${title.toLowerCase()}...`} /> : <LeaderboardSections title={title} sections={sections} onOpen={setOpenCard} />}
+      {openCard ? <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} /> : null}
     </div>
   );
 }
@@ -2514,31 +2981,304 @@ function percentage(numerator: unknown, denominator: unknown) {
   return `${Math.round((top / bottom) * 100)}%`;
 }
 
-function FixtureTable({ fixtures, activeTeamId, emptyLabel }: { fixtures: FixtureRecord[]; activeTeamId?: string | undefined; emptyLabel: string }) {
+function FixtureTable({
+  fixtures,
+  activeTeamId,
+  showHomeAway = true,
+  emptyLabel,
+  onTeamClick,
+  onOpen
+}: {
+  fixtures: FixtureRecord[];
+  activeTeamId?: string | undefined;
+  showHomeAway?: boolean;
+  emptyLabel: string;
+  onTeamClick?: ((teamId: string) => void) | undefined;
+  onOpen?: (fixture: FixtureRecord) => void;
+}) {
   if (fixtures.length === 0) return <EmptyState label={emptyLabel} />;
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
       <table className="w-full text-left text-sm">
         <thead className="bg-slate-50 text-xs uppercase text-slate-500">
           <tr>
-            {["Date", "Opponent", "Venue", "Home/Away", "Competition", "Status", "Score", "Action"].map((head) => <th key={head} className="px-4 py-3">{head}</th>)}
+            {["Date", "Team A", "Team B", showHomeAway ? "Home/Away" : "Fixture Type", "Competition", "Status", "Score", "Action"].map((head) => <th key={head} className="px-4 py-3">{head}</th>)}
           </tr>
         </thead>
         <tbody>
-          {fixtures.map((fixture) => (
-            <tr key={fixture.id} className="border-t">
-              <td className="px-4 py-3">{formatDate(fixture.kickoff_at)}</td>
-              <td className="px-4 py-3 font-bold">{opponentName(fixture, activeTeamId)}</td>
-              <td className="px-4 py-3">{fixture.venue ?? "TBA"}</td>
-              <td className="px-4 py-3">{fixture.home_team_registration_id === activeTeamId ? "Home" : "Away"}</td>
-              <td className="px-4 py-3">{fixture.stage}</td>
-              <td className="px-4 py-3"><StatusBadge status={fixture.status} /></td>
-              <td className="px-4 py-3 font-bold">{fixture.home_score === null ? "-" : `${fixture.home_score} - ${fixture.away_score}`}</td>
-              <td className="px-4 py-3"><button className="rounded-xl bg-purple-50 px-3 py-2 text-xs font-bold text-[var(--team-primary)]">Open</button></td>
-            </tr>
-          ))}
+          {fixtures.map((fixture) => {
+            const side = fixture.home_team_registration_id === activeTeamId ? "Home" : fixture.away_team_registration_id === activeTeamId ? "Away" : "Other";
+            const sideLabel = showHomeAway ? side : "Neutral";
+            return (
+              <tr key={fixture.id} className="border-t">
+                <td className="px-4 py-3">{formatDate(fixture.kickoff_at)}</td>
+                <td className="px-4 py-3">
+                  <TeamLogoName team={fixture.home_team?.teams} teamId={fixture.home_team_registration_id} onTeamClick={onTeamClick} />
+                </td>
+                <td className="px-4 py-3">
+                  <TeamLogoName team={fixture.away_team?.teams} teamId={fixture.away_team_registration_id} onTeamClick={onTeamClick} />
+                </td>
+                <td className="px-4 py-3">{sideLabel}</td>
+                <td className="px-4 py-3">{fixture.stage}</td>
+                <td className="px-4 py-3"><StatusBadge status={fixture.status} /></td>
+                <td className="px-4 py-3 font-bold">{fixture.home_score === null ? "-" : `${fixture.home_score} - ${fixture.away_score}`}</td>
+                <td className="px-4 py-3">
+                  <button className="rounded-xl bg-purple-50 px-3 py-2 text-xs font-bold text-[var(--team-primary)] transition hover:bg-[var(--team-primary)] hover:text-[var(--team-primary-text)]" onClick={() => onOpen?.(fixture)}>
+                    Open
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function OtherTeamsSection({
+  activeTeam,
+  activeSeason,
+  teamView,
+  teamViewLoading,
+  selectedTeamViewId,
+  onCloseTeamView,
+  onPlayerClick
+}: Parameters<typeof SectionView>[0]) {
+  if (!selectedTeamViewId) {
+    return (
+      <div className="space-y-6">
+        <PageTitle title="Other Teams" subtitle="Open any team from Standings or Fixtures to inspect its public squad, fixtures, and results." />
+        <EmptyState label={`Select a team from ${activeSeason?.format === "GROUP_STAGE_KNOCKOUT" ? "group standings" : "standings"} or fixtures to view details.`} />
+      </div>
+    );
+  }
+  return (
+    <TeamViewPage
+      loading={teamViewLoading}
+      detail={teamView}
+      activeTeamId={activeTeam?.id}
+      onClose={onCloseTeamView}
+      onPlayerClick={onPlayerClick}
+    />
+  );
+}
+
+function LeaderboardSections({ title, sections, onOpen }: { title: string; sections: StatSectionData[]; onOpen: (card: StatCardData) => void }) {
+  const hasData = sections.some((section) => section.cards.some((card) => card.entries.length > 0));
+  return (
+    <section>
+      {!hasData ? <EmptyState label={`${title} will appear after confirmed match results generate stats.`} /> : null}
+      <div className="space-y-6">
+        {sections.map((section) => (
+          <div key={section.title}>
+            <h3 className="mb-3 text-lg font-black">{section.title}</h3>
+            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+              {section.cards.map((card) => (
+                <LeaderboardCard key={card.id} card={card} onOpen={() => onOpen(card)} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LeaderboardCard({ card, onOpen }: { card: StatCardData; onOpen: () => void }) {
+  const topEntries = card.entries.slice(0, 3);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-[var(--team-primary)] hover:shadow-xl active:translate-y-0 active:scale-[0.99]"
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h4 className="text-lg font-black">{card.title}</h4>
+        <span className="text-2xl font-black text-slate-300">›</span>
+      </div>
+      {topEntries.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm font-bold text-slate-500">No data yet.</div>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {topEntries.map((entry, index) => (
+            <LeaderboardEntryRow key={entry.id} entry={entry} rank={index + 1} />
+          ))}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function LeaderboardEntryRow({ entry, rank }: { entry: StatEntry; rank: number }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="w-5 text-sm font-black text-slate-400">{rank}</span>
+        <PlayerOrTeamAvatar entry={entry} />
+        <div className="min-w-0">
+          <p className="truncate font-black">{entry.name}</p>
+          <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-slate-500">
+            {entry.teamLogoUrl ? <img src={entry.teamLogoUrl} alt="" className="h-4 w-4 rounded-full object-cover" /> : null}
+            <span className="truncate">{entry.subLabel}</span>
+          </div>
+        </div>
+      </div>
+      <span className={`rounded-full px-3 py-1 text-sm font-black ${rank === 1 ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-100 text-slate-900"}`}>{entry.value}</span>
+    </div>
+  );
+}
+
+function PlayerOrTeamAvatar({ entry }: { entry: StatEntry }) {
+  const [failed, setFailed] = useState(false);
+  if (entry.logoUrl && !failed) {
+    return <img src={entry.logoUrl} alt={entry.name} onError={() => setFailed(true)} className="h-9 w-9 rounded-full object-cover" />;
+  }
+  return <div className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-xs font-black text-slate-700">{entry.initials}</div>;
+}
+
+function LeaderboardModal({ card, onClose }: { card: StatCardData; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
+      <div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-[var(--team-primary)]">Full Leaderboard</p>
+            <h2 className="mt-1 text-2xl font-black">{card.title}</h2>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
+        </div>
+        {card.entries.length === 0 ? <EmptyState label="No data yet." /> : (
+          <div className="divide-y divide-slate-100">
+            {card.entries.map((entry, index) => (
+              <LeaderboardEntryRow key={entry.id} entry={entry} rank={index + 1} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TeamViewPage({
+  loading,
+  detail,
+  activeTeamId,
+  onClose,
+  onPlayerClick
+}: {
+  loading: boolean;
+  detail: TeamViewPayload | null;
+  activeTeamId?: string | undefined;
+  onClose: () => void;
+  onPlayerClick: (player: PlayerRecord) => void;
+}) {
+  const team = detail?.team ?? null;
+  const season = one(team?.seasons);
+  const league = one(season?.leagues);
+  const manager = one(team?.manager);
+  const approvedPlayers = detail?.players.filter((player) => player.status === RegistrationStatus.APPROVED && player.player_status !== "REMOVED" && player.player_status !== "SUSPENDED") ?? [];
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <PageTitle title={team?.teams?.name ?? "Team Details"} subtitle="Team profile, manager details, public squad, fixtures, and confirmed results." />
+        <button className="rounded-2xl bg-white px-5 py-3 text-sm font-black text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:bg-slate-50" onClick={onClose}>Close Team View</button>
+      </div>
+      {loading ? <LoadingState label="Loading team..." /> : null}
+      {!loading && detail ? (
+        <div className="space-y-6">
+          <TeamHero team={team} season={season} league={league} summary={detail.squad_summary} />
+          <div className="grid gap-5 lg:grid-cols-3">
+            <Panel title="Team Profile">
+              <Detail label="Team Name" value={team?.teams?.name} />
+              <Detail label="Team Status" value={team?.status} />
+              <Detail label="Squad Count" value={detail.squad_summary.total} />
+            </Panel>
+            <Panel title="Manager Details">
+              <Detail label="Manager Name" value={manager?.full_name ?? "Not connected"} />
+              <Detail label="Email" value={manager?.email ?? "Not connected"} />
+              <Detail label="Season" value={season?.name ?? "-"} />
+            </Panel>
+            <Panel title="Team Fixtures">
+              {detail.fixtures.length ? detail.fixtures.slice(0, 4).map((fixture) => <FixtureMini key={fixture.id} fixture={fixture} activeTeamId={team?.id ?? activeTeamId} />) : <EmptyState label="No upcoming fixtures." />}
+            </Panel>
+          </div>
+          <div className="grid gap-5">
+            <Panel title="Approved Players">
+              {approvedPlayers.length ? (
+                <div className="space-y-2">
+                  {approvedPlayers.slice(0, 12).map((player) => (
+                    <LineupPlayerRow key={player.id} player={player} label="Approved" onOpen={() => onPlayerClick(player)} />
+                  ))}
+                </div>
+              ) : <EmptyState label="No approved players." />}
+            </Panel>
+          </div>
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Panel title="Team Results">
+              {detail.results.length ? detail.results.slice(0, 6).map((fixture) => <FixtureMini key={fixture.id} fixture={fixture} activeTeamId={team?.id ?? activeTeamId} />) : <EmptyState label="No confirmed results." />}
+            </Panel>
+            <TeamJerseysPanel team={team} />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MatchDetailModal({
+  fixture,
+  detail,
+  loading,
+  activeTeamId,
+  onClose,
+  onTeamClick
+}: {
+  fixture: FixtureRecord;
+  detail: unknown;
+  loading: boolean;
+  activeTeamId?: string | undefined;
+  onClose: () => void;
+  onTeamClick?: ((teamId: string) => void) | undefined;
+}) {
+  const payload = detail as { lineups?: unknown[]; team_stats?: unknown[]; player_stats?: unknown[]; events?: unknown[] } | null;
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 backdrop-blur" onClick={onClose}>
+      <div className="mx-auto my-6 max-h-[calc(100vh-3rem)] w-full max-w-3xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-black uppercase tracking-[0.24em] text-[var(--team-primary)]">Fixture Detail</p>
+            <h2 className="mt-2 text-2xl font-black">{matchLabel(fixture)}</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">{formatDate(fixture.kickoff_at)} · {fixture.stage}</p>
+          </div>
+          <button className="rounded-full bg-slate-100 px-5 py-3 font-bold transition hover:bg-slate-200" onClick={onClose}>Close</button>
+        </div>
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-3xl bg-slate-50 p-4">
+            <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Home</p>
+            <TeamLogoName team={fixture.home_team?.teams} teamId={fixture.home_team_registration_id} onTeamClick={onTeamClick} />
+          </div>
+          <div className="rounded-3xl bg-slate-50 p-4">
+            <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Away</p>
+            <TeamLogoName team={fixture.away_team?.teams} teamId={fixture.away_team_registration_id} onTeamClick={onTeamClick} />
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-4">
+          <Detail label="Status" value={fixture.status} />
+          <Detail label="Side" value={fixture.home_team_registration_id === activeTeamId ? "Home" : fixture.away_team_registration_id === activeTeamId ? "Away" : "Other"} />
+          <Detail label="Score" value={fixture.home_score === null ? "-" : `${fixture.home_score} - ${fixture.away_score}`} />
+          <Detail label="Venue" value={fixture.venue ?? "TBA"} />
+        </div>
+        {loading ? <LoadingState label="Loading match detail..." /> : null}
+        {!loading && payload ? (
+          <div className="mt-5 grid gap-3 sm:grid-cols-4">
+            <MiniStat label="Lineups" value={payload.lineups?.length ?? 0} />
+            <MiniStat label="Team Stats" value={payload.team_stats?.length ?? 0} />
+            <MiniStat label="Player Stats" value={payload.player_stats?.length ?? 0} />
+            <MiniStat label="Events" value={payload.events?.length ?? 0} />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
