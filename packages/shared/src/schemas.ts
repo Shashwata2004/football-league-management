@@ -293,8 +293,8 @@ export const lineupPlayerInputSchema = z.object({
   player_registration_id: uuidSchema,
   is_starter: z.boolean(),
   position: z.enum([PlayerPosition.GK, PlayerPosition.DEF, PlayerPosition.MID, PlayerPosition.FWD]),
-  slot_key: z.string().trim().max(80).optional(),
-  display_role: z.string().trim().max(20).optional(),
+  slot_key: z.string().trim().max(80).nullable().optional(),
+  display_role: z.string().trim().max(20).nullable().optional(),
   player_natural_position: z.enum([
     FootballPosition.GK,
     FootballPosition.CB,
@@ -306,7 +306,7 @@ export const lineupPlayerInputSchema = z.object({
     FootballPosition.LW,
     FootballPosition.RW,
     FootballPosition.ST
-  ]).optional(),
+  ]).nullable().optional(),
   display_order: z.number().int().min(0).max(30).optional(),
   is_captain: z.boolean().optional()
 });

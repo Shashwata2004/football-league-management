@@ -28,6 +28,7 @@ import {
   type FixtureGroup,
   type ScheduledFixturePreview
 } from "../domain/fixtures.js";
+import { getFormationSlots } from "../domain/lineup-builder.js";
 import { applyFinalResultToStandings, emptyStanding } from "../domain/standings.js";
 import {
   generateAbilityScores,
@@ -53,6 +54,66 @@ const groupAssignmentSchema = z.object({
     })
   )
 });
+
+function unwrapRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+function formatAdminMatchdayFixture(fixture: any) {
+  const lineups = Array.isArray(fixture.lineups) ? fixture.lineups : [];
+  const confirmedLineups = lineups.filter((lineup: any) => lineup.status === "CONFIRMED").length;
+  const submittedLineups = lineups.filter((lineup: any) => ["PENDING", "CONFIRMED"].includes(lineup.status)).length;
+  const homeTeam = unwrapRelation(fixture.home_team);
+  const awayTeam = unwrapRelation(fixture.away_team);
+  const homeTeamInfo = unwrapRelation(homeTeam?.teams);
+  const awayTeamInfo = unwrapRelation(awayTeam?.teams);
+  return {
+    id: fixture.id,
+    home: homeTeamInfo?.name ?? "Home team",
+    away: awayTeamInfo?.name ?? "Away team",
+    homeLogoUrl: homeTeamInfo?.logo_url ?? null,
+    awayLogoUrl: awayTeamInfo?.logo_url ?? null,
+    stage: fixture.stage ?? "MATCH",
+    kickoff: fixture.kickoff_at,
+    status: fixture.status,
+    submitted_lineups: submittedLineups,
+    confirmed_lineups: confirmedLineups,
+    can_simulate: [FixtureStatus.LINEUPS_CONFIRMED, FixtureStatus.READY_TO_SIMULATE, FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION].includes(fixture.status)
+  };
+}
+
+async function loadCurrentMatchdayMatches(seasonId: string) {
+  const { data: fixtures, error: fixtureError } = await supabaseAdmin
+    .from("fixtures")
+    .select(
+      "id,kickoff_at,stage,status,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)),lineups(id,status)"
+    )
+    .eq("season_id", seasonId)
+    .in("status", [
+      FixtureStatus.SCHEDULED,
+      FixtureStatus.LINEUP_PENDING,
+      FixtureStatus.LINEUPS_SUBMITTED,
+      FixtureStatus.LINEUPS_CONFIRMED,
+      FixtureStatus.READY_TO_SIMULATE,
+      FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION
+    ])
+    .order("kickoff_at", { ascending: true });
+  if (fixtureError) throw fixtureError;
+
+  const activeFixtures = fixtures ?? [];
+  const readyMatchday =
+    activeFixtures
+      .find((fixture) =>
+        [FixtureStatus.READY_TO_SIMULATE, FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION, FixtureStatus.LINEUPS_CONFIRMED].includes(fixture.status)
+      )
+      ?.kickoff_at?.slice(0, 10) ?? null;
+  const firstMatchday = readyMatchday ?? activeFixtures.find((fixture) => fixture.kickoff_at)?.kickoff_at?.slice(0, 10) ?? null;
+  const matchdayFixtures = firstMatchday
+    ? activeFixtures.filter((fixture) => fixture.kickoff_at?.slice(0, 10) === firstMatchday)
+    : activeFixtures.slice(0, 8);
+  return matchdayFixtures.map(formatAdminMatchdayFixture);
+}
 
 adminRouter.post(
   "/leagues",
@@ -1170,7 +1231,34 @@ adminRouter.post(
       .eq("status", FixtureStatus.LINEUPS_CONFIRMED)
       .select("id");
     if (error) throw error;
-    res.json({ updated_count: data?.length ?? 0 });
+    const matches = await loadCurrentMatchdayMatches(seasonId);
+    res.json({ updated_count: data?.length ?? 0, matches });
+  })
+);
+
+adminRouter.get(
+  "/seasons/:seasonId/matches/current-matchday",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    const matches = await loadCurrentMatchdayMatches(seasonId);
+    res.json({ matches });
+  })
+);
+
+adminRouter.get(
+  "/seasons/:seasonId/lineups/pending",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    const { data, error } = await supabaseAdmin
+      .from("lineups")
+      .select(
+        "id,fixture_id,team_registration_id,side,formation,status,submitted_at,fixtures(id,kickoff_at,stage,status,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))),team_registrations(id,teams(name,short_name,logo_url))"
+      )
+      .eq("season_id", seasonId)
+      .eq("status", "PENDING")
+      .order("submitted_at", { ascending: true });
+    if (error) throw error;
+    res.json({ lineups: data ?? [] });
   })
 );
 
@@ -1282,6 +1370,7 @@ adminRouter.patch(
         status: lineupStatus,
         reviewed_by: req.auth!.userId,
         reviewed_at: new Date().toISOString(),
+        confirmed_at: input.status === "APPROVED" ? new Date().toISOString() : null,
         rejection_reason: input.status === "REJECTED" ? input.reason ?? null : null
       })
       .eq("id", req.params.id)
@@ -1354,9 +1443,13 @@ adminRouter.get(
     if (playerStatsResult.error) throw playerStatsResult.error;
     if (eventsResult.error) throw eventsResult.error;
     if (substitutionsResult.error) throw substitutionsResult.error;
+    const lineups = (lineupsResult.data ?? []).map((lineup) => ({
+      ...lineup,
+      formation_slots: getFormationSlots(lineup.formation ?? "4-3-3")
+    }));
     res.json({
       fixture,
-      lineups: lineupsResult.data ?? [],
+      lineups,
       team_stats: teamStatsResult.data ?? [],
       player_stats: playerStatsResult.data ?? [],
       events: eventsResult.data ?? [],

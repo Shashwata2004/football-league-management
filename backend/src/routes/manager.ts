@@ -15,7 +15,7 @@ import {
   submitPlayersSchema,
   teamRegistrationSchema,
   updateDraftPlayerSchema,
-  UserRole
+  UserRole,
 } from "@flms/shared";
 import { supabaseAdmin } from "../db/supabase.js";
 import { AppError, assertFound, asyncHandler } from "../errors.js";
@@ -32,7 +32,7 @@ import {
   PLAYING_STYLE_LABELS,
   positionToCoarse,
   type LineupCandidate,
-  type PlayingStyle
+  type PlayingStyle,
 } from "../domain/lineup-builder.js";
 import { hashIdentityNumber, identityLast4 } from "../utils/hmac.js";
 import {
@@ -42,44 +42,51 @@ import {
   generateSquadPlayers,
   neededDistribution,
   suggestedPositionBreakdown,
-  targetDistribution
+  targetDistribution,
 } from "../domain/squad-generator.js";
 
 export const managerRouter = Router();
 managerRouter.use(requireAuth, requireRole(UserRole.MANAGER, UserRole.ADMIN));
 
 const updatePlayerMinifacesSchema = z.object({
-  updates: z.array(
-    z.object({
-      player_registration_id: z.string().uuid(),
-      avatar_url: z.string().trim().max(2000).nullable()
-    })
-  ).min(1).max(100)
+  updates: z
+    .array(
+      z.object({
+        player_registration_id: z.string().uuid(),
+        avatar_url: z.string().trim().max(2000).nullable(),
+      }),
+    )
+    .min(1)
+    .max(100),
 });
 
 const preferenceSchema = z.object({
   seasonId: z.string().uuid(),
   preferredFormation: z.string().trim().min(3).max(30),
-  preferredPlayingStyle: z.string().trim().min(3).max(50)
+  preferredPlayingStyle: z.string().trim().min(3).max(50),
 });
 
 const lineupBuilderAutoPickSchema = z.object({
   teamId: z.string().uuid(),
   seasonId: z.string().uuid(),
   formation: z.string().trim().min(3).max(30),
-  playingStyle: z.string().trim().min(3).max(50)
+  playingStyle: z.string().trim().min(3).max(50),
 });
 
-async function assertManagerOwnsTeam(userId: string, teamRegistrationId: string) {
+async function assertManagerOwnsTeam(
+  userId: string,
+  teamRegistrationId: string,
+) {
   const { data, error } = await supabaseAdmin
     .from("team_registrations")
     .select(
-      "id,manager_id,season_id,team_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,league_id,leagues(id,name,short_name,logo_url))"
+      "id,manager_id,season_id,team_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,league_id,leagues(id,name,short_name,logo_url))",
     )
     .eq("id", teamRegistrationId)
     .single();
   if (error) throw error;
-  if (data.manager_id !== userId) throw new AppError(403, "You do not manage this team registration");
+  if (data.manager_id !== userId)
+    throw new AppError(403, "You do not manage this team registration");
   return data;
 }
 
@@ -90,8 +97,12 @@ function footballPositionFromCoarse(position: PlayerPosition) {
   return FootballPosition.ST;
 }
 
-function maxSquadSize(teamRegistration: Awaited<ReturnType<typeof assertManagerOwnsTeam>>) {
-  const season = Array.isArray(teamRegistration.seasons) ? teamRegistration.seasons[0] : teamRegistration.seasons;
+function maxSquadSize(
+  teamRegistration: Awaited<ReturnType<typeof assertManagerOwnsTeam>>,
+) {
+  const season = Array.isArray(teamRegistration.seasons)
+    ? teamRegistration.seasons[0]
+    : teamRegistration.seasons;
   return Number(season?.max_players_per_team ?? 22);
 }
 
@@ -100,12 +111,14 @@ function playerCode(id: string) {
 }
 
 function generatedIdentity(idType: IdType, year: number, sequence: number) {
-  if (idType === IdType.BIRTH_ID) return `${year}${String(sequence).padStart(13, "0")}`.slice(0, 17);
+  if (idType === IdType.BIRTH_ID)
+    return `${year}${String(sequence).padStart(13, "0")}`.slice(0, 17);
   return String(1000000000 + sequence).slice(0, 10);
 }
 
 function generatedDateOfBirth(idType: IdType, year: number, sequence: number) {
-  const age = idType === IdType.BIRTH_ID ? 16 + (sequence % 4) : 20 + (sequence % 14);
+  const age =
+    idType === IdType.BIRTH_ID ? 16 + (sequence % 4) : 20 + (sequence % 14);
   const birthYear = year - age;
   const month = String((sequence % 12) + 1).padStart(2, "0");
   const day = String((sequence % 27) + 1).padStart(2, "0");
@@ -113,7 +126,8 @@ function generatedDateOfBirth(idType: IdType, year: number, sequence: number) {
 }
 
 function validateNumericIdentity(idType: IdType, value: string) {
-  if (!/^\d+$/u.test(value)) throw new AppError(400, "ID number must contain digits only.");
+  if (!/^\d+$/u.test(value))
+    throw new AppError(400, "ID number must contain digits only.");
   if (idType === IdType.NID && ![10, 13, 17].includes(value.length)) {
     throw new AppError(400, "NID must be 10, 13, or 17 digits.");
   }
@@ -123,7 +137,8 @@ function validateNumericIdentity(idType: IdType, value: string) {
 }
 
 function routeParam(value: string | string[] | undefined, name: string) {
-  if (typeof value !== "string" || value.length === 0) throw new AppError(400, `${name} is required`);
+  if (typeof value !== "string" || value.length === 0)
+    throw new AppError(400, `${name} is required`);
   return value;
 }
 
@@ -152,7 +167,9 @@ function perMatch(value: number, matches: number) {
 function avg(values: number[]) {
   const valid = values.filter((value) => Number.isFinite(value) && value > 0);
   if (valid.length === 0) return 0;
-  return Number((valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(2));
+  return Number(
+    (valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(2),
+  );
 }
 
 type LeaderboardDirection = "asc" | "desc";
@@ -164,18 +181,32 @@ function formatLeaderboardValue(value: number, format: LeaderboardFormat) {
   return String(Math.round(value));
 }
 
-function makeLeaderboard<T extends { id: string; name: string; team: string; teamLogoUrl: string | null; avatarUrl: string | null }>(
+function makeLeaderboard<
+  T extends {
+    id: string;
+    name: string;
+    team: string;
+    teamLogoUrl: string | null;
+    avatarUrl: string | null;
+  },
+>(
   id: string,
   title: string,
   rows: T[],
   field: keyof T,
   format: LeaderboardFormat,
-  direction: LeaderboardDirection = "desc"
+  direction: LeaderboardDirection = "desc",
 ) {
   const entries = rows
     .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
-    .filter(({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0)
-    .sort((a, b) => (direction === "asc" ? a.numericValue - b.numericValue : b.numericValue - a.numericValue))
+    .filter(
+      ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
+    )
+    .sort((a, b) =>
+      direction === "asc"
+        ? a.numericValue - b.numericValue
+        : b.numericValue - a.numericValue,
+    )
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,
@@ -190,23 +221,31 @@ function makeLeaderboard<T extends { id: string; name: string; team: string; tea
           .map((part) => part[0]?.toUpperCase() ?? "")
           .join("") || "NA",
       value: formatLeaderboardValue(numericValue, format),
-      numericValue
+      numericValue,
     }));
   return { id, title, entries };
 }
 
-function makeTeamLeaderboard<T extends { id: string; name: string; logoUrl: string | null }>(
+function makeTeamLeaderboard<
+  T extends { id: string; name: string; logoUrl: string | null },
+>(
   id: string,
   title: string,
   rows: T[],
   field: keyof T,
   format: LeaderboardFormat,
-  direction: LeaderboardDirection = "desc"
+  direction: LeaderboardDirection = "desc",
 ) {
   const entries = rows
     .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
-    .filter(({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0)
-    .sort((a, b) => (direction === "asc" ? a.numericValue - b.numericValue : b.numericValue - a.numericValue))
+    .filter(
+      ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
+    )
+    .sort((a, b) =>
+      direction === "asc"
+        ? a.numericValue - b.numericValue
+        : b.numericValue - a.numericValue,
+    )
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,
@@ -221,112 +260,371 @@ function makeTeamLeaderboard<T extends { id: string; name: string; logoUrl: stri
           .map((part) => part[0]?.toUpperCase() ?? "")
           .join("") || "TM",
       value: formatLeaderboardValue(numericValue, format),
-      numericValue
+      numericValue,
     }));
   return { id, title, entries };
 }
 
-function makeStatsReport(playerRows: Array<Record<string, unknown> & { id: string; name: string; team: string; teamLogoUrl: string | null; avatarUrl: string | null }>, teamRows: Array<Record<string, unknown> & { id: string; name: string; logoUrl: string | null }>) {
+function makeStatsReport(
+  playerRows: Array<
+    Record<string, unknown> & {
+      id: string;
+      name: string;
+      team: string;
+      teamLogoUrl: string | null;
+      avatarUrl: string | null;
+    }
+  >,
+  teamRows: Array<
+    Record<string, unknown> & {
+      id: string;
+      name: string;
+      logoUrl: string | null;
+    }
+  >,
+) {
   return {
     player_sections: [
       {
         title: "General",
         cards: [
-          makeLeaderboard("minutes_played", "Minutes Played", playerRows, "minutes", "number"),
-          makeLeaderboard("rating", "Rating", playerRows, "rating", "decimal")
-        ]
+          makeLeaderboard(
+            "minutes_played",
+            "Minutes Played",
+            playerRows,
+            "minutes",
+            "number",
+          ),
+          makeLeaderboard("rating", "Rating", playerRows, "rating", "decimal"),
+        ],
       },
       {
         title: "Attack",
         cards: [
-          makeLeaderboard("top_scorer", "Top Scorer", playerRows, "goals", "number"),
-          makeLeaderboard("assists", "Assists", playerRows, "assists", "number"),
-          makeLeaderboard("goal_assists", "Goal + Assists", playerRows, "goalAssists", "number"),
-          makeLeaderboard("successful_dribbles_per_90", "Successful Dribbles per 90", playerRows, "successfulDribblesPer90", "decimal"),
-          makeLeaderboard("shots_on_target_per_90", "Shots on Target per 90", playerRows, "shotsOnTargetPer90", "decimal"),
-          makeLeaderboard("accurate_passes_per_90", "Accurate Passes per 90", playerRows, "accuratePassesPer90", "decimal"),
-          makeLeaderboard("big_chances_created", "Big Chances Created", playerRows, "bigChancesCreated", "number"),
-          makeLeaderboard("big_chances_missed", "Big Chances Missed", playerRows, "bigChancesMissed", "number")
-        ]
+          makeLeaderboard(
+            "top_scorer",
+            "Top Scorer",
+            playerRows,
+            "goals",
+            "number",
+          ),
+          makeLeaderboard(
+            "assists",
+            "Assists",
+            playerRows,
+            "assists",
+            "number",
+          ),
+          makeLeaderboard(
+            "goal_assists",
+            "Goal + Assists",
+            playerRows,
+            "goalAssists",
+            "number",
+          ),
+          makeLeaderboard(
+            "successful_dribbles_per_90",
+            "Successful Dribbles per 90",
+            playerRows,
+            "successfulDribblesPer90",
+            "decimal",
+          ),
+          makeLeaderboard(
+            "shots_on_target_per_90",
+            "Shots on Target per 90",
+            playerRows,
+            "shotsOnTargetPer90",
+            "decimal",
+          ),
+          makeLeaderboard(
+            "accurate_passes_per_90",
+            "Accurate Passes per 90",
+            playerRows,
+            "accuratePassesPer90",
+            "decimal",
+          ),
+          makeLeaderboard(
+            "big_chances_created",
+            "Big Chances Created",
+            playerRows,
+            "bigChancesCreated",
+            "number",
+          ),
+          makeLeaderboard(
+            "big_chances_missed",
+            "Big Chances Missed",
+            playerRows,
+            "bigChancesMissed",
+            "number",
+          ),
+        ],
       },
       {
         title: "Defense",
         cards: [
-          makeLeaderboard("tackles_per_90", "Tackles per 90", playerRows, "tacklesPer90", "decimal"),
-          makeLeaderboard("interceptions_per_90", "Interceptions per 90", playerRows, "interceptionsPer90", "decimal"),
-          makeLeaderboard("blocks_per_90", "Blocks per 90", playerRows, "blocksPer90", "decimal"),
-          makeLeaderboard("clearances_per_90", "Clearances per 90", playerRows, "clearancesPer90", "decimal")
-        ]
+          makeLeaderboard(
+            "tackles_per_90",
+            "Tackles per 90",
+            playerRows,
+            "tacklesPer90",
+            "decimal",
+          ),
+          makeLeaderboard(
+            "interceptions_per_90",
+            "Interceptions per 90",
+            playerRows,
+            "interceptionsPer90",
+            "decimal",
+          ),
+          makeLeaderboard(
+            "blocks_per_90",
+            "Blocks per 90",
+            playerRows,
+            "blocksPer90",
+            "decimal",
+          ),
+          makeLeaderboard(
+            "clearances_per_90",
+            "Clearances per 90",
+            playerRows,
+            "clearancesPer90",
+            "decimal",
+          ),
+        ],
       },
       {
         title: "Goalkeeping",
         cards: [
-          makeLeaderboard("clean_sheets", "Clean Sheets", playerRows, "cleanSheets", "number"),
-          makeLeaderboard("saves_per_90", "Saves per 90", playerRows, "savesPer90", "decimal"),
-          makeLeaderboard("goals_conceded_per_90", "Goals Conceded per 90", playerRows, "goalsConcededPer90", "decimal", "asc")
-        ]
+          makeLeaderboard(
+            "clean_sheets",
+            "Clean Sheets",
+            playerRows,
+            "cleanSheets",
+            "number",
+          ),
+          makeLeaderboard(
+            "saves_per_90",
+            "Saves per 90",
+            playerRows,
+            "savesPer90",
+            "decimal",
+          ),
+          makeLeaderboard(
+            "goals_conceded_per_90",
+            "Goals Conceded per 90",
+            playerRows,
+            "goalsConcededPer90",
+            "decimal",
+            "asc",
+          ),
+        ],
       },
       {
         title: "Discipline",
         cards: [
-          makeLeaderboard("yellow_cards", "Yellow Cards", playerRows, "yellowCards", "number"),
-          makeLeaderboard("red_cards", "Red Cards", playerRows, "redCards", "number"),
-          makeLeaderboard("fouls_committed_per_90", "Fouls Committed per 90", playerRows, "foulsCommittedPer90", "decimal")
-        ]
-      }
+          makeLeaderboard(
+            "yellow_cards",
+            "Yellow Cards",
+            playerRows,
+            "yellowCards",
+            "number",
+          ),
+          makeLeaderboard(
+            "red_cards",
+            "Red Cards",
+            playerRows,
+            "redCards",
+            "number",
+          ),
+          makeLeaderboard(
+            "fouls_committed_per_90",
+            "Fouls Committed per 90",
+            playerRows,
+            "foulsCommittedPer90",
+            "decimal",
+          ),
+        ],
+      },
     ],
     team_sections: [
       {
         title: "General",
         cards: [
-          makeTeamLeaderboard("avg_possession", "Avg Possession", teamRows, "avgPossession", "percent"),
-          makeTeamLeaderboard("rating", "Rating", teamRows, "rating", "decimal")
-        ]
+          makeTeamLeaderboard(
+            "avg_possession",
+            "Avg Possession",
+            teamRows,
+            "avgPossession",
+            "percent",
+          ),
+          makeTeamLeaderboard(
+            "rating",
+            "Rating",
+            teamRows,
+            "rating",
+            "decimal",
+          ),
+        ],
       },
       {
         title: "Attack",
         cards: [
-          makeTeamLeaderboard("goals_per_match", "Goals per Match", teamRows, "goalsPerMatch", "decimal"),
-          makeTeamLeaderboard("shots_on_target_per_match", "Shots on Target per Match", teamRows, "shotsOnTargetPerMatch", "decimal"),
-          makeTeamLeaderboard("big_chances", "Big Chances", teamRows, "bigChancesPerMatch", "decimal"),
-          makeTeamLeaderboard("big_chances_missed", "Big Chances Missed", teamRows, "bigChancesMissedPerMatch", "decimal"),
-          makeTeamLeaderboard("accurate_passes_per_match", "Accurate Passes per Match", teamRows, "accuratePassesPerMatch", "decimal"),
-          makeTeamLeaderboard("corners", "Corners", teamRows, "cornersPerMatch", "decimal")
-        ]
+          makeTeamLeaderboard(
+            "goals_per_match",
+            "Goals per Match",
+            teamRows,
+            "goalsPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "shots_on_target_per_match",
+            "Shots on Target per Match",
+            teamRows,
+            "shotsOnTargetPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "big_chances",
+            "Big Chances",
+            teamRows,
+            "bigChancesPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "big_chances_missed",
+            "Big Chances Missed",
+            teamRows,
+            "bigChancesMissedPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "accurate_passes_per_match",
+            "Accurate Passes per Match",
+            teamRows,
+            "accuratePassesPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "corners",
+            "Corners",
+            teamRows,
+            "cornersPerMatch",
+            "decimal",
+          ),
+        ],
       },
       {
         title: "Defense",
         cards: [
-          makeTeamLeaderboard("clean_sheets", "Clean Sheets", teamRows, "cleanSheets", "number"),
-          makeTeamLeaderboard("goals_conceded_per_match", "Goals Conceded per Match", teamRows, "goalsConcededPerMatch", "decimal", "asc"),
-          makeTeamLeaderboard("tackles_per_match", "Tackles per Match", teamRows, "tacklesPerMatch", "decimal"),
-          makeTeamLeaderboard("clearances_per_match", "Clearances per Match", teamRows, "clearancesPerMatch", "decimal"),
-          makeTeamLeaderboard("penalties_conceded", "Penalties Conceded", teamRows, "penaltiesConceded", "number", "asc"),
-          makeTeamLeaderboard("gk_saves_per_match", "GK Saves per Match", teamRows, "gkSavesPerMatch", "decimal")
-        ]
+          makeTeamLeaderboard(
+            "clean_sheets",
+            "Clean Sheets",
+            teamRows,
+            "cleanSheets",
+            "number",
+          ),
+          makeTeamLeaderboard(
+            "goals_conceded_per_match",
+            "Goals Conceded per Match",
+            teamRows,
+            "goalsConcededPerMatch",
+            "decimal",
+            "asc",
+          ),
+          makeTeamLeaderboard(
+            "tackles_per_match",
+            "Tackles per Match",
+            teamRows,
+            "tacklesPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "clearances_per_match",
+            "Clearances per Match",
+            teamRows,
+            "clearancesPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "penalties_conceded",
+            "Penalties Conceded",
+            teamRows,
+            "penaltiesConceded",
+            "number",
+            "asc",
+          ),
+          makeTeamLeaderboard(
+            "gk_saves_per_match",
+            "GK Saves per Match",
+            teamRows,
+            "gkSavesPerMatch",
+            "decimal",
+          ),
+        ],
       },
       {
         title: "Discipline",
         cards: [
-          makeTeamLeaderboard("fouls_per_match", "Fouls per Match", teamRows, "foulsPerMatch", "decimal", "asc"),
-          makeTeamLeaderboard("yellow_cards", "Yellow Cards", teamRows, "yellowCards", "number", "asc"),
-          makeTeamLeaderboard("red_cards", "Red Cards", teamRows, "redCards", "number", "asc")
-        ]
-      }
-    ]
+          makeTeamLeaderboard(
+            "fouls_per_match",
+            "Fouls per Match",
+            teamRows,
+            "foulsPerMatch",
+            "decimal",
+            "asc",
+          ),
+          makeTeamLeaderboard(
+            "yellow_cards",
+            "Yellow Cards",
+            teamRows,
+            "yellowCards",
+            "number",
+            "asc",
+          ),
+          makeTeamLeaderboard(
+            "red_cards",
+            "Red Cards",
+            teamRows,
+            "redCards",
+            "number",
+            "asc",
+          ),
+        ],
+      },
+    ],
   };
 }
 
-function statusCounts(players: Array<{ status?: string | null; player_status?: string | null }>) {
-  const squadPlayers = players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED);
+function statusCounts(
+  players: Array<{ status?: string | null; player_status?: string | null }>,
+) {
+  const squadPlayers = players.filter(
+    (player) =>
+      player.status !== RegistrationStatus.REJECTED &&
+      player.player_status !== PlayerLifecycleStatus.REMOVED,
+  );
   return {
     total: squadPlayers.length,
-    approved: players.filter((player) => player.status === RegistrationStatus.APPROVED && player.player_status !== PlayerLifecycleStatus.REMOVED).length,
-    pending: players.filter((player) => player.status === RegistrationStatus.PENDING).length,
-    draft: players.filter((player) => player.status === RegistrationStatus.DRAFT).length,
-    rejected: players.filter((player) => player.status === RegistrationStatus.REJECTED).length,
-    removed: players.filter((player) => player.player_status === PlayerLifecycleStatus.REMOVED).length,
-    suspended: players.filter((player) => player.player_status === PlayerLifecycleStatus.SUSPENDED).length
+    approved: players.filter(
+      (player) =>
+        player.status === RegistrationStatus.APPROVED &&
+        player.player_status !== PlayerLifecycleStatus.REMOVED,
+    ).length,
+    pending: players.filter(
+      (player) => player.status === RegistrationStatus.PENDING,
+    ).length,
+    draft: players.filter(
+      (player) => player.status === RegistrationStatus.DRAFT,
+    ).length,
+    rejected: players.filter(
+      (player) => player.status === RegistrationStatus.REJECTED,
+    ).length,
+    removed: players.filter(
+      (player) => player.player_status === PlayerLifecycleStatus.REMOVED,
+    ).length,
+    suspended: players.filter(
+      (player) => player.player_status === PlayerLifecycleStatus.SUSPENDED,
+    ).length,
   };
 }
 
@@ -334,7 +632,7 @@ async function loadTeamPlayers(teamRegistrationId: string) {
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*)"
+      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*)",
     )
     .eq("team_registration_id", teamRegistrationId)
     .order("shirt_number", { ascending: true, nullsFirst: false });
@@ -346,7 +644,7 @@ async function loadManagerTeams(userId: string) {
   const { data, error } = await supabaseAdmin
     .from("team_registrations")
     .select(
-      "id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,league_id,leagues(id,name,short_name,logo_url))"
+      "id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,league_id,leagues(id,name,short_name,logo_url))",
     )
     .eq("manager_id", userId)
     .order("created_at", { ascending: false });
@@ -356,14 +654,17 @@ async function loadManagerTeams(userId: string) {
 
 async function assertManagerCanViewSeason(userId: string, seasonId: string) {
   const teams = await loadManagerTeams(userId);
-  if (!teams.some((team) => team.season_id === seasonId)) throw new AppError(403, "You do not manage a team in this season");
+  if (!teams.some((team) => team.season_id === seasonId))
+    throw new AppError(403, "You do not manage a team in this season");
   return teams;
 }
 
 async function loadSeasonTeamsForManager(seasonId: string) {
   const { data, error } = await supabaseAdmin
     .from("team_registrations")
-    .select("id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),manager:profiles!team_registrations_manager_id_fkey(id,full_name,email)")
+    .select(
+      "id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),manager:profiles!team_registrations_manager_id_fkey(id,full_name,email)",
+    )
     .eq("season_id", seasonId)
     .eq("status", RegistrationStatus.APPROVED)
     .order("created_at", { ascending: true });
@@ -374,7 +675,9 @@ async function loadSeasonTeamsForManager(seasonId: string) {
 async function loadSeasonGroupsForManager(seasonId: string) {
   const { data, error } = await supabaseAdmin
     .from("season_groups")
-    .select("id,name,locked,season_group_teams(id,team_registration_id,seed_no,team_registrations(id,season_id,team_id,status,teams(*)))")
+    .select(
+      "id,name,locked,season_group_teams(id,team_registration_id,seed_no,team_registrations(id,season_id,team_id,status,teams(*)))",
+    )
     .eq("season_id", seasonId)
     .order("name", { ascending: true });
   if (error) throw error;
@@ -383,21 +686,29 @@ async function loadSeasonGroupsForManager(seasonId: string) {
     teams: ((group.season_group_teams ?? []) as Array<Record<string, unknown>>)
       .sort((a, b) => Number(a.seed_no ?? 0) - Number(b.seed_no ?? 0))
       .map((groupTeam) => {
-        const registration = relatedOne(groupTeam.team_registrations as Record<string, unknown> | Array<Record<string, unknown>> | null);
+        const registration = relatedOne(
+          groupTeam.team_registrations as
+            | Record<string, unknown>
+            | Array<Record<string, unknown>>
+            | null,
+        );
         return {
           id: String(groupTeam.team_registration_id),
           seed_no: Number(groupTeam.seed_no ?? 0),
-          team_registration: registration
+          team_registration: registration,
         };
-      })
+      }),
   }));
 }
 
-async function assertManagerOwnsPlayerRegistration(userId: string, playerRegistrationId: string) {
+async function assertManagerOwnsPlayerRegistration(
+  userId: string,
+  playerRegistrationId: string,
+) {
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,status,shirt_number,football_position,position_category,preferred_foot,player_status,identity_mode,is_generated,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*),team_registrations!inner(id,manager_id,season_id,team_id,teams(*),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))"
+      "id,player_id,season_id,team_registration_id,status,shirt_number,football_position,position_category,preferred_foot,player_status,identity_mode,is_generated,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*),team_registrations!inner(id,manager_id,season_id,team_id,teams(*),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
     )
     .eq("id", playerRegistrationId)
     .single();
@@ -421,7 +732,10 @@ async function loadLeagueRatings(playerRegistrationIds: string[]) {
     const minutes = Number(row.minutes ?? 0);
     const rating = Number(row.rating ?? 0);
     if (!minutes || !rating) continue;
-    const current = totals.get(row.player_registration_id) ?? { weighted: 0, minutes: 0 };
+    const current = totals.get(row.player_registration_id) ?? {
+      weighted: 0,
+      minutes: 0,
+    };
     current.weighted += rating * minutes;
     current.minutes += minutes;
     totals.set(row.player_registration_id, current);
@@ -439,13 +753,20 @@ async function loadAvailableLineupPlayers(teamRegistrationId: string) {
     (player) =>
       player.status === RegistrationStatus.APPROVED &&
       player.player_status !== PlayerLifecycleStatus.REMOVED &&
-      player.player_status !== PlayerLifecycleStatus.SUSPENDED
+      player.player_status !== PlayerLifecycleStatus.SUSPENDED,
   ) as LineupCandidate[];
   const ratings = await loadLeagueRatings(approved.map((player) => player.id));
-  return approved.map((player) => ({ ...player, league_rating: ratings.get(player.id) ?? null }));
+  return approved.map((player) => ({
+    ...player,
+    league_rating: ratings.get(player.id) ?? null,
+  }));
 }
 
-async function loadManagerPreference(managerId: string, teamRegistrationId: string, seasonId: string) {
+async function loadManagerPreference(
+  managerId: string,
+  teamRegistrationId: string,
+  seasonId: string,
+) {
   const { data, error } = await supabaseAdmin
     .from("manager_team_preferences")
     .select("*")
@@ -457,7 +778,13 @@ async function loadManagerPreference(managerId: string, teamRegistrationId: stri
   return data;
 }
 
-async function saveManagerPreference(managerId: string, teamRegistrationId: string, seasonId: string, formation: string, playingStyle: PlayingStyle) {
+async function saveManagerPreference(
+  managerId: string,
+  teamRegistrationId: string,
+  seasonId: string,
+  formation: string,
+  playingStyle: PlayingStyle,
+) {
   const { data, error } = await supabaseAdmin
     .from("manager_team_preferences")
     .upsert(
@@ -467,9 +794,9 @@ async function saveManagerPreference(managerId: string, teamRegistrationId: stri
         season_id: seasonId,
         preferred_formation: formation,
         preferred_playing_style: playingStyle,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       },
-      { onConflict: "manager_id,team_registration_id,season_id" }
+      { onConflict: "manager_id,team_registration_id,season_id" },
     )
     .select("*")
     .single();
@@ -477,10 +804,16 @@ async function saveManagerPreference(managerId: string, teamRegistrationId: stri
   return data;
 }
 
-async function loadPreviousLineup(teamRegistrationId: string, seasonId: string, excludeFixtureId?: string) {
+async function loadPreviousLineup(
+  teamRegistrationId: string,
+  seasonId: string,
+  excludeFixtureId?: string,
+) {
   let query = supabaseAdmin
     .from("lineups")
-    .select("*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url)))")
+    .select(
+      "*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url)))",
+    )
     .eq("team_registration_id", teamRegistrationId)
     .eq("season_id", seasonId)
     .order("submitted_at", { ascending: false, nullsFirst: false })
@@ -492,10 +825,15 @@ async function loadPreviousLineup(teamRegistrationId: string, seasonId: string, 
   return data?.[0] ?? null;
 }
 
-async function loadExistingLineup(teamRegistrationId: string, fixtureId: string) {
+async function loadExistingLineup(
+  teamRegistrationId: string,
+  fixtureId: string,
+) {
   const { data, error } = await supabaseAdmin
     .from("lineups")
-    .select("*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url)))")
+    .select(
+      "*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url)))",
+    )
     .eq("team_registration_id", teamRegistrationId)
     .eq("fixture_id", fixtureId)
     .maybeSingle();
@@ -503,7 +841,10 @@ async function loadExistingLineup(teamRegistrationId: string, fixtureId: string)
   return data;
 }
 
-function lineupPlayersFromPicks(picks: ReturnType<typeof autoPickBestXI>, bench: LineupCandidate[] = []) {
+function lineupPlayersFromPicks(
+  picks: ReturnType<typeof autoPickBestXI>,
+  bench: LineupCandidate[] = [],
+) {
   return [
     ...picks.map((pick, index) => ({
       player_registration_id: pick.player_registration_id,
@@ -515,7 +856,7 @@ function lineupPlayersFromPicks(picks: ReturnType<typeof autoPickBestXI>, bench:
       display_order: index,
       is_captain: false,
       fit_label: pick.fitLabel,
-      score: pick.score
+      score: pick.score,
     })),
     ...bench.map((player, index) => ({
       player_registration_id: player.id,
@@ -525,15 +866,24 @@ function lineupPlayersFromPicks(picks: ReturnType<typeof autoPickBestXI>, bench:
       display_role: "SUB",
       player_natural_position: naturalPosition(player),
       display_order: picks.length + index,
-      is_captain: false
-    }))
+      is_captain: false,
+    })),
   ];
 }
 
-function buildBench(availablePlayers: LineupCandidate[], starterIds: Set<string>, _benchSize: number) {
+function buildBench(
+  availablePlayers: LineupCandidate[],
+  starterIds: Set<string>,
+  _benchSize: number,
+) {
   return availablePlayers
     .filter((player) => !starterIds.has(player.id))
-    .sort((a, b) => (Number(naturalPosition(a) === FootballPosition.GK) - Number(naturalPosition(b) === FootballPosition.GK)) || (b.player_abilities ? 1 : 0) - (a.player_abilities ? 1 : 0));
+    .sort(
+      (a, b) =>
+        Number(naturalPosition(a) === FootballPosition.GK) -
+          Number(naturalPosition(b) === FootballPosition.GK) ||
+        (b.player_abilities ? 1 : 0) - (a.player_abilities ? 1 : 0),
+    );
 }
 
 function normalizedPlayingStyle(value: unknown): PlayingStyle {
@@ -561,7 +911,7 @@ managerRouter.post(
         home_jersey_url: input.home_jersey_url ?? null,
         away_jersey_url: input.away_jersey_url ?? null,
         gk_home_jersey_url: input.gk_home_jersey_url ?? null,
-        gk_away_jersey_url: input.gk_away_jersey_url ?? null
+        gk_away_jersey_url: input.gk_away_jersey_url ?? null,
       })
       .select("*")
       .single();
@@ -573,13 +923,13 @@ managerRouter.post(
         season_id: input.season_id,
         team_id: team.id,
         manager_id: req.auth!.userId,
-        status: RegistrationStatus.DRAFT
+        status: RegistrationStatus.DRAFT,
       })
       .select("*,teams(*)")
       .single();
     if (error) throw error;
     res.status(201).json({ team_registration: data, team: data.teams });
-  })
+  }),
 );
 
 managerRouter.post(
@@ -599,7 +949,7 @@ managerRouter.post(
         home_jersey_url: input.home_jersey_url ?? null,
         away_jersey_url: input.away_jersey_url ?? null,
         gk_home_jersey_url: input.gk_home_jersey_url ?? null,
-        gk_away_jersey_url: input.gk_away_jersey_url ?? null
+        gk_away_jersey_url: input.gk_away_jersey_url ?? null,
       })
       .select("*")
       .single();
@@ -611,13 +961,15 @@ managerRouter.post(
         season_id: input.season_id,
         team_id: team.id,
         manager_id: req.auth!.userId,
-        status: RegistrationStatus.DRAFT
+        status: RegistrationStatus.DRAFT,
       })
-      .select("*,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,max_players_per_team,league_id,leagues(id,name,short_name,logo_url))")
+      .select(
+        "*,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,max_players_per_team,league_id,leagues(id,name,short_name,logo_url))",
+      )
       .single();
     if (error) throw error;
     res.status(201).json({ team_registration: data, team: data.teams });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -625,15 +977,19 @@ managerRouter.get(
   asyncHandler(async (req, res) => {
     const data = await loadManagerTeams(req.auth!.userId);
     res.json({ team_registrations: data });
-  })
+  }),
 );
 
 managerRouter.get(
   "/dashboard",
   asyncHandler(async (req, res) => {
     const [profileResult, teams] = await Promise.all([
-      supabaseAdmin.from("profiles").select("id,email,full_name,role").eq("id", req.auth!.userId).single(),
-      loadManagerTeams(req.auth!.userId)
+      supabaseAdmin
+        .from("profiles")
+        .select("id,email,full_name,role")
+        .eq("id", req.auth!.userId)
+        .single(),
+      loadManagerTeams(req.auth!.userId),
     ]);
     if (profileResult.error) throw profileResult.error;
     const activeTeam = teams[0] ?? null;
@@ -646,36 +1002,51 @@ managerRouter.get(
         fixtures: [],
         results: [],
         standings: [],
-        messages: []
+        messages: [],
       });
     }
 
     const players = await loadTeamPlayers(activeTeam.id);
     const season = relatedOne(activeTeam.seasons);
     const maxPlayers = Number(season?.max_players_per_team ?? 22);
-    const [{ data: fixtures, error: fixturesError }, { data: results, error: resultsError }, { data: standings, error: standingsError }, { data: messages, error: messagesError }] =
-      await Promise.all([
-        supabaseAdmin
-          .from("fixtures")
-          .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
-          .or(`home_team_registration_id.eq.${activeTeam.id},away_team_registration_id.eq.${activeTeam.id}`)
-          .order("kickoff_at", { ascending: true, nullsFirst: false })
-          .limit(8),
-        supabaseAdmin
-          .from("fixtures")
-          .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
-          .or(`home_team_registration_id.eq.${activeTeam.id},away_team_registration_id.eq.${activeTeam.id}`)
-          .eq("status", FixtureStatus.FINAL)
-          .order("finalized_at", { ascending: false, nullsFirst: false })
-          .limit(5),
-        supabaseAdmin.from("standings").select("*,team_registrations(id,teams(name,short_name,logo_url))").eq("season_id", activeTeam.season_id),
-        supabaseAdmin
-          .from("manager_messages")
-          .select("*")
-          .eq("manager_id", req.auth!.userId)
-          .order("created_at", { ascending: false })
-          .limit(8)
-      ]);
+    const [
+      { data: fixtures, error: fixturesError },
+      { data: results, error: resultsError },
+      { data: standings, error: standingsError },
+      { data: messages, error: messagesError },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("fixtures")
+        .select(
+          "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+        )
+        .or(
+          `home_team_registration_id.eq.${activeTeam.id},away_team_registration_id.eq.${activeTeam.id}`,
+        )
+        .order("kickoff_at", { ascending: true, nullsFirst: false })
+        .limit(8),
+      supabaseAdmin
+        .from("fixtures")
+        .select(
+          "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+        )
+        .or(
+          `home_team_registration_id.eq.${activeTeam.id},away_team_registration_id.eq.${activeTeam.id}`,
+        )
+        .eq("status", FixtureStatus.FINAL)
+        .order("finalized_at", { ascending: false, nullsFirst: false })
+        .limit(5),
+      supabaseAdmin
+        .from("standings")
+        .select("*,team_registrations(id,teams(name,short_name,logo_url))")
+        .eq("season_id", activeTeam.season_id),
+      supabaseAdmin
+        .from("manager_messages")
+        .select("*")
+        .eq("manager_id", req.auth!.userId)
+        .order("created_at", { ascending: false })
+        .limit(8),
+    ]);
     if (fixturesError) throw fixturesError;
     if (resultsError) throw resultsError;
     if (standingsError) throw standingsError;
@@ -689,14 +1060,22 @@ managerRouter.get(
       squad_summary: {
         ...counts,
         max_squad_size: maxPlayers,
-    remaining_slots: Math.max(0, maxPlayers - players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length)
+        remaining_slots: Math.max(
+          0,
+          maxPlayers -
+            players.filter(
+              (player) =>
+                player.status !== RegistrationStatus.REJECTED &&
+                player.player_status !== PlayerLifecycleStatus.REMOVED,
+            ).length,
+        ),
       },
       fixtures: fixtures ?? [],
       results: results ?? [],
       standings: standings ?? [],
-      messages: messages ?? []
+      messages: messages ?? [],
     });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -704,11 +1083,13 @@ managerRouter.get(
   asyncHandler(async (_req, res) => {
     const { data, error } = await supabaseAdmin
       .from("leagues")
-      .select("*,seasons(id,name,season_year,format,phase,registration_start_date,registration_deadline,start_date,end_date,max_players_per_team,lineup_size,substitute_limit,total_teams)")
+      .select(
+        "*,seasons(id,name,season_year,format,phase,registration_start_date,registration_deadline,start_date,end_date,max_players_per_team,lineup_size,substitute_limit,total_teams)",
+      )
       .order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ leagues: data ?? [] });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -720,7 +1101,7 @@ managerRouter.get(
       .order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ seasons: data ?? [] });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -730,7 +1111,7 @@ managerRouter.get(
     await assertManagerCanViewSeason(req.auth!.userId, seasonId);
     const teams = await loadSeasonTeamsForManager(seasonId);
     res.json({ teams });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -740,7 +1121,7 @@ managerRouter.get(
     await assertManagerCanViewSeason(req.auth!.userId, seasonId);
     const groups = await loadSeasonGroupsForManager(seasonId);
     res.json({ groups });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -749,30 +1130,43 @@ managerRouter.get(
     const teamId = routeParam(req.params.teamId, "teamId");
     const { data: team, error } = await supabaseAdmin
       .from("team_registrations")
-      .select("id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,max_players_per_team,league_id,leagues(id,name,short_name,logo_url)),manager:profiles!team_registrations_manager_id_fkey(id,full_name,email)")
+      .select(
+        "id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,max_players_per_team,league_id,leagues(id,name,short_name,logo_url)),manager:profiles!team_registrations_manager_id_fkey(id,full_name,email)",
+      )
       .eq("id", teamId)
       .single();
     if (error) throw error;
     await assertManagerCanViewSeason(req.auth!.userId, team.season_id);
     const players = await loadTeamPlayers(team.id);
     const counts = statusCounts(players);
-    const [{ data: fixtures, error: fixturesError }, { data: results, error: resultsError }] = await Promise.all([
+    const [
+      { data: fixtures, error: fixturesError },
+      { data: results, error: resultsError },
+    ] = await Promise.all([
       supabaseAdmin
         .from("fixtures")
-        .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
+        .select(
+          "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+        )
         .eq("season_id", team.season_id)
-        .or(`home_team_registration_id.eq.${team.id},away_team_registration_id.eq.${team.id}`)
+        .or(
+          `home_team_registration_id.eq.${team.id},away_team_registration_id.eq.${team.id}`,
+        )
         .neq("status", FixtureStatus.FINAL)
         .order("kickoff_at", { ascending: true, nullsFirst: false })
         .limit(8),
       supabaseAdmin
         .from("fixtures")
-        .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
+        .select(
+          "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+        )
         .eq("season_id", team.season_id)
-        .or(`home_team_registration_id.eq.${team.id},away_team_registration_id.eq.${team.id}`)
+        .or(
+          `home_team_registration_id.eq.${team.id},away_team_registration_id.eq.${team.id}`,
+        )
         .eq("status", FixtureStatus.FINAL)
         .order("finalized_at", { ascending: false, nullsFirst: false })
-        .limit(8)
+        .limit(8),
     ]);
     if (fixturesError) throw fixturesError;
     if (resultsError) throw resultsError;
@@ -783,22 +1177,31 @@ managerRouter.get(
       results: results ?? [],
       squad_summary: {
         ...counts,
-        max_squad_size: Number(relatedOne(team.seasons)?.max_players_per_team ?? 22),
+        max_squad_size: Number(
+          relatedOne(team.seasons)?.max_players_per_team ?? 22,
+        ),
         remaining_slots: Math.max(
           0,
           Number(relatedOne(team.seasons)?.max_players_per_team ?? 22) -
-            players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length
+            players.filter(
+              (player) =>
+                player.status !== RegistrationStatus.REJECTED &&
+                player.player_status !== PlayerLifecycleStatus.REMOVED,
+            ).length,
         ),
-        distribution: currentDistribution(players)
-      }
+        distribution: currentDistribution(players),
+      },
     });
-  })
+  }),
 );
 
 managerRouter.get(
   "/teams/:teamId",
   asyncHandler(async (req, res) => {
-    const team = await assertManagerOwnsTeam(req.auth!.userId, routeParam(req.params.teamId, "teamId"));
+    const team = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      routeParam(req.params.teamId, "teamId"),
+    );
     const players = await loadTeamPlayers(team.id);
     const season = relatedOne(team.seasons);
     const counts = statusCounts(players);
@@ -808,32 +1211,68 @@ managerRouter.get(
       squad_summary: {
         ...counts,
         max_squad_size: maxSquadSize(team),
-        remaining_slots: Math.max(0, maxSquadSize(team) - players.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length),
-        distribution: currentDistribution(players)
+        remaining_slots: Math.max(
+          0,
+          maxSquadSize(team) -
+            players.filter(
+              (player) =>
+                player.status !== RegistrationStatus.REJECTED &&
+                player.player_status !== PlayerLifecycleStatus.REMOVED,
+            ).length,
+        ),
+        distribution: currentDistribution(players),
       },
-      season
+      season,
     });
-  })
+  }),
 );
 
 managerRouter.patch(
   "/teams/:teamId",
   asyncHandler(async (req, res) => {
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, routeParam(req.params.teamId, "teamId"));
-    const input = teamRegistrationSchema.omit({ season_id: true }).partial().parse(req.body);
-    const canEditCoreTeamData = [RegistrationStatus.DRAFT, RegistrationStatus.PENDING].includes(teamRegistration.status);
-    const coreFields = ["name", "short_name", "logo_url", "primary_color", "secondary_color", "accent_color"] as const;
-    const hasCoreTeamUpdate = coreFields.some((field) => input[field] !== undefined);
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      routeParam(req.params.teamId, "teamId"),
+    );
+    const input = teamRegistrationSchema
+      .omit({ season_id: true })
+      .partial()
+      .parse(req.body);
+    const canEditCoreTeamData = [
+      RegistrationStatus.DRAFT,
+      RegistrationStatus.PENDING,
+    ].includes(teamRegistration.status);
+    const coreFields = [
+      "name",
+      "short_name",
+      "logo_url",
+      "primary_color",
+      "secondary_color",
+      "accent_color",
+    ] as const;
+    const hasCoreTeamUpdate = coreFields.some(
+      (field) => input[field] !== undefined,
+    );
     if (!canEditCoreTeamData && hasCoreTeamUpdate) {
-      throw new AppError(400, "Team identity and colors can only be edited before admin approval");
+      throw new AppError(
+        400,
+        "Team identity and colors can only be edited before admin approval",
+      );
     }
-    const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const updatePayload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
     if (canEditCoreTeamData) {
       for (const field of coreFields) {
         if (input[field] !== undefined) updatePayload[field] = input[field];
       }
     }
-    const jerseyFields = ["home_jersey_url", "away_jersey_url", "gk_home_jersey_url", "gk_away_jersey_url"] as const;
+    const jerseyFields = [
+      "home_jersey_url",
+      "away_jersey_url",
+      "gk_home_jersey_url",
+      "gk_away_jersey_url",
+    ] as const;
     for (const field of jerseyFields) {
       if (input[field] !== undefined) updatePayload[field] = input[field];
     }
@@ -845,55 +1284,86 @@ managerRouter.patch(
       .single();
     if (error) throw error;
     res.json({ team: data });
-  })
+  }),
 );
 
 managerRouter.patch(
   "/teams/:teamId/preferences",
   asyncHandler(async (req, res) => {
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, routeParam(req.params.teamId, "teamId"));
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      routeParam(req.params.teamId, "teamId"),
+    );
     const input = preferenceSchema.parse(req.body);
-    if (input.seasonId !== teamRegistration.season_id) throw new AppError(400, "Preference season does not match this team");
-    if (!isValidFormation(input.preferredFormation)) throw new AppError(400, "Unsupported formation");
-    if (!isValidPlayingStyle(input.preferredPlayingStyle)) throw new AppError(400, "Unsupported playing style");
+    if (input.seasonId !== teamRegistration.season_id)
+      throw new AppError(400, "Preference season does not match this team");
+    if (!isValidFormation(input.preferredFormation))
+      throw new AppError(400, "Unsupported formation");
+    if (!isValidPlayingStyle(input.preferredPlayingStyle))
+      throw new AppError(400, "Unsupported playing style");
     const preference = await saveManagerPreference(
       req.auth!.userId,
       teamRegistration.id,
       input.seasonId,
       input.preferredFormation,
-      input.preferredPlayingStyle
+      input.preferredPlayingStyle,
     );
     res.json({ preference });
-  })
+  }),
 );
 
 managerRouter.post(
   "/teams/:teamId/generate-squad",
   asyncHandler(async (req, res) => {
     const input = generateSquadSchema.parse(req.body);
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, routeParam(req.params.teamId, "teamId"));
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      routeParam(req.params.teamId, "teamId"),
+    );
     const maxPlayers = maxSquadSize(teamRegistration);
     const currentSeason = relatedOne(teamRegistration.seasons);
     const requestedTotalSize = input.targetSquadSize;
     const requestedGenerateCount = input.targetGenerateCount;
     if (requestedTotalSize && requestedTotalSize > maxPlayers) {
-      throw new AppError(400, `Target squad size cannot exceed league max squad size (${maxPlayers})`);
+      throw new AppError(
+        400,
+        `Target squad size cannot exceed league max squad size (${maxPlayers})`,
+      );
     }
 
     let existingPlayers = await loadTeamPlayers(teamRegistration.id);
     if (input.overwriteDraftPlayers) {
-      const removable = existingPlayers.filter((player) => player.status === RegistrationStatus.DRAFT).map((player) => player.id);
+      const removable = existingPlayers
+        .filter((player) => player.status === RegistrationStatus.DRAFT)
+        .map((player) => player.id);
       if (removable.length > 0) {
-        const { error } = await supabaseAdmin.from("player_season_registrations").delete().in("id", removable);
+        const { error } = await supabaseAdmin
+          .from("player_season_registrations")
+          .delete()
+          .in("id", removable);
         if (error) throw error;
         existingPlayers = await loadTeamPlayers(teamRegistration.id);
       }
     }
 
-    const currentSize = existingPlayers.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length;
+    const currentSize = existingPlayers.filter(
+      (player) =>
+        player.status !== RegistrationStatus.REJECTED &&
+        player.player_status !== PlayerLifecycleStatus.REMOVED,
+    ).length;
     const availableSlots = Math.max(0, maxPlayers - currentSize);
-    const targetSize = Math.min(requestedTotalSize ?? currentSize + (requestedGenerateCount ?? availableSlots), maxPlayers);
-    const generateCount = Math.max(0, Math.min(availableSlots, requestedGenerateCount ?? targetSize - currentSize));
+    const targetSize = Math.min(
+      requestedTotalSize ??
+        currentSize + (requestedGenerateCount ?? availableSlots),
+      maxPlayers,
+    );
+    const generateCount = Math.max(
+      0,
+      Math.min(
+        availableSlots,
+        requestedGenerateCount ?? targetSize - currentSize,
+      ),
+    );
 
     if (generateCount === 0) {
       return res.json({
@@ -901,43 +1371,83 @@ managerRouter.post(
         squad_summary: {
           ...statusCounts(existingPlayers),
           max_squad_size: maxPlayers,
-          remaining_slots: Math.max(0, maxPlayers - existingPlayers.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length),
-          distribution: currentDistribution(existingPlayers)
-        }
+          remaining_slots: Math.max(
+            0,
+            maxPlayers -
+              existingPlayers.filter(
+                (player) =>
+                  player.status !== RegistrationStatus.REJECTED &&
+                  player.player_status !== PlayerLifecycleStatus.REMOVED,
+              ).length,
+          ),
+          distribution: currentDistribution(existingPlayers),
+        },
       });
     }
     if (input.positionBreakdown) {
-      const breakdownTotal = Object.values(input.positionBreakdown).reduce((sum, count) => sum + count, 0);
-      if (breakdownTotal !== generateCount) throw new AppError(400, `Total selected players must equal ${generateCount}.`);
-      if (breakdownTotal > availableSlots) throw new AppError(400, `You only have ${availableSlots} remaining squad slots.`);
-      if (currentSize + breakdownTotal > maxPlayers) throw new AppError(400, "You cannot exceed max squad size.");
+      const breakdownTotal = Object.values(input.positionBreakdown).reduce(
+        (sum, count) => sum + count,
+        0,
+      );
+      if (breakdownTotal !== generateCount)
+        throw new AppError(
+          400,
+          `Total selected players must equal ${generateCount}.`,
+        );
+      if (breakdownTotal > availableSlots)
+        throw new AppError(
+          400,
+          `You only have ${availableSlots} remaining squad slots.`,
+        );
+      if (currentSize + breakdownTotal > maxPlayers)
+        throw new AppError(400, "You cannot exceed max squad size.");
       if (currentSize + breakdownTotal >= 11) {
-        const currentGk = existingPlayers.filter((player) => player.football_position === FootballPosition.GK || player.position === PlayerPosition.GK).length;
-        if (currentGk + input.positionBreakdown.GK < 1) throw new AppError(400, "You need at least 1 goalkeeper.");
+        const currentGk = existingPlayers.filter(
+          (player) =>
+            player.football_position === FootballPosition.GK ||
+            player.position === PlayerPosition.GK,
+        ).length;
+        if (currentGk + input.positionBreakdown.GK < 1)
+          throw new AppError(400, "You need at least 1 goalkeeper.");
       }
     }
 
     const target = targetDistribution(targetSize);
     const current = currentDistribution(existingPlayers);
     const needed = neededDistribution(target, current, generateCount);
-    const positionBreakdown = input.positionBreakdown ?? (requestedGenerateCount ? suggestedPositionBreakdown(generateCount) : undefined);
+    const positionBreakdown =
+      input.positionBreakdown ??
+      (requestedGenerateCount
+        ? suggestedPositionBreakdown(generateCount)
+        : undefined);
     const generated = generateSquadPlayers({
       count: generateCount,
       distribution: needed,
       positionBreakdown,
-      usedNames: existingPlayers.map((player) => relatedOne(player.players)?.full_name).filter(Boolean) as string[],
-      usedJerseys: existingPlayers.map((player) => player.shirt_number).filter((value): value is number => typeof value === "number"),
-      seed: `${teamRegistration.id}:${teamRegistration.season_id}:${currentSize}:${targetSize}`
+      usedNames: existingPlayers
+        .map((player) => relatedOne(player.players)?.full_name)
+        .filter(Boolean) as string[],
+      usedJerseys: existingPlayers
+        .map((player) => player.shirt_number)
+        .filter((value): value is number => typeof value === "number"),
+      seed: `${teamRegistration.id}:${teamRegistration.season_id}:${currentSize}:${targetSize}`,
     });
 
-    const { data: existingIdentities, error: identityError } = await supabaseAdmin
-      .from("players")
-      .select("generated_identity_number")
-      .not("generated_identity_number", "is", null);
+    const { data: existingIdentities, error: identityError } =
+      await supabaseAdmin
+        .from("players")
+        .select("generated_identity_number")
+        .not("generated_identity_number", "is", null);
     if (identityError) throw identityError;
-    const usedIdentities = new Set((existingIdentities ?? []).map((row) => row.generated_identity_number).filter(Boolean) as string[]);
+    const usedIdentities = new Set(
+      (existingIdentities ?? [])
+        .map((row) => row.generated_identity_number)
+        .filter(Boolean) as string[],
+    );
     let identitySequence = usedIdentities.size + 1;
-    const seasonYear = Number(currentSeason?.season_year ?? new Date().getFullYear());
+    const seasonYear = Number(
+      currentSeason?.season_year ?? new Date().getFullYear(),
+    );
 
     const createdRegistrations = [];
     for (const [index, playerInput] of generated.entries()) {
@@ -949,10 +1459,18 @@ managerRouter.post(
             : index % 8 === 0
               ? IdType.BIRTH_ID
               : IdType.NID;
-      let generatedIdentityNumber = generatedIdentity(idType, seasonYear, identitySequence);
+      let generatedIdentityNumber = generatedIdentity(
+        idType,
+        seasonYear,
+        identitySequence,
+      );
       while (usedIdentities.has(generatedIdentityNumber)) {
         identitySequence += 1;
-        generatedIdentityNumber = generatedIdentity(idType, seasonYear, identitySequence);
+        generatedIdentityNumber = generatedIdentity(
+          idType,
+          seasonYear,
+          identitySequence,
+        );
       }
       usedIdentities.add(generatedIdentityNumber);
       identitySequence += 1;
@@ -961,37 +1479,42 @@ managerRouter.post(
         .from("players")
         .insert({
           full_name: playerInput.full_name,
-          date_of_birth: generatedDateOfBirth(idType, seasonYear, identitySequence),
+          date_of_birth: generatedDateOfBirth(
+            idType,
+            seasonYear,
+            identitySequence,
+          ),
           nationality: "Bangladesh",
           id_type: idType,
           id_number_hash: generatedHash,
           id_number_last4: identityLast4(generatedIdentityNumber),
           generated_identity_number: generatedIdentityNumber,
-          avatar_url: playerInput.avatar_url || null
+          avatar_url: playerInput.avatar_url || null,
         })
         .select("*")
         .single();
       if (playerError) throw playerError;
 
-      const { data: registration, error: registrationError } = await supabaseAdmin
-        .from("player_season_registrations")
-        .insert({
-          player_id: player.id,
-          season_id: teamRegistration.season_id,
-          team_registration_id: teamRegistration.id,
-          position: playerInput.position,
-          football_position: playerInput.football_position,
-          position_category: playerInput.position_category,
-          shirt_number: playerInput.shirt_number,
-          preferred_foot: playerInput.preferred_foot,
-          status: RegistrationStatus.DRAFT,
-          player_status: PlayerLifecycleStatus.ACTIVE,
-          identity_mode: "VERIFIED",
-          is_generated: false,
-          created_by_manager_id: req.auth!.userId
-        })
-        .select("*,players(*)")
-        .single();
+      const { data: registration, error: registrationError } =
+        await supabaseAdmin
+          .from("player_season_registrations")
+          .insert({
+            player_id: player.id,
+            season_id: teamRegistration.season_id,
+            team_registration_id: teamRegistration.id,
+            position: playerInput.position,
+            football_position: playerInput.football_position,
+            position_category: playerInput.position_category,
+            shirt_number: playerInput.shirt_number,
+            preferred_foot: playerInput.preferred_foot,
+            status: RegistrationStatus.DRAFT,
+            player_status: PlayerLifecycleStatus.ACTIVE,
+            identity_mode: "VERIFIED",
+            is_generated: false,
+            created_by_manager_id: req.auth!.userId,
+          })
+          .select("*,players(*)")
+          .single();
       if (registrationError) throw registrationError;
 
       const code = playerCode(registration.id);
@@ -1013,32 +1536,57 @@ managerRouter.post(
       squad_summary: {
         ...statusCounts(refreshedPlayers),
         max_squad_size: maxPlayers,
-        remaining_slots: Math.max(0, maxPlayers - refreshedPlayers.filter((player) => player.status !== RegistrationStatus.REJECTED && player.player_status !== PlayerLifecycleStatus.REMOVED).length),
-        distribution: currentDistribution(refreshedPlayers)
-      }
+        remaining_slots: Math.max(
+          0,
+          maxPlayers -
+            refreshedPlayers.filter(
+              (player) =>
+                player.status !== RegistrationStatus.REJECTED &&
+                player.player_status !== PlayerLifecycleStatus.REMOVED,
+            ).length,
+        ),
+        distribution: currentDistribution(refreshedPlayers),
+      },
     });
-  })
+  }),
 );
 
 managerRouter.post(
   "/teams/:teamId/submit-players",
   asyncHandler(async (req, res) => {
     const input = submitPlayersSchema.parse(req.body);
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, routeParam(req.params.teamId, "teamId"));
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      routeParam(req.params.teamId, "teamId"),
+    );
     const players = await loadTeamPlayers(teamRegistration.id);
-    const selected = players.filter((player) => input.playerIds.includes(player.id));
-    if (selected.length !== input.playerIds.length) throw new AppError(400, "Some selected players do not belong to this team");
+    const selected = players.filter((player) =>
+      input.playerIds.includes(player.id),
+    );
+    if (selected.length !== input.playerIds.length)
+      throw new AppError(
+        400,
+        "Some selected players do not belong to this team",
+      );
     if (selected.some((player) => player.status !== RegistrationStatus.DRAFT)) {
-      throw new AppError(400, "Only Draft players can be submitted for approval");
+      throw new AppError(
+        400,
+        "Only Draft players can be submitted for approval",
+      );
     }
     const jerseyNumbers = players
       .map((player) => player.shirt_number)
       .filter((number): number is number => typeof number === "number");
-    if (new Set(jerseyNumbers).size !== jerseyNumbers.length) throw new AppError(400, "Player jersey numbers must be unique");
+    if (new Set(jerseyNumbers).size !== jerseyNumbers.length)
+      throw new AppError(400, "Player jersey numbers must be unique");
 
     const { data, error } = await supabaseAdmin
       .from("player_season_registrations")
-      .update({ status: RegistrationStatus.PENDING, submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .update({
+        status: RegistrationStatus.PENDING,
+        submitted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
       .in("id", input.playerIds)
       .eq("team_registration_id", teamRegistration.id)
       .select("*,players(*)");
@@ -1046,39 +1594,56 @@ managerRouter.post(
     if (teamRegistration.status === RegistrationStatus.DRAFT) {
       const { error: teamStatusError } = await supabaseAdmin
         .from("team_registrations")
-        .update({ status: RegistrationStatus.PENDING, updated_at: new Date().toISOString() })
+        .update({
+          status: RegistrationStatus.PENDING,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", teamRegistration.id);
       if (teamStatusError) throw teamStatusError;
     }
     res.json({ player_registrations: data ?? [] });
-  })
+  }),
 );
 
 managerRouter.get(
   "/teams/:teamId/players",
   asyncHandler(async (req, res) => {
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, routeParam(req.params.teamId, "teamId"));
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      routeParam(req.params.teamId, "teamId"),
+    );
     const players = await loadTeamPlayers(teamRegistration.id);
     res.json({ players });
-  })
+  }),
 );
 
 managerRouter.post(
   "/teams/:teamId/players",
   asyncHandler(async (req, res) => {
     const teamId = routeParam(req.params.teamId, "teamId");
-    const input = playerSubmissionSchema.parse({ ...req.body, team_registration_id: teamId });
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, teamId);
+    const input = playerSubmissionSchema.parse({
+      ...req.body,
+      team_registration_id: teamId,
+    });
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      teamId,
+    );
     validateNumericIdentity(input.id_type, input.id_number);
     const players = await loadTeamPlayers(teamRegistration.id);
-    if (players.length >= maxSquadSize(teamRegistration)) throw new AppError(400, "Squad max size reached");
-    if (input.shirt_number && players.some((player) => player.shirt_number === input.shirt_number)) {
+    if (players.length >= maxSquadSize(teamRegistration))
+      throw new AppError(400, "Squad max size reached");
+    if (
+      input.shirt_number &&
+      players.some((player) => player.shirt_number === input.shirt_number)
+    ) {
       throw new AppError(400, "Jersey number already exists in this team");
     }
 
     const idHash = hashIdentityNumber(input.id_number);
     const last4 = identityLast4(input.id_number);
-    const footballPosition = input.football_position ?? footballPositionFromCoarse(input.position);
+    const footballPosition =
+      input.football_position ?? footballPositionFromCoarse(input.position);
 
     const { data: player, error: playerError } = await supabaseAdmin
       .from("players")
@@ -1090,9 +1655,9 @@ managerRouter.post(
           id_type: input.id_type,
           id_number_hash: idHash,
           id_number_last4: last4,
-          avatar_url: input.avatar_url ?? null
+          avatar_url: input.avatar_url ?? null,
         },
-        { onConflict: "id_number_hash" }
+        { onConflict: "id_number_hash" },
       )
       .select("*")
       .single();
@@ -1113,7 +1678,7 @@ managerRouter.post(
         player_status: PlayerLifecycleStatus.ACTIVE,
         identity_mode: "VERIFIED",
         is_generated: false,
-        created_by_manager_id: req.auth!.userId
+        created_by_manager_id: req.auth!.userId,
       })
       .select("*,players(*)")
       .single();
@@ -1121,33 +1686,41 @@ managerRouter.post(
 
     const { data: updated, error: codeError } = await supabaseAdmin
       .from("player_season_registrations")
-      .update({ player_code: playerCode(registration.id), updated_at: new Date().toISOString() })
+      .update({
+        player_code: playerCode(registration.id),
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", registration.id)
       .select("*,players(*)")
       .single();
     if (codeError) throw codeError;
 
     if (input.proof_storage_path) {
-      const { error: proofError } = await supabaseAdmin.from("identity_proofs").insert({
-        player_id: player.id,
-        submitted_by: req.auth!.userId,
-        id_type: input.id_type,
-        id_number_hash: idHash,
-        id_number_last4: last4,
-        storage_path: input.proof_storage_path
-      });
+      const { error: proofError } = await supabaseAdmin
+        .from("identity_proofs")
+        .insert({
+          player_id: player.id,
+          submitted_by: req.auth!.userId,
+          id_type: input.id_type,
+          id_number_hash: idHash,
+          id_number_last4: last4,
+          storage_path: input.proof_storage_path,
+        });
       if (proofError) throw proofError;
     }
     if (teamRegistration.status === RegistrationStatus.DRAFT) {
       const { error: teamStatusError } = await supabaseAdmin
         .from("team_registrations")
-        .update({ status: RegistrationStatus.PENDING, updated_at: new Date().toISOString() })
+        .update({
+          status: RegistrationStatus.PENDING,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", teamRegistration.id);
       if (teamStatusError) throw teamStatusError;
     }
 
     res.status(201).json({ player_registration: updated });
-  })
+  }),
 );
 
 managerRouter.patch(
@@ -1155,41 +1728,63 @@ managerRouter.patch(
   asyncHandler(async (req, res) => {
     const input = updatePlayerMinifacesSchema.parse(req.body);
     const updates = Array.from(
-      new Map(input.updates.map((update) => [update.player_registration_id, update])).values()
+      new Map(
+        input.updates.map((update) => [update.player_registration_id, update]),
+      ).values(),
     );
     const registrations = await Promise.all(
-      updates.map((update) => assertManagerOwnsPlayerRegistration(req.auth!.userId, update.player_registration_id))
+      updates.map((update) =>
+        assertManagerOwnsPlayerRegistration(
+          req.auth!.userId,
+          update.player_registration_id,
+        ),
+      ),
     );
-    const registrationsById = new Map(registrations.map((registration) => [registration.id, registration]));
+    const registrationsById = new Map(
+      registrations.map((registration) => [registration.id, registration]),
+    );
     const updatedAt = new Date().toISOString();
 
     await Promise.all(
       updates.map(async (update) => {
-        const registration = registrationsById.get(update.player_registration_id);
-        if (!registration) throw new AppError(404, "Player registration not found");
-        const avatarUrl = update.avatar_url?.trim() ? update.avatar_url.trim() : null;
+        const registration = registrationsById.get(
+          update.player_registration_id,
+        );
+        if (!registration)
+          throw new AppError(404, "Player registration not found");
+        const avatarUrl = update.avatar_url?.trim()
+          ? update.avatar_url.trim()
+          : null;
         const { error } = await supabaseAdmin
           .from("players")
           .update({ avatar_url: avatarUrl, updated_at: updatedAt })
           .eq("id", registration.player_id);
         if (error) throw error;
-      })
+      }),
     );
 
     res.json({ updated_count: updates.length });
-  })
+  }),
 );
 
 managerRouter.patch(
   "/players/:playerId",
   asyncHandler(async (req, res) => {
     const input = updateDraftPlayerSchema.parse(req.body);
-    const registration = await assertManagerOwnsPlayerRegistration(req.auth!.userId, routeParam(req.params.playerId, "playerId"));
-    if (![RegistrationStatus.DRAFT, RegistrationStatus.PENDING].includes(registration.status)) {
+    const registration = await assertManagerOwnsPlayerRegistration(
+      req.auth!.userId,
+      routeParam(req.params.playerId, "playerId"),
+    );
+    if (
+      ![RegistrationStatus.DRAFT, RegistrationStatus.PENDING].includes(
+        registration.status,
+      )
+    ) {
       throw new AppError(400, "Only Draft or Pending players can be edited");
     }
     const teamRegistration = relatedOne(registration.team_registrations);
-    if (!teamRegistration) throw new AppError(404, "Team registration not found");
+    if (!teamRegistration)
+      throw new AppError(404, "Team registration not found");
 
     if (input.shirt_number !== undefined) {
       const { data: duplicate, error: duplicateError } = await supabaseAdmin
@@ -1201,22 +1796,38 @@ managerRouter.patch(
         .neq("player_status", PlayerLifecycleStatus.REMOVED)
         .maybeSingle();
       if (duplicateError) throw duplicateError;
-      if (duplicate) throw new AppError(400, "This jersey number is already taken by another player in your squad.");
+      if (duplicate)
+        throw new AppError(
+          400,
+          "This jersey number is already taken by another player in your squad.",
+        );
     }
 
-    if (input.generated_identity_number !== undefined || input.id_type !== undefined) {
-      const nextIdType = (input.id_type ?? relatedOne(registration.players)?.id_type) as IdType | undefined;
-      const nextIdentityNumber = input.generated_identity_number ?? relatedOne(registration.players)?.generated_identity_number;
-      if (!nextIdType || !nextIdentityNumber) throw new AppError(400, "ID type and ID number are required.");
+    if (
+      input.generated_identity_number !== undefined ||
+      input.id_type !== undefined
+    ) {
+      const nextIdType = (input.id_type ??
+        relatedOne(registration.players)?.id_type) as IdType | undefined;
+      const nextIdentityNumber =
+        input.generated_identity_number ??
+        relatedOne(registration.players)?.generated_identity_number;
+      if (!nextIdType || !nextIdentityNumber)
+        throw new AppError(400, "ID type and ID number are required.");
       validateNumericIdentity(nextIdType, nextIdentityNumber);
-      const { data: duplicateIdentity, error: duplicateIdentityError } = await supabaseAdmin
-        .from("players")
-        .select("id")
-        .eq("generated_identity_number", nextIdentityNumber)
-        .neq("id", registration.player_id)
-        .maybeSingle();
+      const { data: duplicateIdentity, error: duplicateIdentityError } =
+        await supabaseAdmin
+          .from("players")
+          .select("id")
+          .eq("generated_identity_number", nextIdentityNumber)
+          .neq("id", registration.player_id)
+          .maybeSingle();
       if (duplicateIdentityError) throw duplicateIdentityError;
-      if (duplicateIdentity) throw new AppError(400, "This ID number is already used by another player.");
+      if (duplicateIdentity)
+        throw new AppError(
+          400,
+          "This ID number is already used by another player.",
+        );
     }
 
     if (
@@ -1232,10 +1843,14 @@ managerRouter.patch(
           full_name: input.full_name,
           id_type: input.id_type,
           generated_identity_number: generatedIdentityNumber,
-          id_number_hash: generatedIdentityNumber ? hashIdentityNumber(generatedIdentityNumber) : undefined,
-          id_number_last4: generatedIdentityNumber ? identityLast4(generatedIdentityNumber) : undefined,
+          id_number_hash: generatedIdentityNumber
+            ? hashIdentityNumber(generatedIdentityNumber)
+            : undefined,
+          id_number_last4: generatedIdentityNumber
+            ? identityLast4(generatedIdentityNumber)
+            : undefined,
           avatar_url: input.avatar_url,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
         .eq("id", registration.player_id);
       if (playerError) throw playerError;
@@ -1246,70 +1861,114 @@ managerRouter.patch(
       .from("player_season_registrations")
       .update({
         football_position: footballPosition,
-        position: footballPosition ? coarsePosition(footballPosition) : undefined,
-        position_category: footballPosition ? categoryForFootballPosition(footballPosition) : undefined,
+        position: footballPosition
+          ? coarsePosition(footballPosition)
+          : undefined,
+        position_category: footballPosition
+          ? categoryForFootballPosition(footballPosition)
+          : undefined,
         shirt_number: input.shirt_number,
         preferred_foot: input.preferred_foot,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
       .eq("id", registration.id)
       .select("*,players(*)")
       .single();
     if (error) throw error;
     res.json({ player_registration: data });
-  })
+  }),
 );
 
 managerRouter.delete(
   "/players/:playerId",
   asyncHandler(async (req, res) => {
-    const registration = await assertManagerOwnsPlayerRegistration(req.auth!.userId, routeParam(req.params.playerId, "playerId"));
-    if (![RegistrationStatus.DRAFT, RegistrationStatus.PENDING].includes(registration.status)) {
-      throw new AppError(400, "Only Draft or Pending players can be removed by manager");
+    const registration = await assertManagerOwnsPlayerRegistration(
+      req.auth!.userId,
+      routeParam(req.params.playerId, "playerId"),
+    );
+    if (
+      ![RegistrationStatus.DRAFT, RegistrationStatus.PENDING].includes(
+        registration.status,
+      )
+    ) {
+      throw new AppError(
+        400,
+        "Only Draft or Pending players can be removed by manager",
+      );
     }
-    const { error } = await supabaseAdmin.from("player_season_registrations").delete().eq("id", registration.id);
+    const { error } = await supabaseAdmin
+      .from("player_season_registrations")
+      .delete()
+      .eq("id", registration.id);
     if (error) throw error;
     res.status(204).send();
-  })
+  }),
 );
 
 managerRouter.get(
   "/players/:playerId",
   asyncHandler(async (req, res) => {
-    const player = await assertManagerOwnsPlayerRegistration(req.auth!.userId, routeParam(req.params.playerId, "playerId"));
+    const player = await assertManagerOwnsPlayerRegistration(
+      req.auth!.userId,
+      routeParam(req.params.playerId, "playerId"),
+    );
     res.json({ player });
-  })
+  }),
 );
 
 managerRouter.get(
   "/players/:playerId/league-stats",
   asyncHandler(async (req, res) => {
-    const player = await assertManagerOwnsPlayerRegistration(req.auth!.userId, routeParam(req.params.playerId, "playerId"));
-    const [{ data: seasonStats, error: seasonError }, { data: matchStats, error: matchError }] = await Promise.all([
-      supabaseAdmin.from("player_season_stats").select("*").eq("player_registration_id", player.id).maybeSingle(),
+    const player = await assertManagerOwnsPlayerRegistration(
+      req.auth!.userId,
+      routeParam(req.params.playerId, "playerId"),
+    );
+    const [
+      { data: seasonStats, error: seasonError },
+      { data: matchStats, error: matchError },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("player_season_stats")
+        .select("*")
+        .eq("player_registration_id", player.id)
+        .maybeSingle(),
       supabaseAdmin
         .from("player_match_stats")
-        .select("*,fixtures(id,kickoff_at,home_score,away_score,home_team_registration_id,away_team_registration_id)")
+        .select(
+          "*,fixtures(id,kickoff_at,home_score,away_score,home_team_registration_id,away_team_registration_id)",
+        )
         .eq("player_registration_id", player.id)
-        .order("created_at", { ascending: false })
+        .order("created_at", { ascending: false }),
     ]);
     if (seasonError) throw seasonError;
     if (matchError) throw matchError;
     res.json({ season_stats: seasonStats, match_stats: matchStats ?? [] });
-  })
+  }),
 );
 
 managerRouter.get(
   "/players/:playerId/profile",
   asyncHandler(async (req, res) => {
-    const player = await assertManagerOwnsPlayerRegistration(req.auth!.userId, routeParam(req.params.playerId, "playerId"));
-    const [{ data: seasonStats, error: seasonError }, { data: matchStats, error: matchError }] = await Promise.all([
-      supabaseAdmin.from("player_season_stats").select("*").eq("player_registration_id", player.id).maybeSingle(),
+    const player = await assertManagerOwnsPlayerRegistration(
+      req.auth!.userId,
+      routeParam(req.params.playerId, "playerId"),
+    );
+    const [
+      { data: seasonStats, error: seasonError },
+      { data: matchStats, error: matchError },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("player_season_stats")
+        .select("*")
+        .eq("player_registration_id", player.id)
+        .maybeSingle(),
       supabaseAdmin
         .from("player_match_stats")
-        .select("*,fixtures(id,kickoff_at,home_score,away_score,home_team_registration_id,away_team_registration_id)")
+        .select(
+          "*,fixtures(id,kickoff_at,home_score,away_score,home_team_registration_id,away_team_registration_id)",
+        )
         .eq("player_registration_id", player.id)
-        .order("created_at", { ascending: false })
+        .order("created_at", { ascending: false }),
     ]);
     if (seasonError) throw seasonError;
     if (matchError) throw matchError;
@@ -1319,22 +1978,28 @@ managerRouter.get(
       ability: relatedOne(player.player_abilities),
       league_rating: leagueRatings.get(player.id) ?? null,
       season_stats: seasonStats,
-      match_stats: matchStats ?? []
+      match_stats: matchStats ?? [],
     });
-  })
+  }),
 );
 
 managerRouter.get(
   "/fixtures",
   asyncHandler(async (req, res) => {
-    const teamId = typeof req.query.teamId === "string" ? req.query.teamId : undefined;
-    const seasonId = typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
-    const teams = seasonId ? await assertManagerCanViewSeason(req.auth!.userId, seasonId) : await loadManagerTeams(req.auth!.userId);
+    const teamId =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    const seasonId =
+      typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
+    const teams = seasonId
+      ? await assertManagerCanViewSeason(req.auth!.userId, seasonId)
+      : await loadManagerTeams(req.auth!.userId);
     let ids: string[] = [];
     if (teamId && teamId !== "ALL") {
       if (seasonId) {
         const seasonTeams = await loadSeasonTeamsForManager(seasonId);
-        ids = seasonTeams.filter((team) => team.id === teamId).map((team) => team.id);
+        ids = seasonTeams
+          .filter((team) => team.id === teamId)
+          .map((team) => team.id);
       } else {
         ids = teams.filter((team) => team.id === teamId).map((team) => team.id);
       }
@@ -1344,18 +2009,24 @@ managerRouter.get(
       ids = teams.map((team) => team.id);
     }
     if (ids.length === 0) return res.json({ fixtures: [] });
-    const clauses = ids.flatMap((id) => [`home_team_registration_id.eq.${id}`, `away_team_registration_id.eq.${id}`]);
+    const clauses = ids.flatMap((id) => [
+      `home_team_registration_id.eq.${id}`,
+      `away_team_registration_id.eq.${id}`,
+    ]);
     let query = supabaseAdmin
       .from("fixtures")
       .select(
-        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)),lineups(id,team_registration_id,status,formation,playing_style)"
+        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)),lineups(id,team_registration_id,status,formation,playing_style)",
       )
       .or(clauses.join(","));
     if (seasonId) query = query.eq("season_id", seasonId);
-    const { data, error } = await query.order("kickoff_at", { ascending: true, nullsFirst: false });
+    const { data, error } = await query.order("kickoff_at", {
+      ascending: true,
+      nullsFirst: false,
+    });
     if (error) throw error;
     res.json({ fixtures: data ?? [] });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -1364,23 +2035,31 @@ managerRouter.get(
     const teams = await loadManagerTeams(req.auth!.userId);
     const ids = teams.map((team) => team.id);
     if (ids.length === 0) return res.json({ results: [] });
-    const clauses = ids.flatMap((id) => [`home_team_registration_id.eq.${id}`, `away_team_registration_id.eq.${id}`]);
+    const clauses = ids.flatMap((id) => [
+      `home_team_registration_id.eq.${id}`,
+      `away_team_registration_id.eq.${id}`,
+    ]);
     const { data, error } = await supabaseAdmin
       .from("fixtures")
-      .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
+      .select(
+        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+      )
       .or(clauses.join(","))
       .eq("status", FixtureStatus.FINAL)
       .order("finalized_at", { ascending: false, nullsFirst: false });
     if (error) throw error;
     res.json({ results: data ?? [] });
-  })
+  }),
 );
 
 managerRouter.get(
   "/standings",
   asyncHandler(async (req, res) => {
     const teams = await loadManagerTeams(req.auth!.userId);
-    const seasonId = typeof req.query.seasonId === "string" ? req.query.seasonId : relatedOne(teams[0]?.seasons)?.id;
+    const seasonId =
+      typeof req.query.seasonId === "string"
+        ? req.query.seasonId
+        : relatedOne(teams[0]?.seasons)?.id;
     if (!seasonId) return res.json({ standings: [] });
     const { data, error } = await supabaseAdmin
       .from("standings")
@@ -1391,21 +2070,22 @@ managerRouter.get(
       .order("goals_for", { ascending: false });
     if (error) throw error;
     res.json({ standings: data ?? [] });
-  })
+  }),
 );
 
 managerRouter.get(
   "/seasons/:seasonId/stat-leaderboards",
   asyncHandler(async (req, res) => {
     const seasonId = routeParam(req.params.seasonId, "seasonId");
-    const requestedTeamId = typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    const requestedTeamId =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
     await assertManagerCanViewSeason(req.auth!.userId, seasonId);
 
     const [
       teamRegistrationsResult,
       playerRegistrationsResult,
       standingsResult,
-      fixturesResult
+      fixturesResult,
     ] = await Promise.all([
       supabaseAdmin
         .from("team_registrations")
@@ -1414,13 +2094,17 @@ managerRouter.get(
         .eq("status", RegistrationStatus.APPROVED),
       supabaseAdmin
         .from("player_season_registrations")
-        .select("id,season_id,team_registration_id,position,football_position,shirt_number,players(full_name,avatar_url)")
+        .select(
+          "id,season_id,team_registration_id,position,football_position,shirt_number,players(full_name,avatar_url)",
+        )
         .eq("season_id", seasonId),
       supabaseAdmin.from("standings").select("*").eq("season_id", seasonId),
       supabaseAdmin
         .from("fixtures")
-        .select("id,home_team_registration_id,away_team_registration_id,home_score,away_score,status")
-        .eq("season_id", seasonId)
+        .select(
+          "id,home_team_registration_id,away_team_registration_id,home_score,away_score,status",
+        )
+        .eq("season_id", seasonId),
     ]);
     if (teamRegistrationsResult.error) throw teamRegistrationsResult.error;
     if (playerRegistrationsResult.error) throw playerRegistrationsResult.error;
@@ -1428,23 +2112,47 @@ managerRouter.get(
     if (fixturesResult.error) throw fixturesResult.error;
 
     const allTeams = teamRegistrationsResult.data ?? [];
-    const scopedTeams = requestedTeamId && requestedTeamId !== "ALL" ? allTeams.filter((team) => team.id === requestedTeamId) : allTeams;
-    if (requestedTeamId && requestedTeamId !== "ALL" && scopedTeams.length === 0) throw new AppError(404, "Team not found in this season");
+    const scopedTeams =
+      requestedTeamId && requestedTeamId !== "ALL"
+        ? allTeams.filter((team) => team.id === requestedTeamId)
+        : allTeams;
+    if (
+      requestedTeamId &&
+      requestedTeamId !== "ALL" &&
+      scopedTeams.length === 0
+    )
+      throw new AppError(404, "Team not found in this season");
     const teamIds = scopedTeams.map((team) => team.id);
     const allPlayerRegistrations = playerRegistrationsResult.data ?? [];
-    const playerRegistrations = allPlayerRegistrations.filter((player) => teamIds.includes(player.team_registration_id));
+    const playerRegistrations = allPlayerRegistrations.filter((player) =>
+      teamIds.includes(player.team_registration_id),
+    );
     const playerIds = playerRegistrations.map((player) => player.id);
 
-    const [playerSeasonStatsResult, playerMatchStatsResult, teamMatchStatsResult] = await Promise.all([
+    const [
+      playerSeasonStatsResult,
+      playerMatchStatsResult,
+      teamMatchStatsResult,
+    ] = await Promise.all([
       playerIds.length
-        ? supabaseAdmin.from("player_season_stats").select("*").eq("season_id", seasonId).in("player_registration_id", playerIds)
+        ? supabaseAdmin
+            .from("player_season_stats")
+            .select("*")
+            .eq("season_id", seasonId)
+            .in("player_registration_id", playerIds)
         : Promise.resolve({ data: [], error: null }),
       playerIds.length
-        ? supabaseAdmin.from("player_match_stats").select("*").in("player_registration_id", playerIds)
+        ? supabaseAdmin
+            .from("player_match_stats")
+            .select("*")
+            .in("player_registration_id", playerIds)
         : Promise.resolve({ data: [], error: null }),
       teamIds.length
-        ? supabaseAdmin.from("team_match_stats").select("*").in("team_registration_id", teamIds)
-        : Promise.resolve({ data: [], error: null })
+        ? supabaseAdmin
+            .from("team_match_stats")
+            .select("*")
+            .in("team_registration_id", teamIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
     if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
@@ -1452,63 +2160,110 @@ managerRouter.get(
 
     const allTeamById = new Map(allTeams.map((team) => [team.id, team]));
     const teamById = new Map(scopedTeams.map((team) => [team.id, team]));
-    const playerById = new Map(playerRegistrations.map((player) => [player.id, player]));
+    const playerById = new Map(
+      playerRegistrations.map((player) => [player.id, player]),
+    );
     const playerMatchStats = playerMatchStatsResult.data ?? [];
 
-    const playerRows = (playerSeasonStatsResult.data ?? []).map((seasonStat) => {
-      const player = playerById.get(seasonStat.player_registration_id);
-      const team = player ? teamById.get(player.team_registration_id) : null;
-      const matchRows = playerMatchStats.filter((row) => row.player_registration_id === seasonStat.player_registration_id);
-      const minutes = Number(seasonStat.minutes_played ?? 0);
-      const sum = (field: string) => matchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
-      const gkRows = matchRows.filter((row) => row.position_played === FootballPosition.GK);
-      const cleanSheets = gkRows.filter((row) => Number(row.goals_conceded ?? 0) === 0 && Number(row.minutes ?? 0) >= 45).length;
-      return {
-        id: seasonStat.player_registration_id,
-        name: relatedName(player?.players, "full_name") ?? "Unnamed player",
-        avatarUrl: relatedName(player?.players, "avatar_url"),
-        team: relatedName(team?.teams, "name") ?? "Unassigned team",
-        teamLogoUrl: relatedName(team?.teams, "logo_url"),
-        minutes,
-        matches: Number(seasonStat.appearances ?? 0),
-        goals: Number(seasonStat.goals ?? 0),
-        assists: Number(seasonStat.assists ?? 0),
-        goalAssists: Number(seasonStat.goals ?? 0) + Number(seasonStat.assists ?? 0),
-        successfulDribblesPer90: per90(Number(seasonStat.successful_dribbles ?? 0), minutes),
-        shotsOnTargetPer90: per90(Number(seasonStat.shots_on_target ?? 0), minutes),
-        accuratePassesPer90: per90(Number(seasonStat.accurate_passes ?? 0), minutes),
-        bigChancesCreated: Number(seasonStat.big_chances_created ?? sum("big_chances_created") ?? 0),
-        bigChancesMissed: sum("big_chances_missed"),
-        tacklesPer90: per90(Number(seasonStat.tackles ?? 0), minutes),
-        interceptionsPer90: per90(Number(seasonStat.interceptions ?? 0), minutes),
-        blocksPer90: per90(sum("blocks"), minutes),
-        clearancesPer90: per90(sum("clearances"), minutes),
-        cleanSheets,
-        savesPer90: per90(sum("saves"), minutes),
-        goalsConcededPer90: per90(sum("goals_conceded"), minutes),
-        yellowCards: Number(seasonStat.yellow_cards ?? 0),
-        redCards: Number(seasonStat.red_cards ?? 0),
-        foulsCommittedPer90: per90(sum("fouls_committed"), minutes),
-        rating: Number(seasonStat.average_rating ?? 0)
-      };
-    });
+    const playerRows = (playerSeasonStatsResult.data ?? []).map(
+      (seasonStat) => {
+        const player = playerById.get(seasonStat.player_registration_id);
+        const team = player ? teamById.get(player.team_registration_id) : null;
+        const matchRows = playerMatchStats.filter(
+          (row) =>
+            row.player_registration_id === seasonStat.player_registration_id,
+        );
+        const minutes = Number(seasonStat.minutes_played ?? 0);
+        const sum = (field: string) =>
+          matchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+        const gkRows = matchRows.filter(
+          (row) => row.position_played === FootballPosition.GK,
+        );
+        const cleanSheets = gkRows.filter(
+          (row) =>
+            Number(row.goals_conceded ?? 0) === 0 &&
+            Number(row.minutes ?? 0) >= 45,
+        ).length;
+        return {
+          id: seasonStat.player_registration_id,
+          name: relatedName(player?.players, "full_name") ?? "Unnamed player",
+          avatarUrl: relatedName(player?.players, "avatar_url"),
+          team: relatedName(team?.teams, "name") ?? "Unassigned team",
+          teamLogoUrl: relatedName(team?.teams, "logo_url"),
+          minutes,
+          matches: Number(seasonStat.appearances ?? 0),
+          goals: Number(seasonStat.goals ?? 0),
+          assists: Number(seasonStat.assists ?? 0),
+          goalAssists:
+            Number(seasonStat.goals ?? 0) + Number(seasonStat.assists ?? 0),
+          successfulDribblesPer90: per90(
+            Number(seasonStat.successful_dribbles ?? 0),
+            minutes,
+          ),
+          shotsOnTargetPer90: per90(
+            Number(seasonStat.shots_on_target ?? 0),
+            minutes,
+          ),
+          accuratePassesPer90: per90(
+            Number(seasonStat.accurate_passes ?? 0),
+            minutes,
+          ),
+          bigChancesCreated: Number(
+            seasonStat.big_chances_created ?? sum("big_chances_created") ?? 0,
+          ),
+          bigChancesMissed: sum("big_chances_missed"),
+          tacklesPer90: per90(Number(seasonStat.tackles ?? 0), minutes),
+          interceptionsPer90: per90(
+            Number(seasonStat.interceptions ?? 0),
+            minutes,
+          ),
+          blocksPer90: per90(sum("blocks"), minutes),
+          clearancesPer90: per90(sum("clearances"), minutes),
+          cleanSheets,
+          savesPer90: per90(sum("saves"), minutes),
+          goalsConcededPer90: per90(sum("goals_conceded"), minutes),
+          yellowCards: Number(seasonStat.yellow_cards ?? 0),
+          redCards: Number(seasonStat.red_cards ?? 0),
+          foulsCommittedPer90: per90(sum("fouls_committed"), minutes),
+          rating: Number(seasonStat.average_rating ?? 0),
+        };
+      },
+    );
 
-    const standingsByTeam = new Map((standingsResult.data ?? []).map((standing) => [standing.team_registration_id, standing]));
+    const standingsByTeam = new Map(
+      (standingsResult.data ?? []).map((standing) => [
+        standing.team_registration_id,
+        standing,
+      ]),
+    );
     const fixtures = fixturesResult.data ?? [];
     const allPlayerMatchStats = playerMatchStatsResult.data ?? [];
     const teamMatchStats = teamMatchStatsResult.data ?? [];
     const teamRows = scopedTeams.map((team) => {
-      const teamStats = teamMatchStats.filter((row) => row.team_registration_id === team.id);
+      const teamStats = teamMatchStats.filter(
+        (row) => row.team_registration_id === team.id,
+      );
       const standing = standingsByTeam.get(team.id);
       const played = Math.max(Number(standing?.played ?? 0), teamStats.length);
-      const teamPlayers = allPlayerRegistrations.filter((player) => player.team_registration_id === team.id).map((player) => player.id);
-      const teamPlayerMatchRows = allPlayerMatchStats.filter((row) => teamPlayers.includes(row.player_registration_id));
-      const sumTeam = (field: string) => teamStats.reduce((total, row) => total + Number(row[field] ?? 0), 0);
-      const sumPlayers = (field: string) => teamPlayerMatchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+      const teamPlayers = allPlayerRegistrations
+        .filter((player) => player.team_registration_id === team.id)
+        .map((player) => player.id);
+      const teamPlayerMatchRows = allPlayerMatchStats.filter((row) =>
+        teamPlayers.includes(row.player_registration_id),
+      );
+      const sumTeam = (field: string) =>
+        teamStats.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+      const sumPlayers = (field: string) =>
+        teamPlayerMatchRows.reduce(
+          (total, row) => total + Number(row[field] ?? 0),
+          0,
+        );
       const cleanSheets = fixtures.filter((fixture) => {
         if (fixture.status !== FixtureStatus.FINAL) return false;
-        if (fixture.home_team_registration_id === team.id) return Number(fixture.away_score ?? 0) === 0;
-        if (fixture.away_team_registration_id === team.id) return Number(fixture.home_score ?? 0) === 0;
+        if (fixture.home_team_registration_id === team.id)
+          return Number(fixture.away_score ?? 0) === 0;
+        if (fixture.away_team_registration_id === team.id)
+          return Number(fixture.home_score ?? 0) === 0;
         return false;
       }).length;
       const teamMatchRatings = teamStats
@@ -1524,7 +2279,10 @@ managerRouter.get(
         .filter((rating) => rating > 0);
       return {
         id: team.id,
-        name: relatedName(team.teams, "name") ?? relatedName(allTeamById.get(team.id)?.teams, "name") ?? "Unnamed team",
+        name:
+          relatedName(team.teams, "name") ??
+          relatedName(allTeamById.get(team.id)?.teams, "name") ??
+          "Unnamed team",
         logoUrl: relatedName(team.teams, "logo_url"),
         played,
         avgPossession: avg(teamStats.map((row) => Number(row.possession ?? 0))),
@@ -1532,23 +2290,29 @@ managerRouter.get(
         goalsPerMatch: perMatch(Number(standing?.goals_for ?? 0), played),
         shotsOnTargetPerMatch: perMatch(sumTeam("shots_on_target"), played),
         bigChancesPerMatch: perMatch(sumTeam("big_chances"), played),
-        bigChancesMissedPerMatch: perMatch(sumTeam("big_chances_missed"), played),
+        bigChancesMissedPerMatch: perMatch(
+          sumTeam("big_chances_missed"),
+          played,
+        ),
         accuratePassesPerMatch: perMatch(sumTeam("accurate_passes"), played),
         cornersPerMatch: perMatch(sumTeam("corners"), played),
         cleanSheets,
-        goalsConcededPerMatch: perMatch(Number(standing?.goals_against ?? 0), played),
+        goalsConcededPerMatch: perMatch(
+          Number(standing?.goals_against ?? 0),
+          played,
+        ),
         tacklesPerMatch: perMatch(sumPlayers("tackles"), played),
         clearancesPerMatch: perMatch(sumPlayers("clearances"), played),
         penaltiesConceded: 0,
         gkSavesPerMatch: perMatch(sumPlayers("saves"), played),
         foulsPerMatch: perMatch(sumTeam("fouls"), played),
         yellowCards: sumTeam("yellow_cards"),
-        redCards: sumTeam("red_cards")
+        redCards: sumTeam("red_cards"),
       };
     });
 
     res.json(makeStatsReport(playerRows, teamRows));
-  })
+  }),
 );
 
 managerRouter.get(
@@ -1556,12 +2320,14 @@ managerRouter.get(
   asyncHandler(async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from("manager_messages")
-      .select("*,team_registrations(id,teams(name,short_name)),player_season_registrations(id,players(full_name)),fixtures(id,kickoff_at)")
+      .select(
+        "*,team_registrations(id,teams(name,short_name)),player_season_registrations(id,players(full_name)),fixtures(id,kickoff_at)",
+      )
       .eq("manager_id", req.auth!.userId)
       .order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ messages: data ?? [] });
-  })
+  }),
 );
 
 managerRouter.patch(
@@ -1576,7 +2342,7 @@ managerRouter.patch(
       .single();
     if (error) throw error;
     res.json({ message: data });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -1589,13 +2355,16 @@ managerRouter.get(
       .single();
     if (error) throw error;
     res.json({ profile: data });
-  })
+  }),
 );
 
 managerRouter.patch(
   "/profile",
   asyncHandler(async (req, res) => {
-    const fullName = typeof req.body?.full_name === "string" ? req.body.full_name.trim().slice(0, 160) : undefined;
+    const fullName =
+      typeof req.body?.full_name === "string"
+        ? req.body.full_name.trim().slice(0, 160)
+        : undefined;
     if (!fullName) throw new AppError(400, "Full name is required");
     const { data, error } = await supabaseAdmin
       .from("profiles")
@@ -1605,7 +2374,7 @@ managerRouter.patch(
       .single();
     if (error) throw error;
     res.json({ profile: data });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -1615,28 +2384,66 @@ managerRouter.get(
     const ids = teams.map((team) => team.id);
     const { data: fixture, error: fixtureError } = await supabaseAdmin
       .from("fixtures")
-      .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
+      .select(
+        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+      )
       .eq("id", req.params.matchId)
       .single();
     if (fixtureError) throw fixtureError;
-    if (!ids.includes(fixture.home_team_registration_id) && !ids.includes(fixture.away_team_registration_id)) {
+    if (
+      !ids.includes(fixture.home_team_registration_id) &&
+      !ids.includes(fixture.away_team_registration_id)
+    ) {
       await assertManagerCanViewSeason(req.auth!.userId, fixture.season_id);
     }
-    const [{ data: lineups, error: lineupsError }, { data: teamStats, error: teamStatsError }, { data: playerStats, error: playerStatsError }, { data: events, error: eventsError }, { data: substitutions, error: substitutionsError }] =
-      await Promise.all([
-        supabaseAdmin.from("lineups").select("*,lineup_players(*,player_season_registrations(id,shirt_number,football_position,players(full_name,avatar_url)))").eq("fixture_id", fixture.id),
-        supabaseAdmin.from("team_match_stats").select("*").eq("fixture_id", fixture.id),
-        supabaseAdmin.from("player_match_stats").select("*,player_season_registrations(id,shirt_number,football_position,position,players(full_name,avatar_url))").eq("fixture_id", fixture.id),
-        supabaseAdmin.from("match_events").select("*").eq("fixture_id", fixture.id).order("minute", { ascending: true }),
-        supabaseAdmin.from("match_substitutions").select("*").eq("fixture_id", fixture.id).order("minute", { ascending: true })
-      ]);
+    const [
+      { data: lineups, error: lineupsError },
+      { data: teamStats, error: teamStatsError },
+      { data: playerStats, error: playerStatsError },
+      { data: events, error: eventsError },
+      { data: substitutions, error: substitutionsError },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("lineups")
+        .select(
+          "*,lineup_players(*,player_season_registrations(id,shirt_number,football_position,players(full_name,avatar_url)))",
+        )
+        .eq("fixture_id", fixture.id),
+      supabaseAdmin
+        .from("team_match_stats")
+        .select("*")
+        .eq("fixture_id", fixture.id),
+      supabaseAdmin
+        .from("player_match_stats")
+        .select(
+          "*,player_season_registrations(id,shirt_number,football_position,position,players(full_name,avatar_url))",
+        )
+        .eq("fixture_id", fixture.id),
+      supabaseAdmin
+        .from("match_events")
+        .select("*")
+        .eq("fixture_id", fixture.id)
+        .order("minute", { ascending: true }),
+      supabaseAdmin
+        .from("match_substitutions")
+        .select("*")
+        .eq("fixture_id", fixture.id)
+        .order("minute", { ascending: true }),
+    ]);
     if (lineupsError) throw lineupsError;
     if (teamStatsError) throw teamStatsError;
     if (playerStatsError) throw playerStatsError;
     if (eventsError) throw eventsError;
     if (substitutionsError) throw substitutionsError;
-    res.json({ fixture, lineups: lineups ?? [], team_stats: teamStats ?? [], player_stats: playerStats ?? [], events: events ?? [], substitutions: substitutions ?? [] });
-  })
+    res.json({
+      fixture,
+      lineups: lineups ?? [],
+      team_stats: teamStats ?? [],
+      player_stats: playerStats ?? [],
+      events: events ?? [],
+      substitutions: substitutions ?? [],
+    });
+  }),
 );
 
 managerRouter.get(
@@ -1644,10 +2451,13 @@ managerRouter.get(
   asyncHandler(async (req, res) => {
     const matchId = routeParam(req.params.matchId, "matchId");
     const teams = await loadManagerTeams(req.auth!.userId);
-    const teamIdQuery = typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    const teamIdQuery =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
     const { data: fixture, error: fixtureError } = await supabaseAdmin
       .from("fixtures")
-      .select("*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))")
+      .select(
+        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+      )
       .eq("id", matchId)
       .single();
     if (fixtureError) throw fixtureError;
@@ -1655,54 +2465,102 @@ managerRouter.get(
     const teamRegistrationId =
       teamIdQuery && ownedTeamIds.includes(teamIdQuery)
         ? teamIdQuery
-        : ownedTeamIds.find((id) => id === fixture.home_team_registration_id || id === fixture.away_team_registration_id);
-    if (!teamRegistrationId) throw new AppError(403, "This fixture does not belong to your team");
-    const teamRegistration = teams.find((team) => team.id === teamRegistrationId) ?? (await assertManagerOwnsTeam(req.auth!.userId, teamRegistrationId));
+        : ownedTeamIds.find(
+            (id) =>
+              id === fixture.home_team_registration_id ||
+              id === fixture.away_team_registration_id,
+          );
+    if (!teamRegistrationId)
+      throw new AppError(403, "This fixture does not belong to your team");
+    const teamRegistration =
+      teams.find((team) => team.id === teamRegistrationId) ??
+      (await assertManagerOwnsTeam(req.auth!.userId, teamRegistrationId));
     const season = relatedOne(teamRegistration.seasons);
-    const preference = await loadManagerPreference(req.auth!.userId, teamRegistrationId, fixture.season_id);
-    const approvedPlayers = await loadAvailableLineupPlayers(teamRegistrationId);
+    const preference = await loadManagerPreference(
+      req.auth!.userId,
+      teamRegistrationId,
+      fixture.season_id,
+    );
+    const approvedPlayers =
+      await loadAvailableLineupPlayers(teamRegistrationId);
     const benchSize = Number(season?.substitute_limit ?? 7);
-    const existingLineup = await loadExistingLineup(teamRegistrationId, matchId);
-    const previousLineup = await loadPreviousLineup(teamRegistrationId, fixture.season_id, matchId);
+    const existingLineup = await loadExistingLineup(
+      teamRegistrationId,
+      matchId,
+    );
+    const previousLineup = await loadPreviousLineup(
+      teamRegistrationId,
+      fixture.season_id,
+      matchId,
+    );
     const availableIds = new Set(approvedPlayers.map((player) => player.id));
 
-    let formation = normalizedFormation(existingLineup?.formation ?? previousLineup?.formation ?? preference?.preferred_formation);
-    let playingStyle = normalizedPlayingStyle(existingLineup?.playing_style ?? previousLineup?.playing_style ?? preference?.preferred_playing_style);
+    let formation = normalizedFormation(
+      existingLineup?.formation ??
+        previousLineup?.formation ??
+        preference?.preferred_formation,
+    );
+    let playingStyle = normalizedPlayingStyle(
+      existingLineup?.playing_style ??
+        previousLineup?.playing_style ??
+        preference?.preferred_playing_style,
+    );
     let initialLineupMode = "AUTO_PICKED_NO_PREVIOUS_LINEUP";
     let warnings: string[] = [];
     let playersForLineup: Array<Record<string, unknown>> = [];
 
     const sourceLineup = existingLineup ?? previousLineup;
     if (sourceLineup?.lineup_players?.length) {
-      const sourcePlayers = [...sourceLineup.lineup_players].sort((a: any, b: any) => Number(a.display_order ?? 0) - Number(b.display_order ?? 0));
-      const preserved = sourcePlayers.filter((row: any) => availableIds.has(row.player_registration_id));
+      const sourcePlayers = [...sourceLineup.lineup_players].sort(
+        (a: any, b: any) =>
+          Number(a.display_order ?? 0) - Number(b.display_order ?? 0),
+      );
+      const preserved = sourcePlayers.filter((row: any) =>
+        availableIds.has(row.player_registration_id),
+      );
       const preservedStarters = preserved.filter((row: any) => row.is_starter);
-      const preservedIds = new Set(preserved.map((row: any) => row.player_registration_id));
+      const preservedIds = new Set(
+        preserved.map((row: any) => row.player_registration_id),
+      );
       playersForLineup = preserved.map((row: any, index: number) => ({
         player_registration_id: row.player_registration_id,
         is_starter: row.is_starter,
         position: row.position,
         slot_key: row.slot_key,
         display_role: row.display_role,
-        player_natural_position: row.player_natural_position ?? row.football_position,
+        player_natural_position:
+          row.player_natural_position ?? row.football_position,
         display_order: row.display_order ?? index,
-        is_captain: row.is_captain
+        is_captain: row.is_captain,
       }));
       if (sourcePlayers.length !== preserved.length) {
-        warnings.push("Some players from your previous lineup are unavailable and were replaced.");
+        warnings.push(
+          "Some players from your previous lineup are unavailable and were replaced.",
+        );
       }
       if (preservedStarters.length === 11) {
-        initialLineupMode = existingLineup ? "EXISTING_LINEUP_LOADED" : "PREVIOUS_LINEUP_LOADED";
+        initialLineupMode = existingLineup
+          ? "EXISTING_LINEUP_LOADED"
+          : "PREVIOUS_LINEUP_LOADED";
       } else {
         initialLineupMode = "PREVIOUS_LINEUP_PARTIALLY_RESTORED";
         const slots = getFormationSlots(formation);
-        const usedSlotKeys = new Set(preservedStarters.map((row: any) => row.slot_key).filter(Boolean));
-        const remainingSlots = slots.filter((slot) => !usedSlotKeys.has(slot.slotKey));
-        const remainingPlayers = approvedPlayers.filter((player) => !preservedIds.has(player.id));
+        const usedSlotKeys = new Set(
+          preservedStarters.map((row: any) => row.slot_key).filter(Boolean),
+        );
+        const remainingSlots = slots.filter(
+          (slot) => !usedSlotKeys.has(slot.slotKey),
+        );
+        const remainingPlayers = approvedPlayers.filter(
+          (player) => !preservedIds.has(player.id),
+        );
         for (const slot of remainingSlots) {
           const ranked = remainingPlayers
             .filter((player) => !preservedIds.has(player.id))
-            .map((player) => ({ player, ...fitForSlot(slot, player, playingStyle) }))
+            .map((player) => ({
+              player,
+              ...fitForSlot(slot, player, playingStyle),
+            }))
             .sort((a, b) => b.score - a.score);
           const best = ranked[0];
           if (!best) continue;
@@ -1717,15 +2575,41 @@ managerRouter.get(
             display_order: playersForLineup.length,
             is_captain: false,
             fit_label: best.fitLabel,
-            score: Number(best.score.toFixed(2))
+            score: Number(best.score.toFixed(2)),
           });
-          if (playersForLineup.filter((player) => player.is_starter).length === 11) break;
+          if (
+            playersForLineup.filter((player) => player.is_starter).length === 11
+          )
+            break;
         }
       }
     } else {
       const picks = autoPickBestXI(approvedPlayers, formation, playingStyle);
-      const starterIds = new Set(picks.map((pick) => pick.player_registration_id));
-      playersForLineup = lineupPlayersFromPicks(picks, buildBench(approvedPlayers, starterIds, benchSize));
+      const starterIds = new Set(
+        picks.map((pick) => pick.player_registration_id),
+      );
+      playersForLineup = lineupPlayersFromPicks(
+        picks,
+        buildBench(approvedPlayers, starterIds, benchSize),
+      );
+    }
+
+    const selectedIds = new Set(
+      playersForLineup.map((player) => String(player.player_registration_id)),
+    );
+    for (const player of approvedPlayers) {
+      if (selectedIds.has(player.id)) continue;
+      playersForLineup.push({
+        player_registration_id: player.id,
+        is_starter: false,
+        position: positionToCoarse(naturalPosition(player)),
+        slot_key: null,
+        display_role: "SUB",
+        player_natural_position: naturalPosition(player),
+        display_order: playersForLineup.length,
+        is_captain: false,
+      });
+      selectedIds.add(player.id);
     }
 
     res.json({
@@ -1747,80 +2631,158 @@ managerRouter.get(
       initialLineup: {
         formation,
         playing_style: playingStyle,
-        players: playersForLineup
-      }
+        players: playersForLineup,
+      },
     });
-  })
+  }),
 );
 
 managerRouter.post(
   "/matches/:matchId/lineup/auto-pick",
   asyncHandler(async (req, res) => {
     const input = lineupBuilderAutoPickSchema.parse(req.body);
-    if (!isValidFormation(input.formation)) throw new AppError(400, "Unsupported formation");
-    if (!isValidPlayingStyle(input.playingStyle)) throw new AppError(400, "Unsupported playing style");
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, input.teamId);
-    if (teamRegistration.season_id !== input.seasonId) throw new AppError(400, "Season does not match this team");
-    const { data: fixture, error: fixtureError } = await supabaseAdmin.from("fixtures").select("*").eq("id", req.params.matchId).single();
+    if (!isValidFormation(input.formation))
+      throw new AppError(400, "Unsupported formation");
+    if (!isValidPlayingStyle(input.playingStyle))
+      throw new AppError(400, "Unsupported playing style");
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      input.teamId,
+    );
+    if (teamRegistration.season_id !== input.seasonId)
+      throw new AppError(400, "Season does not match this team");
+    const { data: fixture, error: fixtureError } = await supabaseAdmin
+      .from("fixtures")
+      .select("*")
+      .eq("id", req.params.matchId)
+      .single();
     if (fixtureError) throw fixtureError;
-    if (![fixture.home_team_registration_id, fixture.away_team_registration_id].includes(teamRegistration.id)) throw new AppError(400, "Team is not assigned to this fixture");
+    if (
+      ![
+        fixture.home_team_registration_id,
+        fixture.away_team_registration_id,
+      ].includes(teamRegistration.id)
+    )
+      throw new AppError(400, "Team is not assigned to this fixture");
     const season = relatedOne(teamRegistration.seasons);
-    const availablePlayers = await loadAvailableLineupPlayers(teamRegistration.id);
-    const picks = autoPickBestXI(availablePlayers, input.formation, input.playingStyle as PlayingStyle);
-    const starterIds = new Set(picks.map((pick) => pick.player_registration_id));
-    const bench = buildBench(availablePlayers, starterIds, Number(season?.substitute_limit ?? 7));
-    await saveManagerPreference(req.auth!.userId, teamRegistration.id, teamRegistration.season_id, input.formation, input.playingStyle as PlayingStyle);
+    const availablePlayers = await loadAvailableLineupPlayers(
+      teamRegistration.id,
+    );
+    const picks = autoPickBestXI(
+      availablePlayers,
+      input.formation,
+      input.playingStyle as PlayingStyle,
+    );
+    const starterIds = new Set(
+      picks.map((pick) => pick.player_registration_id),
+    );
+    const bench = buildBench(
+      availablePlayers,
+      starterIds,
+      Number(season?.substitute_limit ?? 7),
+    );
+    await saveManagerPreference(
+      req.auth!.userId,
+      teamRegistration.id,
+      teamRegistration.season_id,
+      input.formation,
+      input.playingStyle as PlayingStyle,
+    );
     res.json({
       formationSlots: getFormationSlots(input.formation),
       lineup: {
         formation: input.formation,
         playing_style: input.playingStyle,
-        players: lineupPlayersFromPicks(picks, bench)
-      }
+        players: lineupPlayersFromPicks(picks, bench),
+      },
     });
-  })
+  }),
 );
 
 managerRouter.get(
   "/matches/:matchId/lineup/alternatives",
   asyncHandler(async (req, res) => {
-    const teamId = typeof req.query.teamId === "string" ? req.query.teamId : undefined;
-    const slotKey = typeof req.query.slotKey === "string" ? req.query.slotKey : undefined;
+    const teamId =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    const slotKey =
+      typeof req.query.slotKey === "string" ? req.query.slotKey : undefined;
     const formation = normalizedFormation(req.query.formation);
     const playingStyle = normalizedPlayingStyle(req.query.playingStyle);
-    if (!teamId || !slotKey) throw new AppError(400, "teamId and slotKey are required");
+    if (!teamId || !slotKey)
+      throw new AppError(400, "teamId and slotKey are required");
     await assertManagerOwnsTeam(req.auth!.userId, teamId);
-    const slot = getFormationSlots(formation).find((item) => item.slotKey === slotKey);
+    const slot = getFormationSlots(formation).find(
+      (item) => item.slotKey === slotKey,
+    );
     if (!slot) throw new AppError(404, "Formation slot not found");
     const availablePlayers = await loadAvailableLineupPlayers(teamId);
     const alternatives = availablePlayers
       .map((player) => ({
         player,
         natural_position: naturalPosition(player),
-        ...fitForSlot(slot, player, playingStyle)
+        ...fitForSlot(slot, player, playingStyle),
       }))
-      .sort((a, b) => b.score - a.score || (a.player.players?.full_name ?? "").localeCompare(b.player.players?.full_name ?? ""));
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          (a.player.players?.full_name ?? "").localeCompare(
+            b.player.players?.full_name ?? "",
+          ),
+      );
     res.json({ slot, alternatives });
-  })
+  }),
 );
 
 managerRouter.post(
   "/matches/:matchId/lineup",
   asyncHandler(async (req, res) => {
-    const input = lineupSubmissionSchema.parse({ ...req.body, fixture_id: req.params.matchId });
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, input.team_registration_id);
+    const input = lineupSubmissionSchema.parse({
+      ...req.body,
+      fixture_id: req.params.matchId,
+    });
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      input.team_registration_id,
+    );
     const { data: fixture, error: fixtureError } = await supabaseAdmin
       .from("fixtures")
       .select("*")
       .eq("id", input.fixture_id)
       .single();
     if (fixtureError) throw fixtureError;
-    if (fixture.season_id !== teamRegistration.season_id) throw new AppError(400, "Fixture belongs to a different season");
-    if (![fixture.home_team_registration_id, fixture.away_team_registration_id].includes(input.team_registration_id)) {
+    if (fixture.season_id !== teamRegistration.season_id)
+      throw new AppError(400, "Fixture belongs to a different season");
+    if (
+      ![
+        fixture.home_team_registration_id,
+        fixture.away_team_registration_id,
+      ].includes(input.team_registration_id)
+    ) {
       throw new AppError(400, "Team is not assigned to this fixture");
     }
-    const expectedSide = fixture.home_team_registration_id === input.team_registration_id ? "HOME" : "AWAY";
-    if (input.side !== expectedSide) throw new AppError(400, "Lineup side does not match fixture assignment");
+    const expectedSide =
+      fixture.home_team_registration_id === input.team_registration_id
+        ? "HOME"
+        : "AWAY";
+    if (input.side !== expectedSide)
+      throw new AppError(400, "Lineup side does not match fixture assignment");
+    const { data: existingLineup, error: existingLineupError } =
+      await supabaseAdmin
+        .from("lineups")
+        .select("id,status")
+        .eq("fixture_id", input.fixture_id)
+        .eq("team_registration_id", input.team_registration_id)
+        .maybeSingle();
+    if (existingLineupError) throw existingLineupError;
+    if (
+      existingLineup &&
+      ["PENDING", "CONFIRMED"].includes(existingLineup.status)
+    ) {
+      throw new AppError(
+        400,
+        "This lineup is already submitted or confirmed and cannot be changed until admin rejects it.",
+      );
+    }
 
     const { data: players, error: playersError } = await supabaseAdmin
       .from("player_season_registrations")
@@ -1829,6 +2791,11 @@ managerRouter.post(
       .eq("team_registration_id", input.team_registration_id);
     if (playersError) throw playersError;
     validateLineupSubmission(input, players ?? [], fixture.season_id);
+    const captainId =
+      input.captain_id ??
+      input.players.find((player) => player.is_captain)
+        ?.player_registration_id ??
+      null;
 
     const { data: lineup, error } = await supabaseAdmin
       .from("lineups")
@@ -1841,37 +2808,48 @@ managerRouter.post(
           manager_id: req.auth!.userId,
           formation: input.formation,
           playing_style: normalizedPlayingStyle(input.playing_style),
-          captain_id: input.captain_id ?? null,
+          captain_id: captainId,
           status: "PENDING",
           submitted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         },
-        { onConflict: "fixture_id,team_registration_id" }
+        { onConflict: "fixture_id,team_registration_id" },
       )
       .select("*")
       .single();
     if (error) throw error;
 
-    await supabaseAdmin.from("lineup_players").delete().eq("lineup_id", lineup.id);
-    const { error: insertError } = await supabaseAdmin.from("lineup_players").insert(
-      input.players.map((player) => ({
-        lineup_id: lineup.id,
-        player_registration_id: player.player_registration_id,
-        is_starter: player.is_starter,
-        is_substitute: !player.is_starter,
-        position: player.position,
-        football_position: player.player_natural_position ?? null,
-        player_natural_position: player.player_natural_position ?? null,
-        slot_key: player.slot_key ?? null,
-        display_role: player.display_role ?? null,
-        display_order: player.display_order ?? null,
-        is_captain: player.is_captain ?? player.player_registration_id === input.captain_id
-      }))
-    );
+    await supabaseAdmin
+      .from("lineup_players")
+      .delete()
+      .eq("lineup_id", lineup.id);
+    const { error: insertError } = await supabaseAdmin
+      .from("lineup_players")
+      .insert(
+        input.players.map((player) => ({
+          lineup_id: lineup.id,
+          player_registration_id: player.player_registration_id,
+          is_starter: player.is_starter,
+          is_substitute: !player.is_starter,
+          position: player.position,
+          football_position: player.player_natural_position ?? null,
+          player_natural_position: player.player_natural_position ?? null,
+          slot_key: player.slot_key ?? null,
+          display_role: player.display_role ?? null,
+          display_order: player.display_order ?? null,
+          is_captain: player.player_registration_id === captainId,
+        })),
+      );
     if (insertError) throw insertError;
-    await saveManagerPreference(req.auth!.userId, input.team_registration_id, fixture.season_id, input.formation, normalizedPlayingStyle(input.playing_style));
+    await saveManagerPreference(
+      req.auth!.userId,
+      input.team_registration_id,
+      fixture.season_id,
+      input.formation,
+      normalizedPlayingStyle(input.playing_style),
+    );
     res.status(201).json({ lineup: { ...lineup, players: input.players } });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -1881,19 +2859,24 @@ managerRouter.get(
     const ids = teams.map((team) => team.id);
     const { data: lineups, error } = await supabaseAdmin
       .from("lineups")
-      .select("*,lineup_players(*,player_season_registrations(id,shirt_number,football_position,players(full_name,avatar_url)))")
+      .select(
+        "*,lineup_players(*,player_season_registrations(id,shirt_number,football_position,players(full_name,avatar_url)))",
+      )
       .eq("fixture_id", req.params.matchId)
       .in("team_registration_id", ids);
     if (error) throw error;
     res.json({ lineups: lineups ?? [] });
-  })
+  }),
 );
 
 managerRouter.post(
   "/players",
   asyncHandler(async (req, res) => {
     const input = playerSubmissionSchema.parse(req.body);
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, input.team_registration_id);
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      input.team_registration_id,
+    );
     validateNumericIdentity(input.id_type, input.id_number);
     const idHash = hashIdentityNumber(input.id_number);
     const last4 = identityLast4(input.id_number);
@@ -1907,9 +2890,9 @@ managerRouter.post(
           nationality: input.nationality ?? null,
           id_type: input.id_type,
           id_number_hash: idHash,
-          id_number_last4: last4
+          id_number_last4: last4,
         },
-        { onConflict: "id_number_hash" }
+        { onConflict: "id_number_hash" },
       )
       .select("*")
       .single();
@@ -1923,33 +2906,38 @@ managerRouter.post(
         team_registration_id: input.team_registration_id,
         position: input.position,
         shirt_number: input.shirt_number ?? null,
-        status: "PENDING"
+        status: "PENDING",
       })
       .select("*")
       .single();
     if (error) throw error;
 
     if (input.proof_storage_path) {
-      const { error: proofError } = await supabaseAdmin.from("identity_proofs").insert({
-        player_id: player.id,
-        submitted_by: req.auth!.userId,
-        id_type: input.id_type,
-        id_number_hash: idHash,
-        id_number_last4: last4,
-        storage_path: input.proof_storage_path
-      });
+      const { error: proofError } = await supabaseAdmin
+        .from("identity_proofs")
+        .insert({
+          player_id: player.id,
+          submitted_by: req.auth!.userId,
+          id_type: input.id_type,
+          id_number_hash: idHash,
+          id_number_last4: last4,
+          storage_path: input.proof_storage_path,
+        });
       if (proofError) throw proofError;
     }
     if (teamRegistration.status === RegistrationStatus.DRAFT) {
       const { error: teamStatusError } = await supabaseAdmin
         .from("team_registrations")
-        .update({ status: RegistrationStatus.PENDING, updated_at: new Date().toISOString() })
+        .update({
+          status: RegistrationStatus.PENDING,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", teamRegistration.id);
       if (teamStatusError) throw teamStatusError;
     }
 
     res.status(201).json({ player_registration: registration });
-  })
+  }),
 );
 
 managerRouter.post(
@@ -1962,9 +2950,15 @@ managerRouter.post(
       .eq("id", input.player_registration_id)
       .single();
     if (regError) throw regError;
-    await assertManagerOwnsTeam(req.auth!.userId, playerReg.team_registration_id);
+    await assertManagerOwnsTeam(
+      req.auth!.userId,
+      playerReg.team_registration_id,
+    );
     if (playerReg.status === "APPROVED") {
-      throw new AppError(403, "Hidden attributes can only be changed by managers before admin player approval");
+      throw new AppError(
+        403,
+        "Hidden attributes can only be changed by managers before admin player approval",
+      );
     }
 
     const { data, error } = await supabaseAdmin
@@ -1979,34 +2973,64 @@ managerRouter.post(
           dribbling: input.dribbling,
           defending: input.defending,
           physical: input.physical,
-          goalkeeping: input.goalkeeping
+          goalkeeping: input.goalkeeping,
         },
-        { onConflict: "player_registration_id" }
+        { onConflict: "player_registration_id" },
       )
       .select("*")
       .single();
     if (error) throw error;
     res.json({ hidden_attributes: data });
-  })
+  }),
 );
 
 managerRouter.post(
   "/lineups",
   asyncHandler(async (req, res) => {
     const input = lineupSubmissionSchema.parse(req.body);
-    const teamRegistration = await assertManagerOwnsTeam(req.auth!.userId, input.team_registration_id);
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      input.team_registration_id,
+    );
     const { data: fixture, error: fixtureError } = await supabaseAdmin
       .from("fixtures")
       .select("*")
       .eq("id", input.fixture_id)
       .single();
     if (fixtureError) throw fixtureError;
-    if (fixture.season_id !== teamRegistration.season_id) throw new AppError(400, "Fixture belongs to a different season");
-    if (![fixture.home_team_registration_id, fixture.away_team_registration_id].includes(input.team_registration_id)) {
+    if (fixture.season_id !== teamRegistration.season_id)
+      throw new AppError(400, "Fixture belongs to a different season");
+    if (
+      ![
+        fixture.home_team_registration_id,
+        fixture.away_team_registration_id,
+      ].includes(input.team_registration_id)
+    ) {
       throw new AppError(400, "Team is not assigned to this fixture");
     }
-    const expectedSide = fixture.home_team_registration_id === input.team_registration_id ? "HOME" : "AWAY";
-    if (input.side !== expectedSide) throw new AppError(400, "Lineup side does not match fixture assignment");
+    const expectedSide =
+      fixture.home_team_registration_id === input.team_registration_id
+        ? "HOME"
+        : "AWAY";
+    if (input.side !== expectedSide)
+      throw new AppError(400, "Lineup side does not match fixture assignment");
+    const { data: existingLineup, error: existingLineupError } =
+      await supabaseAdmin
+        .from("lineups")
+        .select("id,status")
+        .eq("fixture_id", input.fixture_id)
+        .eq("team_registration_id", input.team_registration_id)
+        .maybeSingle();
+    if (existingLineupError) throw existingLineupError;
+    if (
+      existingLineup &&
+      ["PENDING", "CONFIRMED"].includes(existingLineup.status)
+    ) {
+      throw new AppError(
+        400,
+        "This lineup is already submitted or confirmed and cannot be changed until admin rejects it.",
+      );
+    }
 
     const { data: players, error: playersError } = await supabaseAdmin
       .from("player_season_registrations")
@@ -2015,6 +3039,11 @@ managerRouter.post(
       .eq("team_registration_id", input.team_registration_id);
     if (playersError) throw playersError;
     validateLineupSubmission(input, players ?? [], fixture.season_id);
+    const captainId =
+      input.captain_id ??
+      input.players.find((player) => player.is_captain)
+        ?.player_registration_id ??
+      null;
 
     const { data: lineup, error } = await supabaseAdmin
       .from("lineups")
@@ -2027,37 +3056,48 @@ managerRouter.post(
           manager_id: req.auth!.userId,
           formation: input.formation,
           playing_style: normalizedPlayingStyle(input.playing_style),
-          captain_id: input.captain_id ?? null,
+          captain_id: captainId,
           status: "PENDING",
           submitted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         },
-        { onConflict: "fixture_id,team_registration_id" }
+        { onConflict: "fixture_id,team_registration_id" },
       )
       .select("*")
       .single();
     if (error) throw error;
 
-    await supabaseAdmin.from("lineup_players").delete().eq("lineup_id", lineup.id);
-    const { error: insertError } = await supabaseAdmin.from("lineup_players").insert(
-      input.players.map((player) => ({
-        lineup_id: lineup.id,
-        player_registration_id: player.player_registration_id,
-        is_starter: player.is_starter,
-        is_substitute: !player.is_starter,
-        position: player.position,
-        football_position: player.player_natural_position ?? null,
-        player_natural_position: player.player_natural_position ?? null,
-        slot_key: player.slot_key ?? null,
-        display_role: player.display_role ?? null,
-        display_order: player.display_order ?? null,
-        is_captain: player.is_captain ?? player.player_registration_id === input.captain_id
-      }))
-    );
+    await supabaseAdmin
+      .from("lineup_players")
+      .delete()
+      .eq("lineup_id", lineup.id);
+    const { error: insertError } = await supabaseAdmin
+      .from("lineup_players")
+      .insert(
+        input.players.map((player) => ({
+          lineup_id: lineup.id,
+          player_registration_id: player.player_registration_id,
+          is_starter: player.is_starter,
+          is_substitute: !player.is_starter,
+          position: player.position,
+          football_position: player.player_natural_position ?? null,
+          player_natural_position: player.player_natural_position ?? null,
+          slot_key: player.slot_key ?? null,
+          display_role: player.display_role ?? null,
+          display_order: player.display_order ?? null,
+          is_captain: player.player_registration_id === captainId,
+        })),
+      );
     if (insertError) throw insertError;
-    await saveManagerPreference(req.auth!.userId, input.team_registration_id, fixture.season_id, input.formation, normalizedPlayingStyle(input.playing_style));
+    await saveManagerPreference(
+      req.auth!.userId,
+      input.team_registration_id,
+      fixture.season_id,
+      input.formation,
+      normalizedPlayingStyle(input.playing_style),
+    );
     res.status(201).json({ lineup: { ...lineup, players: input.players } });
-  })
+  }),
 );
 
 managerRouter.get(
@@ -2071,14 +3111,19 @@ managerRouter.get(
     const ids = (teams ?? []).map((team) => team.id);
     if (ids.length === 0) return res.json({ standings: [], player_stats: [] });
 
-    const { data: standings, error: standingsError } = await supabaseAdmin.from("standings").select("*").in("team_registration_id", ids);
+    const { data: standings, error: standingsError } = await supabaseAdmin
+      .from("standings")
+      .select("*")
+      .in("team_registration_id", ids);
     if (standingsError) throw standingsError;
 
     const { data: players, error: playerError } = await supabaseAdmin
       .from("player_season_stats")
-      .select("*,player_season_registrations!inner(team_registration_id,players(full_name))")
+      .select(
+        "*,player_season_registrations!inner(team_registration_id,players(full_name))",
+      )
       .in("player_season_registrations.team_registration_id", ids);
     if (playerError) throw playerError;
     res.json({ standings, player_stats: players });
-  })
+  }),
 );

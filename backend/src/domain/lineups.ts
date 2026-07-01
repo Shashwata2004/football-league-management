@@ -26,6 +26,16 @@ export function validateLineupSubmission(
   if (starters.filter((player) => player.position === PlayerPosition.GK).length !== 1) {
     throw new AppError(400, "Lineup must contain exactly one starting goalkeeper");
   }
+  const captainId = input.captain_id ?? input.players.find((player) => player.is_captain)?.player_registration_id ?? null;
+  if (!captainId) throw new AppError(400, "Lineup must have a captain");
+  if (!starters.some((player) => player.player_registration_id === captainId)) {
+    throw new AppError(400, "Captain must be selected from the starting XI");
+  }
+  const captainFlags = input.players.filter((player) => player.is_captain);
+  if (captainFlags.length > 1) throw new AppError(400, "Lineup can only have one captain");
+  if (captainFlags.length === 1 && captainFlags[0]?.player_registration_id !== captainId) {
+    throw new AppError(400, "Captain selection is inconsistent");
+  }
 
   for (const player of input.players) {
     if (seen.has(player.player_registration_id)) {

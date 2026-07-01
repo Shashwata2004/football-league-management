@@ -117,7 +117,7 @@ export function generateLeagueFixturePreview(params: {
   return {
     warnings,
     fixtures: rounds.flatMap((round, roundIndex) =>
-      round.map((pairing) => ({
+      round.map((pairing, pairingIndex) => ({
         round_no: pairing.round_no,
         matchday_number: roundIndex + 1,
         stage: "LEAGUE",
@@ -127,7 +127,7 @@ export function generateLeagueFixturePreview(params: {
         away_team_registration_id: pairing.away_team_registration_id,
         home_source: null,
         away_source: null,
-        kickoff_at: roundDates[roundIndex] ?? null,
+        kickoff_at: roundDates[roundIndex] ? toEveningKickoffIso(parseDate(roundDates[roundIndex]) ?? new Date(), pairingIndex) : null,
         status: "SCHEDULED"
       }))
     )
@@ -168,7 +168,7 @@ export function generateGroupFixturePreview(params: {
         cursor = addDays(cursor, 1);
       }
 
-      for (const fixture of roundFixtures) {
+      for (const [fixtureIndex, fixture] of roundFixtures.entries()) {
         scheduled.push({
           round_no: matchdayIndex + 1,
           matchday_number: matchdayIndex + 1,
@@ -179,7 +179,7 @@ export function generateGroupFixturePreview(params: {
           away_team_registration_id: fixture.away_team_registration_id,
           home_source: null,
           away_source: null,
-          kickoff_at: toDateOnlyIso(cursor),
+          kickoff_at: toEveningKickoffIso(cursor, fixtureIndex),
           status: "SCHEDULED"
         });
       }
@@ -224,7 +224,7 @@ export function generateKnockoutFixturePreview(params: {
       away_team_registration_id: firstRoundTeams[index + 1]?.team_registration_id ?? null,
       home_source: null,
       away_source: null,
-      kickoff_at: toDateOnlyIso(cursor),
+      kickoff_at: toEveningKickoffIso(cursor, Math.floor(index / 2)),
       status: "SCHEDULED"
     });
   }
@@ -249,7 +249,7 @@ export function generateKnockoutFixturePreview(params: {
         away_team_registration_id: null,
         home_source: `Winner of ${previousA}`,
         away_source: `Winner of ${previousB}`,
-        kickoff_at: toDateOnlyIso(cursor),
+        kickoff_at: toEveningKickoffIso(cursor, i - 1),
         status: "WAITING_FOR_TEAMS"
       });
     }
@@ -292,11 +292,11 @@ function distributeRoundDates(roundCount: number, startDate: string | null | und
   const end = parseDate(endDate);
   if (!start || !end) {
     warnings.push("Season start date and end date should be set before saving fixtures.");
-    return Array.from({ length: roundCount }, (_, index) => toDateOnlyIso(addDays(new Date(), index * 2)));
+    return Array.from({ length: roundCount }, (_, index) => toEveningKickoffIso(addDays(new Date(), index * 2)));
   }
   const availableDays = Math.max(0, daysBetween(start, end));
   const interval = Math.max(Math.floor(availableDays / Math.max(roundCount - 1, 1)), 2);
-  const dates = Array.from({ length: roundCount }, (_, index) => toDateOnlyIso(addDays(start, index * interval)));
+  const dates = Array.from({ length: roundCount }, (_, index) => toEveningKickoffIso(addDays(start, index * interval)));
   if (dates.some((date) => parseDate(date)! > end)) {
     warnings.push("Season date range is too short for clean fixture spacing.");
   }
@@ -353,8 +353,11 @@ function daysBetween(a: Date, b: Date) {
   return Math.floor((b.getTime() - a.getTime()) / 86_400_000);
 }
 
-function toDateOnlyIso(date: Date) {
-  return date.toISOString().slice(0, 10);
+function toEveningKickoffIso(date: Date, sequence = 0) {
+  const kickoff = new Date(date);
+  const utcHoursForBangladeshEvening = [12, 13, 14, 15];
+  kickoff.setUTCHours(utcHoursForBangladeshEvening[sequence % utcHoursForBangladeshEvening.length]!, 0, 0, 0);
+  return kickoff.toISOString();
 }
 
 export function generateGroupStagePairings(

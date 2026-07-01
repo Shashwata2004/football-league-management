@@ -29,9 +29,17 @@ import {
   User,
   UserPlus,
   Users,
-  XCircle
+  XCircle,
 } from "lucide-react";
-import { FixtureStatus, RegistrationStatus, SeasonFormat, SeasonPhase, type LeagueDto, type ProfileDto, type SeasonDto } from "@flms/shared";
+import {
+  FixtureStatus,
+  RegistrationStatus,
+  SeasonFormat,
+  SeasonPhase,
+  type LeagueDto,
+  type ProfileDto,
+  type SeasonDto,
+} from "@flms/shared";
 import { api, publicApi } from "@/lib/api";
 import { clearAuth } from "@/lib/auth";
 
@@ -41,6 +49,7 @@ type TabId =
   | "team-requests"
   | "player-requests"
   | "fixtures"
+  | "lineups"
   | "matches-ready"
   | "standings"
   | "reports"
@@ -214,10 +223,55 @@ interface ReadyMatchRow {
   id: string;
   home: string;
   away: string;
+  homeLogoUrl?: string | null;
+  awayLogoUrl?: string | null;
   stage: string;
   kickoff: string;
   status: string;
+  submitted_lineups?: number;
+  confirmed_lineups?: number;
+  can_simulate?: boolean;
 }
+
+type AdminPendingLineupRow = {
+  id: string;
+  fixture_id: string;
+  team_registration_id: string;
+  side: "HOME" | "AWAY";
+  formation: string;
+  status: string;
+  submitted_at?: string | null;
+  fixtures?: {
+    id: string;
+    kickoff_at?: string | null;
+    stage?: string | null;
+    status?: string | null;
+    home_team?: {
+      id: string;
+      teams?: {
+        name?: string | null;
+        short_name?: string | null;
+        logo_url?: string | null;
+      } | null;
+    } | null;
+    away_team?: {
+      id: string;
+      teams?: {
+        name?: string | null;
+        short_name?: string | null;
+        logo_url?: string | null;
+      } | null;
+    } | null;
+  } | null;
+  team_registrations?: {
+    id: string;
+    teams?: {
+      name?: string | null;
+      short_name?: string | null;
+      logo_url?: string | null;
+    } | null;
+  } | null;
+};
 
 interface AdminSeasonData {
   teams: AdminTeam[];
@@ -229,9 +283,24 @@ interface AdminSeasonData {
   messages: AdminMessageRow[];
   readyMatches: ReadyMatchRow[];
   pendingLineups: number;
-  topScorer: { name: string; team: string; goals: number; matches: number } | null;
-  topAssist: { name: string; team: string; assists: number; matches: number } | null;
-  topRated: { name: string; team: string; rating: string; matches: number } | null;
+  topScorer: {
+    name: string;
+    team: string;
+    goals: number;
+    matches: number;
+  } | null;
+  topAssist: {
+    name: string;
+    team: string;
+    assists: number;
+    matches: number;
+  } | null;
+  topRated: {
+    name: string;
+    team: string;
+    rating: string;
+    matches: number;
+  } | null;
   statsReport: AdminStatsReport;
 }
 
@@ -264,7 +333,7 @@ interface AdminStatsReport {
 
 const emptyStatsReport: AdminStatsReport = {
   player_sections: [],
-  team_sections: []
+  team_sections: [],
 };
 
 const emptyAdminSeasonData: AdminSeasonData = {
@@ -280,7 +349,7 @@ const emptyAdminSeasonData: AdminSeasonData = {
   topScorer: null,
   topAssist: null,
   topRated: null,
-  statsReport: emptyStatsReport
+  statsReport: emptyStatsReport,
 };
 
 type TeamRegistrationApiRow = {
@@ -308,7 +377,10 @@ type TeamRegistrationApiRow = {
     gk_away_jersey_url?: string | null;
   } | null;
   seasons?: { name?: string | null } | null;
-  manager?: { full_name?: string | null; email?: string | null } | { full_name?: string | null; email?: string | null }[] | null;
+  manager?:
+    | { full_name?: string | null; email?: string | null }
+    | { full_name?: string | null; email?: string | null }[]
+    | null;
 };
 
 type PlayerLifecycleAction = "reject" | "remove" | "suspend" | "unsuspend";
@@ -342,43 +414,43 @@ type PlayerRegistrationApiRow = {
     teams?: { name?: string | null } | null;
   } | null;
   player_abilities?:
-  | {
-    rating_tier?: string | null;
-    shooting?: number | null;
-    passing?: number | null;
-    dribbling?: number | null;
-    defending?: number | null;
-    physical?: number | null;
-    pace?: number | null;
-    stamina?: number | null;
-    shot_stopping?: number | null;
-    reflexes?: number | null;
-    positioning?: number | null;
-    handling?: number | null;
-    diving?: number | null;
-    distribution?: number | null;
-    communication?: number | null;
-    overall_rating?: number | null;
-  }
-  | {
-    rating_tier?: string | null;
-    shooting?: number | null;
-    passing?: number | null;
-    dribbling?: number | null;
-    defending?: number | null;
-    physical?: number | null;
-    pace?: number | null;
-    stamina?: number | null;
-    shot_stopping?: number | null;
-    reflexes?: number | null;
-    positioning?: number | null;
-    handling?: number | null;
-    diving?: number | null;
-    distribution?: number | null;
-    communication?: number | null;
-    overall_rating?: number | null;
-  }[]
-  | null;
+    | {
+        rating_tier?: string | null;
+        shooting?: number | null;
+        passing?: number | null;
+        dribbling?: number | null;
+        defending?: number | null;
+        physical?: number | null;
+        pace?: number | null;
+        stamina?: number | null;
+        shot_stopping?: number | null;
+        reflexes?: number | null;
+        positioning?: number | null;
+        handling?: number | null;
+        diving?: number | null;
+        distribution?: number | null;
+        communication?: number | null;
+        overall_rating?: number | null;
+      }
+    | {
+        rating_tier?: string | null;
+        shooting?: number | null;
+        passing?: number | null;
+        dribbling?: number | null;
+        defending?: number | null;
+        physical?: number | null;
+        pace?: number | null;
+        stamina?: number | null;
+        shot_stopping?: number | null;
+        reflexes?: number | null;
+        positioning?: number | null;
+        handling?: number | null;
+        diving?: number | null;
+        distribution?: number | null;
+        communication?: number | null;
+        overall_rating?: number | null;
+      }[]
+    | null;
   football_position?: string | null;
 };
 
@@ -399,8 +471,22 @@ type FixtureApiRow = {
   home_score?: number | null;
   away_score?: number | null;
   result_confirmed?: boolean | null;
-  home_team?: { id: string; teams?: { name?: string | null; short_name?: string | null; logo_url?: string | null } | null } | null;
-  away_team?: { id: string; teams?: { name?: string | null; short_name?: string | null; logo_url?: string | null } | null } | null;
+  home_team?: {
+    id: string;
+    teams?: {
+      name?: string | null;
+      short_name?: string | null;
+      logo_url?: string | null;
+    } | null;
+  } | null;
+  away_team?: {
+    id: string;
+    teams?: {
+      name?: string | null;
+      short_name?: string | null;
+      logo_url?: string | null;
+    } | null;
+  } | null;
   season_groups?: { id: string; name?: string | null } | null;
 };
 
@@ -461,6 +547,10 @@ type MatchDetailLineupPlayer = {
   player_registration_id: string;
   is_starter?: boolean | null;
   football_position?: string | null;
+  player_natural_position?: string | null;
+  slot_key?: string | null;
+  display_role?: string | null;
+  is_captain?: boolean | null;
   shirt_number?: number | null;
   player_season_registrations?: {
     id: string;
@@ -471,12 +561,23 @@ type MatchDetailLineupPlayer = {
   } | null;
 };
 
+type AdminFormationSlot = {
+  slotKey: string;
+  displayRole: string;
+  line: "GK" | "DEF" | "MID" | "ATT";
+  x: number;
+  y: number;
+};
+
 type MatchDetailLineup = {
   id: string;
   team_registration_id: string;
   side: string;
   formation?: string | null;
+  playing_style?: string | null;
   status?: string | null;
+  captain_id?: string | null;
+  formation_slots?: AdminFormationSlot[] | null;
   lineup_players?: MatchDetailLineupPlayer[] | null;
 };
 
@@ -592,7 +693,22 @@ type PlayerSeasonStatApiRow = {
 
 function safeDate(value?: string | null) {
   if (!value) return "Not set";
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function safeDateTime(value?: string | null) {
+  if (!value) return "Kickoff not set";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function calculateAge(dateOfBirth?: string | null) {
@@ -601,7 +717,8 @@ function calculateAge(dateOfBirth?: string | null) {
   const now = new Date();
   let age = now.getFullYear() - born.getFullYear();
   const monthDiff = now.getMonth() - born.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < born.getDate())) age -= 1;
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < born.getDate()))
+    age -= 1;
   return age;
 }
 
@@ -622,7 +739,9 @@ function relatedOne<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
-function adminPlayerStatus(row: PlayerRegistrationApiRow): AdminPlayer["playerStatus"] {
+function adminPlayerStatus(
+  row: PlayerRegistrationApiRow,
+): AdminPlayer["playerStatus"] {
   if (row.player_status === "REMOVED") return "Removed";
   if (row.player_status === "SUSPENDED") return "Suspended";
   if (row.status === RegistrationStatus.APPROVED) return "Approved";
@@ -630,7 +749,9 @@ function adminPlayerStatus(row: PlayerRegistrationApiRow): AdminPlayer["playerSt
   return "Pending";
 }
 
-function abilityDetails(row: PlayerRegistrationApiRow): AdminPlayer["abilityDetails"] {
+function abilityDetails(
+  row: PlayerRegistrationApiRow,
+): AdminPlayer["abilityDetails"] {
   const ability = relatedOne(row.player_abilities);
   if (!ability) return [];
   const entries: Array<[string, number | string | null | undefined]> = [
@@ -649,10 +770,12 @@ function abilityDetails(row: PlayerRegistrationApiRow): AdminPlayer["abilityDeta
     ["Handling", ability.handling],
     ["Diving", ability.diving],
     ["Distribution", ability.distribution],
-    ["Communication", ability.communication]
+    ["Communication", ability.communication],
   ];
   return entries
-    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .filter(
+      ([, value]) => value !== null && value !== undefined && value !== "",
+    )
     .map(([label, value]) => ({ label, value: String(value) }));
 }
 
@@ -660,7 +783,9 @@ function abilityOverall(row: PlayerRegistrationApiRow) {
   return relatedOne(row.player_abilities)?.overall_rating ?? null;
 }
 
-function zeroLeagueStats(stat?: PlayerSeasonStatApiRow): AdminPlayer["leagueStats"] {
+function zeroLeagueStats(
+  stat?: PlayerSeasonStatApiRow,
+): AdminPlayer["leagueStats"] {
   const shots = stat?.shots ?? 0;
   const shotsOnTarget = stat?.shots_on_target ?? 0;
   const totalPasses = stat?.total_passes ?? 0;
@@ -675,11 +800,15 @@ function zeroLeagueStats(stat?: PlayerSeasonStatApiRow): AdminPlayer["leagueStat
     assists: stat?.assists ?? 0,
     shots,
     shotsOnTarget,
-    shotAccuracy: shots ? `${Math.round((shotsOnTarget / shots) * 100)}%` : "0%",
+    shotAccuracy: shots
+      ? `${Math.round((shotsOnTarget / shots) * 100)}%`
+      : "0%",
     chancesCreated: stat?.chances_created ?? 0,
     totalPasses,
     accuratePasses,
-    passAccuracy: totalPasses ? `${Math.round((accuratePasses / totalPasses) * 100)}%` : "0%",
+    passAccuracy: totalPasses
+      ? `${Math.round((accuratePasses / totalPasses) * 100)}%`
+      : "0%",
     dribblesAttempted,
     successfulDribbles,
     dispossessed: stat?.dispossessed ?? 0,
@@ -688,9 +817,13 @@ function zeroLeagueStats(stat?: PlayerSeasonStatApiRow): AdminPlayer["leagueStat
     yellowCards: stat?.yellow_cards ?? 0,
     redCards: stat?.red_cards ?? 0,
     averageRating: stat?.average_rating ? String(stat.average_rating) : "N/A",
-    bestMatchRating: stat?.best_match_rating ? String(stat.best_match_rating) : "N/A",
-    lowestMatchRating: stat?.lowest_match_rating ? String(stat.lowest_match_rating) : "N/A",
-    playerOfTheMatch: stat?.player_of_match_count ?? 0
+    bestMatchRating: stat?.best_match_rating
+      ? String(stat.best_match_rating)
+      : "N/A",
+    lowestMatchRating: stat?.lowest_match_rating
+      ? String(stat.lowest_match_rating)
+      : "N/A",
+    playerOfTheMatch: stat?.player_of_match_count ?? 0,
   };
 }
 
@@ -703,12 +836,20 @@ function buildAdminSeasonData(input: {
   playerStats: PlayerSeasonStatApiRow[];
   statsReport: AdminStatsReport;
 }): AdminSeasonData {
-  const seasonTeamRegistrations = input.teamRegistrations.filter((row) => row.season_id === input.season.id);
-  const teamByRegistration = new Map(seasonTeamRegistrations.map((row) => [row.id, row]));
-  const statsByRegistration = new Map(input.playerStats.map((row) => [row.player_registration_id, row]));
+  const seasonTeamRegistrations = input.teamRegistrations.filter(
+    (row) => row.season_id === input.season.id,
+  );
+  const teamByRegistration = new Map(
+    seasonTeamRegistrations.map((row) => [row.id, row]),
+  );
+  const statsByRegistration = new Map(
+    input.playerStats.map((row) => [row.player_registration_id, row]),
+  );
 
   const playersByTeam = new Map<string, AdminPlayer[]>();
-  for (const row of input.playerRegistrations.filter((player) => player.season_id === input.season.id)) {
+  for (const row of input.playerRegistrations.filter(
+    (player) => player.season_id === input.season.id,
+  )) {
     const team = teamByRegistration.get(row.team_registration_id);
     const manager = relatedOne(team?.manager);
     const playerName = row.players?.full_name ?? "Unnamed player";
@@ -720,10 +861,14 @@ function buildAdminSeasonData(input: {
       fullName: playerName,
       avatar: initials(playerName),
       avatarUrl: row.players?.avatar_url ?? null,
-      dateOfBirth: row.players?.date_of_birth ? safeDate(row.players.date_of_birth) : "Not set",
+      dateOfBirth: row.players?.date_of_birth
+        ? safeDate(row.players.date_of_birth)
+        : "Not set",
       age: calculateAge(row.players?.date_of_birth),
       idType: row.players?.id_type ?? "N/A",
-      maskedId: row.players?.id_number_last4 ? `********${row.players.id_number_last4}` : "Not submitted",
+      maskedId: row.players?.id_number_last4
+        ? `********${row.players.id_number_last4}`
+        : "Not submitted",
       uploadedDocument: "Private document",
       jerseyNumber: row.shirt_number ?? 0,
       position: row.position,
@@ -733,13 +878,19 @@ function buildAdminSeasonData(input: {
       playerStatus,
       registrationDate: safeDate(row.created_at),
       submittedByManager: manager?.full_name ?? manager?.email ?? "Manager",
-      adminApprovalDate: row.reviewed_at ? safeDate(row.reviewed_at) : "Not approved yet",
-      adminMessage: row.rejection_reason ?? row.removal_reason ?? row.suspension_reason ?? "No admin message.",
+      adminApprovalDate: row.reviewed_at
+        ? safeDate(row.reviewed_at)
+        : "Not approved yet",
+      adminMessage:
+        row.rejection_reason ??
+        row.removal_reason ??
+        row.suspension_reason ??
+        "No admin message.",
       abilityRating: abilityLabel(row.ability_rating),
       overallRating: abilityOverall(row),
       abilityDetails: abilityDetails(row),
       leagueStats: zeroLeagueStats(stat),
-      performances: []
+      performances: [],
     };
     const list = playersByTeam.get(row.team_registration_id) ?? [];
     list.push(player);
@@ -748,24 +899,45 @@ function buildAdminSeasonData(input: {
 
   const fixturesByTeam = (teamRegistrationId: string) =>
     input.fixtures
-      .filter((fixture) => fixture.home_team_registration_id === teamRegistrationId || fixture.away_team_registration_id === teamRegistrationId)
+      .filter(
+        (fixture) =>
+          fixture.home_team_registration_id === teamRegistrationId ||
+          fixture.away_team_registration_id === teamRegistrationId,
+      )
       .map((fixture) => ({
         id: fixture.id,
         date: safeDate(fixture.kickoff_at),
-        home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
-        away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
+        home: fixture.home_team_registration_id
+          ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+              ?.name ?? "Home team")
+          : (fixture.home_source ?? "TBD"),
+        away: fixture.away_team_registration_id
+          ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+              ?.name ?? "Away team")
+          : (fixture.away_source ?? "TBD"),
         stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
         status: statusLabel(fixture.status),
-        venue: fixture.venue ?? "Not set"
+        venue: fixture.venue ?? "Not set",
       }));
 
   const teams: AdminTeam[] = seasonTeamRegistrations
-    .filter((row) => row.status === RegistrationStatus.APPROVED && !row.removed_at)
+    .filter(
+      (row) => row.status === RegistrationStatus.APPROVED && !row.removed_at,
+    )
     .map((row) => {
       const manager = relatedOne(row.manager);
       const players = playersByTeam.get(row.id) ?? [];
-      const suspendedPlayers = players.filter((player) => player.playerStatus === "Suspended" || player.playerStatus === "Removed");
-      const activePlayers = players.filter((player) => player.playerStatus !== "Suspended" && player.playerStatus !== "Removed" && player.playerStatus !== "Rejected");
+      const suspendedPlayers = players.filter(
+        (player) =>
+          player.playerStatus === "Suspended" ||
+          player.playerStatus === "Removed",
+      );
+      const activePlayers = players.filter(
+        (player) =>
+          player.playerStatus !== "Suspended" &&
+          player.playerStatus !== "Removed" &&
+          player.playerStatus !== "Rejected",
+      );
       const teamFixtures = fixturesByTeam(row.id);
       return {
         id: row.id,
@@ -782,17 +954,32 @@ function buildAdminSeasonData(input: {
         managerName: manager?.full_name ?? manager?.email ?? "Manager",
         managerEmail: manager?.email ?? "Not connected",
         managerPhone: "Not connected",
-        squadCount: players.filter((player) => player.playerStatus !== "Removed" && player.approvalStatus !== "Rejected").length,
-        approvedPlayers: players.filter((player) => player.approvalStatus === "Approved" && player.playerStatus !== "Removed").length,
-        pendingPlayers: players.filter((player) => player.approvalStatus === "Pending").length,
+        squadCount: players.filter(
+          (player) =>
+            player.playerStatus !== "Removed" &&
+            player.approvalStatus !== "Rejected",
+        ).length,
+        approvedPlayers: players.filter(
+          (player) =>
+            player.approvalStatus === "Approved" &&
+            player.playerStatus !== "Removed",
+        ).length,
+        pendingPlayers: players.filter(
+          (player) => player.approvalStatus === "Pending",
+        ).length,
         status: "Approved",
         players: activePlayers,
         suspendedPlayers,
         fixtures: teamFixtures,
         results: teamFixtures
           .filter((fixture) => fixture.status === "Final")
-          .map((fixture) => ({ date: fixture.date, match: `${fixture.home} vs ${fixture.away}`, result: "Final", status: fixture.status })),
-        messages: []
+          .map((fixture) => ({
+            date: fixture.date,
+            match: `${fixture.home} vs ${fixture.away}`,
+            result: "Final",
+            status: fixture.status,
+          })),
+        messages: [],
       };
     });
 
@@ -802,48 +989,71 @@ function buildAdminSeasonData(input: {
       id: row.id,
       team: row.teams?.name ?? "Unnamed team",
       logoUrl: row.teams?.logo_url ?? null,
-      manager: relatedOne(row.manager)?.full_name ?? relatedOne(row.manager)?.email ?? "Manager",
+      manager:
+        relatedOne(row.manager)?.full_name ??
+        relatedOne(row.manager)?.email ??
+        "Manager",
       season: input.season.name,
       squad: (playersByTeam.get(row.id) ?? []).length,
-      status: "Pending"
+      status: "Pending",
     }));
 
   const playerRequests: PlayerRequest[] = input.playerRegistrations
-    .filter((row) => row.season_id === input.season.id && row.status === RegistrationStatus.PENDING)
+    .filter(
+      (row) =>
+        row.season_id === input.season.id &&
+        row.status === RegistrationStatus.PENDING,
+    )
     .map((row) => {
-      const requestPlayer = (playersByTeam.get(row.team_registration_id) ?? []).find((player) => player.id === row.id);
+      const requestPlayer = (
+        playersByTeam.get(row.team_registration_id) ?? []
+      ).find((player) => player.id === row.id);
       return {
         id: row.id,
         code: `PLY-${row.id.slice(0, 8).toUpperCase()}`,
         name: row.players?.full_name ?? "Unnamed player",
-        team: teamByRegistration.get(row.team_registration_id)?.teams?.name ?? "Unassigned team",
+        team:
+          teamByRegistration.get(row.team_registration_id)?.teams?.name ??
+          "Unassigned team",
         position: row.football_position ?? row.position,
         jersey: row.shirt_number ?? 0,
         idType: row.players?.id_type ?? "N/A",
         status: "Pending",
         teamStatus: relatedOne(row.team_registrations)?.status ?? "PENDING",
         abilityRating: abilityLabel(row.ability_rating),
-        player: requestPlayer
+        player: requestPlayer,
       };
     });
 
   const fixtures = input.fixtures.map((fixture) => ({
     id: fixture.id,
     date: safeDate(fixture.kickoff_at),
-    home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
-    away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
+    home: fixture.home_team_registration_id
+      ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+          ?.name ?? "Home team")
+      : (fixture.home_source ?? "TBD"),
+    away: fixture.away_team_registration_id
+      ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+          ?.name ?? "Away team")
+      : (fixture.away_source ?? "TBD"),
     stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
     status: statusLabel(fixture.status),
-    venue: fixture.venue ?? "Not set"
+    venue: fixture.venue ?? "Not set",
   }));
 
   const completedMatches = input.fixtures
     .filter((fixture) => fixture.status === FixtureStatus.FINAL)
     .map((fixture) => ({
       date: safeDate(fixture.kickoff_at),
-      home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
-      away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
-      score: `${fixture.home_score ?? 0} - ${fixture.away_score ?? 0}`
+      home: fixture.home_team_registration_id
+        ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+            ?.name ?? "Home team")
+        : (fixture.home_source ?? "TBD"),
+      away: fixture.away_team_registration_id
+        ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+            ?.name ?? "Away team")
+        : (fixture.away_source ?? "TBD"),
+      score: `${fixture.home_score ?? 0} - ${fixture.away_score ?? 0}`,
     }));
 
   const standings = input.standings.map((row) => {
@@ -860,27 +1070,54 @@ function buildAdminSeasonData(input: {
       draw: row.drawn,
       lost: row.lost,
       gf: row.goals_for,
-      ga: row.goals_against
+      ga: row.goals_against,
     };
   });
 
   const readyMatches = input.fixtures
-    .filter((fixture) => fixture.status === FixtureStatus.LINEUPS_CONFIRMED || fixture.status === FixtureStatus.READY_TO_SIMULATE || fixture.status === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION)
+    .filter(
+      (fixture) =>
+        fixture.status === FixtureStatus.LINEUPS_CONFIRMED ||
+        fixture.status === FixtureStatus.READY_TO_SIMULATE ||
+        fixture.status === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION,
+    )
     .map((fixture) => ({
       id: fixture.id,
-      home: fixture.home_team_registration_id ? teamByRegistration.get(fixture.home_team_registration_id)?.teams?.name ?? "Home team" : fixture.home_source ?? "TBD",
-      away: fixture.away_team_registration_id ? teamByRegistration.get(fixture.away_team_registration_id)?.teams?.name ?? "Away team" : fixture.away_source ?? "TBD",
+      home: fixture.home_team_registration_id
+        ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+            ?.name ?? "Home team")
+        : (fixture.home_source ?? "TBD"),
+      away: fixture.away_team_registration_id
+        ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+            ?.name ?? "Away team")
+        : (fixture.away_source ?? "TBD"),
+      homeLogoUrl: fixture.home_team_registration_id
+        ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+            ?.logo_url ?? null)
+        : null,
+      awayLogoUrl: fixture.away_team_registration_id
+        ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+            ?.logo_url ?? null)
+        : null,
       stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
-      kickoff: fixture.kickoff_at ? safeDate(fixture.kickoff_at) : "Kickoff not set",
-      status: statusLabel(fixture.status)
+      kickoff: fixture.kickoff_at
+        ? safeDateTime(fixture.kickoff_at)
+        : "Kickoff not set",
+      status: statusLabel(fixture.status),
     }));
 
-  const sortedStats = [...input.playerStats].sort((a, b) => (b.goals ?? 0) - (a.goals ?? 0));
+  const sortedStats = [...input.playerStats].sort(
+    (a, b) => (b.goals ?? 0) - (a.goals ?? 0),
+  );
   const topGoal = sortedStats[0];
-  const topAssist = [...input.playerStats].sort((a, b) => (b.assists ?? 0) - (a.assists ?? 0))[0];
+  const topAssist = [...input.playerStats].sort(
+    (a, b) => (b.assists ?? 0) - (a.assists ?? 0),
+  )[0];
   const topRated = [...input.playerStats]
     .filter((row) => row.average_rating)
-    .sort((a, b) => Number(b.average_rating ?? 0) - Number(a.average_rating ?? 0))[0];
+    .sort(
+      (a, b) => Number(b.average_rating ?? 0) - Number(a.average_rating ?? 0),
+    )[0];
 
   return {
     teams,
@@ -891,42 +1128,57 @@ function buildAdminSeasonData(input: {
     completedMatches,
     messages: [],
     readyMatches,
-    pendingLineups: input.fixtures.filter((fixture) => fixture.status === FixtureStatus.LINEUPS_SUBMITTED).length,
-    topScorer: topGoal && (topGoal.appearances ?? 0) > 0
-      ? {
-        name: topGoal.player_season_registrations?.players?.full_name ?? "Unnamed player",
-        team: "Season team",
-        goals: topGoal.goals ?? 0,
-        matches: topGoal.appearances ?? 0
-      }
-      : null,
-    topAssist: topAssist && (topAssist.appearances ?? 0) > 0 && (topAssist.assists ?? 0) > 0
-      ? {
-        name: topAssist.player_season_registrations?.players?.full_name ?? "Unnamed player",
-        team: "Season team",
-        assists: topAssist.assists ?? 0,
-        matches: topAssist.appearances ?? 0
-      }
-      : null,
-    topRated: topRated && (topRated.appearances ?? 0) > 0
-      ? {
-        name: topRated.player_season_registrations?.players?.full_name ?? "Unnamed player",
-        team: "Season team",
-        rating: String(topRated.average_rating),
-        matches: topRated.appearances ?? 0
-      }
-      : null,
-    statsReport: input.statsReport
+    pendingLineups: input.fixtures.filter(
+      (fixture) => fixture.status === FixtureStatus.LINEUPS_SUBMITTED,
+    ).length,
+    topScorer:
+      topGoal && (topGoal.appearances ?? 0) > 0
+        ? {
+            name:
+              topGoal.player_season_registrations?.players?.full_name ??
+              "Unnamed player",
+            team: "Season team",
+            goals: topGoal.goals ?? 0,
+            matches: topGoal.appearances ?? 0,
+          }
+        : null,
+    topAssist:
+      topAssist &&
+      (topAssist.appearances ?? 0) > 0 &&
+      (topAssist.assists ?? 0) > 0
+        ? {
+            name:
+              topAssist.player_season_registrations?.players?.full_name ??
+              "Unnamed player",
+            team: "Season team",
+            assists: topAssist.assists ?? 0,
+            matches: topAssist.appearances ?? 0,
+          }
+        : null,
+    topRated:
+      topRated && (topRated.appearances ?? 0) > 0
+        ? {
+            name:
+              topRated.player_season_registrations?.players?.full_name ??
+              "Unnamed player",
+            team: "Season team",
+            rating: String(topRated.average_rating),
+            matches: topRated.appearances ?? 0,
+          }
+        : null,
+    statsReport: input.statsReport,
   };
 }
 
 function initials(value: string) {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("") || "NA";
+  return (
+    value
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "NA"
+  );
 }
 
 function formatNumber(value: unknown) {
@@ -937,14 +1189,20 @@ function formatNumber(value: unknown) {
 
 function formatValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "0";
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  if (typeof value === "number")
+    return Number.isInteger(value) ? String(value) : value.toFixed(1);
   return String(value);
 }
 
 function percent(part: unknown, total: unknown) {
   const numerator = Number(part ?? 0);
   const denominator = Number(total ?? 0);
-  if (!denominator || !Number.isFinite(numerator) || !Number.isFinite(denominator)) return "0%";
+  if (
+    !denominator ||
+    !Number.isFinite(numerator) ||
+    !Number.isFinite(denominator)
+  )
+    return "0%";
   return `${Math.round((numerator / denominator) * 100)}%`;
 }
 
@@ -954,9 +1212,14 @@ function ratingTone(value: number) {
   return "bg-orange-500";
 }
 
-function formatTeamStat(stat: MatchDetailTeamStat, field: keyof MatchDetailTeamStat, format: "number" | "percent" | "passes" | "rating") {
+function formatTeamStat(
+  stat: MatchDetailTeamStat,
+  field: keyof MatchDetailTeamStat,
+  format: "number" | "percent" | "passes" | "rating",
+) {
   if (format === "percent") return `${formatNumber(stat[field])}%`;
-  if (format === "passes") return `${formatNumber(stat.accurate_passes)}/${formatNumber(stat.passes)} (${percent(stat.accurate_passes, stat.passes)})`;
+  if (format === "passes")
+    return `${formatNumber(stat.accurate_passes)}/${formatNumber(stat.passes)} (${percent(stat.accurate_passes, stat.passes)})`;
   if (format === "rating") return formatNumber(stat[field]);
   return formatNumber(stat[field]);
 }
@@ -965,14 +1228,42 @@ function positionBreakdown(players: AdminPlayer[]) {
   const order = ["GK", "LB", "CB", "RB", "DM", "CM", "AM", "LW", "RW", "ST"];
   const counts = new Map<string, number>();
   for (const player of players) {
-    const key = (player.footballPosition || player.position || "UNK").toUpperCase();
+    const key = (
+      player.footballPosition ||
+      player.position ||
+      "UNK"
+    ).toUpperCase();
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const ordered = order.map((position) => [position, counts.get(position) ?? 0] as const).filter(([, count]) => count > 0);
+  const ordered = order
+    .map((position) => [position, counts.get(position) ?? 0] as const)
+    .filter(([, count]) => count > 0);
   const extra = Array.from(counts.entries())
     .filter(([position]) => !order.includes(position))
     .sort(([a], [b]) => a.localeCompare(b));
   return [...ordered, ...extra];
+}
+
+const adminTabIds: TabId[] = [
+  "dashboard",
+  "teams",
+  "team-requests",
+  "player-requests",
+  "fixtures",
+  "lineups",
+  "matches-ready",
+  "standings",
+  "reports",
+  "team-stats",
+  "messages",
+  "divide-groups",
+  "groups",
+  "knockout",
+  "settings",
+];
+
+function isAdminTabId(value: string | null): value is TabId {
+  return Boolean(value && adminTabIds.includes(value as TabId));
 }
 
 export default function AdminLeagueSeasonDashboard() {
@@ -980,48 +1271,94 @@ export default function AdminLeagueSeasonDashboard() {
   const [profile, setProfile] = useState<ProfileDto | null>(null);
   const [league, setLeague] = useState<LeagueDto | null>(null);
   const [season, setSeason] = useState<SeasonDto | null>(null);
-  const [adminData, setAdminData] = useState<AdminSeasonData>(emptyAdminSeasonData);
+  const [adminData, setAdminData] =
+    useState<AdminSeasonData>(emptyAdminSeasonData);
   const [groupsReady, setGroupsReady] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>("dashboard");
-  const [playerAction, setPlayerAction] = useState<{ action: PlayerLifecycleAction; player: AdminPlayer } | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    if (typeof window === "undefined") return "dashboard";
+    const stored = window.localStorage.getItem(
+      `scoreline-admin-tab:${params.seasonId}`,
+    );
+    return isAdminTabId(stored) ? stored : "dashboard";
+  });
+  const [playerAction, setPlayerAction] = useState<{
+    action: PlayerLifecycleAction;
+    player: AdminPlayer;
+  } | null>(null);
+  const [selectedLineupPlayer, setSelectedLineupPlayer] =
+    useState<AdminPlayer | null>(null);
   const [error, setError] = useState("");
 
   async function loadDashboardData() {
     const [me, leagueData, seasonData] = await Promise.all([
       api<{ profile: ProfileDto }>("/me"),
       publicApi<{ leagues: LeagueDto[] }>("/public/leagues"),
-      publicApi<{ seasons: SeasonDto[] }>(`/public/leagues/${params.leagueId}/seasons`)
+      publicApi<{ seasons: SeasonDto[] }>(
+        `/public/leagues/${params.leagueId}/seasons`,
+      ),
     ]);
-    const selectedSeason = seasonData.seasons.find((item) => item.id === params.seasonId) ?? seasonData.seasons[0] ?? null;
+    const selectedSeason =
+      seasonData.seasons.find((item) => item.id === params.seasonId) ??
+      seasonData.seasons[0] ??
+      null;
     setProfile(me.profile);
-    setLeague(leagueData.leagues.find((item) => item.id === params.leagueId) ?? null);
+    setLeague(
+      leagueData.leagues.find((item) => item.id === params.leagueId) ?? null,
+    );
     setSeason(selectedSeason);
     if (!selectedSeason) {
       setAdminData(emptyAdminSeasonData);
       setGroupsReady(false);
       return;
     }
-    const [teamRegistrationData, playerRegistrationData, fixtureData, standingData, playerStatData, statsReportData] = await Promise.all([
-      api<{ team_registrations: TeamRegistrationApiRow[] }>("/admin/team-registrations"),
-      api<{ player_registrations: PlayerRegistrationApiRow[] }>("/admin/player-registrations"),
-      publicApi<{ fixtures: FixtureApiRow[] }>(`/public/seasons/${selectedSeason.id}/fixtures`),
-      publicApi<{ standings: StandingApiRow[] }>(`/public/seasons/${selectedSeason.id}/standings`),
-      publicApi<{ player_stats: PlayerSeasonStatApiRow[] }>(`/public/seasons/${selectedSeason.id}/player-stats`),
-      api<AdminStatsReport>(`/admin/seasons/${selectedSeason.id}/stat-leaderboards`)
+    const [
+      teamRegistrationData,
+      playerRegistrationData,
+      fixtureData,
+      standingData,
+      playerStatData,
+      statsReportData,
+      pendingLineupData,
+    ] = await Promise.all([
+      api<{ team_registrations: TeamRegistrationApiRow[] }>(
+        "/admin/team-registrations",
+      ),
+      api<{ player_registrations: PlayerRegistrationApiRow[] }>(
+        "/admin/player-registrations",
+      ),
+      publicApi<{ fixtures: FixtureApiRow[] }>(
+        `/public/seasons/${selectedSeason.id}/fixtures`,
+      ),
+      publicApi<{ standings: StandingApiRow[] }>(
+        `/public/seasons/${selectedSeason.id}/standings`,
+      ),
+      publicApi<{ player_stats: PlayerSeasonStatApiRow[] }>(
+        `/public/seasons/${selectedSeason.id}/player-stats`,
+      ),
+      api<AdminStatsReport>(
+        `/admin/seasons/${selectedSeason.id}/stat-leaderboards`,
+      ),
+      api<{ lineups: AdminPendingLineupRow[] }>(
+        `/admin/seasons/${selectedSeason.id}/lineups/pending`,
+      ),
     ]);
-    setAdminData(
-      buildAdminSeasonData({
-        season: selectedSeason,
-        teamRegistrations: teamRegistrationData.team_registrations ?? [],
-        playerRegistrations: playerRegistrationData.player_registrations ?? [],
-        fixtures: fixtureData.fixtures ?? [],
-        standings: standingData.standings ?? [],
-        playerStats: playerStatData.player_stats ?? [],
-        statsReport: statsReportData ?? emptyStatsReport
-      })
-    );
+    const nextAdminData = buildAdminSeasonData({
+      season: selectedSeason,
+      teamRegistrations: teamRegistrationData.team_registrations ?? [],
+      playerRegistrations: playerRegistrationData.player_registrations ?? [],
+      fixtures: fixtureData.fixtures ?? [],
+      standings: standingData.standings ?? [],
+      playerStats: playerStatData.player_stats ?? [],
+      statsReport: statsReportData ?? emptyStatsReport,
+    });
+    setAdminData({
+      ...nextAdminData,
+      pendingLineups: pendingLineupData.lineups?.length ?? 0,
+    });
     if (selectedSeason.format === SeasonFormat.GROUP_STAGE_KNOCKOUT) {
-      const groupData = await api<AdminGroupsResponse>(`/admin/seasons/${selectedSeason.id}/groups`);
+      const groupData = await api<AdminGroupsResponse>(
+        `/admin/seasons/${selectedSeason.id}/groups`,
+      );
       setGroupsReady(groupData.groups_ready);
     } else {
       setGroupsReady(false);
@@ -1029,29 +1366,44 @@ export default function AdminLeagueSeasonDashboard() {
   }
 
   useEffect(() => {
-    void loadDashboardData().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Could not load dashboard"));
+    void loadDashboardData().catch((loadError) =>
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not load dashboard",
+      ),
+    );
   }, [params.leagueId, params.seasonId]);
 
-  async function decideTeamRequest(id: string, status: "APPROVED" | "REJECTED") {
+  async function decideTeamRequest(
+    id: string,
+    status: "APPROVED" | "REJECTED",
+  ) {
     await api(`/admin/team-registrations/${id}/decision`, {
       method: "PATCH",
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status }),
     });
     await loadDashboardData();
   }
 
-  async function decidePlayerRequest(id: string, status: "APPROVED" | "REJECTED") {
+  async function decidePlayerRequest(
+    id: string,
+    status: "APPROVED" | "REJECTED",
+  ) {
     await api(`/admin/player-registrations/${id}/decision`, {
       method: "PATCH",
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status }),
     });
     await loadDashboardData();
   }
 
-  async function ratePlayer(id: string, ability_rating: "LOW" | "MODERATE" | "HIGH") {
+  async function ratePlayer(
+    id: string,
+    ability_rating: "LOW" | "MODERATE" | "HIGH",
+  ) {
     await api(`/admin/player-registrations/${id}/ability`, {
       method: "PATCH",
-      body: JSON.stringify({ ability_rating })
+      body: JSON.stringify({ ability_rating }),
     });
     await loadDashboardData();
   }
@@ -1062,8 +1414,8 @@ export default function AdminLeagueSeasonDashboard() {
       body: JSON.stringify({
         seasonId: season?.id,
         distribution: { low: 0.15, moderate: 0.7, high: 0.15 },
-        rerate
-      })
+        rerate,
+      }),
     });
     await loadDashboardData();
   }
@@ -1071,7 +1423,7 @@ export default function AdminLeagueSeasonDashboard() {
   async function bulkApproveRatedPlayers(teamId: string) {
     await api(`/admin/teams/${teamId}/pending-players/approve-all-rated`, {
       method: "POST",
-      body: JSON.stringify({ seasonId: season?.id })
+      body: JSON.stringify({ seasonId: season?.id }),
     });
     await loadDashboardData();
   }
@@ -1079,21 +1431,49 @@ export default function AdminLeagueSeasonDashboard() {
   async function simulateReadyMatch(fixtureId: string) {
     await api("/admin/matches/simulate", {
       method: "POST",
-      body: JSON.stringify({ fixture_id: fixtureId })
+      body: JSON.stringify({ fixture_id: fixtureId }),
+    });
+    await loadDashboardData();
+  }
+
+  async function decideLineup(
+    lineupId: string,
+    status: "APPROVED" | "REJECTED",
+    reason?: string,
+  ) {
+    await api(`/admin/lineups/${lineupId}/decision`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, reason }),
     });
     await loadDashboardData();
   }
 
   async function jumpToMatchday() {
-    if (!season?.id) return;
-    await api(`/admin/seasons/${season.id}/matches/jump-to-matchday`, { method: "POST" });
+    if (!season?.id) return { updated_count: 0 };
+    const result = await api<{
+      updated_count: number;
+      matches: ReadyMatchRow[];
+    }>(`/admin/seasons/${season.id}/matches/jump-to-matchday`, {
+      method: "POST",
+    });
     await loadDashboardData();
+    return result;
   }
 
-  async function updateAbilityScores(id: string, scores: Record<string, number>) {
+  async function loadCurrentMatchday() {
+    if (!season?.id) return { matches: [] as ReadyMatchRow[] };
+    return api<{ matches: ReadyMatchRow[] }>(
+      `/admin/seasons/${season.id}/matches/current-matchday`,
+    );
+  }
+
+  async function updateAbilityScores(
+    id: string,
+    scores: Record<string, number>,
+  ) {
     await api(`/admin/player-registrations/${id}/ability-scores`, {
       method: "PATCH",
-      body: JSON.stringify(scores)
+      body: JSON.stringify(scores),
     });
     await loadDashboardData();
   }
@@ -1107,34 +1487,48 @@ export default function AdminLeagueSeasonDashboard() {
     suspensionUntil?: string;
     suspensionMatchesRemaining?: number;
   }) {
-    const actionPath = input.action === "reject" ? "reject" : input.action === "remove" ? "remove" : input.action === "suspend" ? "suspend" : "unsuspend";
+    const actionPath =
+      input.action === "reject"
+        ? "reject"
+        : input.action === "remove"
+          ? "remove"
+          : input.action === "suspend"
+            ? "suspend"
+            : "unsuspend";
     const body =
       input.action === "reject"
-        ? { reason: input.reason, allow_resubmission: Boolean(input.allowResubmission) }
+        ? {
+            reason: input.reason,
+            allow_resubmission: Boolean(input.allowResubmission),
+          }
         : input.action === "suspend"
           ? {
-            reason: input.reason,
-            suspension_type: input.suspensionType,
-            suspension_until: input.suspensionUntil || null,
-            suspension_matches_remaining: input.suspensionMatchesRemaining ?? null
-          }
+              reason: input.reason,
+              suspension_type: input.suspensionType,
+              suspension_until: input.suspensionUntil || null,
+              suspension_matches_remaining:
+                input.suspensionMatchesRemaining ?? null,
+            }
           : input.action === "unsuspend"
             ? { message: input.reason }
             : { reason: input.reason };
     await api(`/admin/player-registrations/${input.playerId}/${actionPath}`, {
       method: "PATCH",
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
     });
     setPlayerAction(null);
     await loadDashboardData();
   }
 
   async function kickOutTeam(id: string) {
-    const reason = window.prompt("Reason for kicking out this team?", "Team removed by admin.");
+    const reason = window.prompt(
+      "Reason for kicking out this team?",
+      "Team removed by admin.",
+    );
     if (reason === null) return;
     await api(`/admin/team-registrations/${id}/kick-out`, {
       method: "PATCH",
-      body: JSON.stringify({ reason })
+      body: JSON.stringify({ reason }),
     });
     await loadDashboardData();
     setActiveTab("teams");
@@ -1145,7 +1539,7 @@ export default function AdminLeagueSeasonDashboard() {
     if (!message?.trim()) return;
     await api(`/admin/team-registrations/${id}/message`, {
       method: "POST",
-      body: JSON.stringify({ message })
+      body: JSON.stringify({ message }),
     });
     await loadDashboardData();
   }
@@ -1153,19 +1547,27 @@ export default function AdminLeagueSeasonDashboard() {
   async function generateFixtures() {
     await api("/admin/fixtures/generate", {
       method: "POST",
-      body: JSON.stringify({ season_id: season?.id })
+      body: JSON.stringify({ season_id: season?.id }),
     });
     await loadDashboardData();
   }
 
   async function scheduleFixture(id: string, currentVenue: string) {
-    const kickoff_at = window.prompt("Kickoff date/time. Use ISO format like 2026-09-01T16:00:00+06:00. Leave blank to clear date.");
+    const kickoff_at = window.prompt(
+      "Kickoff date/time. Use ISO format like 2026-09-01T16:00:00+06:00. Leave blank to clear date.",
+    );
     if (kickoff_at === null) return;
-    const venue = window.prompt("Venue", currentVenue === "Not set" ? "" : currentVenue);
+    const venue = window.prompt(
+      "Venue",
+      currentVenue === "Not set" ? "" : currentVenue,
+    );
     if (venue === null) return;
     await api(`/admin/fixtures/${id}/schedule`, {
       method: "PATCH",
-      body: JSON.stringify({ kickoff_at: kickoff_at.trim() || null, venue: venue.trim() || null })
+      body: JSON.stringify({
+        kickoff_at: kickoff_at.trim() || null,
+        venue: venue.trim() || null,
+      }),
     });
     await loadDashboardData();
   }
@@ -1173,7 +1575,10 @@ export default function AdminLeagueSeasonDashboard() {
   async function postponeFixture(id: string, currentVenue: string) {
     await api(`/admin/fixtures/${id}/schedule`, {
       method: "PATCH",
-      body: JSON.stringify({ kickoff_at: null, venue: currentVenue === "Not set" ? null : currentVenue })
+      body: JSON.stringify({
+        kickoff_at: null,
+        venue: currentVenue === "Not set" ? null : currentVenue,
+      }),
     });
     await loadDashboardData();
   }
@@ -1181,7 +1586,7 @@ export default function AdminLeagueSeasonDashboard() {
   async function cancelFixture(id: string) {
     await api(`/admin/fixtures/${id}/status`, {
       method: "PATCH",
-      body: JSON.stringify({ status: FixtureStatus.CANCELLED })
+      body: JSON.stringify({ status: FixtureStatus.CANCELLED }),
     });
     await loadDashboardData();
   }
@@ -1200,30 +1605,68 @@ export default function AdminLeagueSeasonDashboard() {
         { id: "team-requests", label: "Team Requests", icon: Users },
         { id: "player-requests", label: "Player Requests", icon: User },
         { id: "fixtures", label: "Fixtures", icon: CalendarDays },
+        { id: "lineups", label: "Lineups", icon: ClipboardCheck },
         { id: "matches-ready", label: "Matches Ready", icon: PlayCircle },
-        ...(!isGroupKnockout ? [{ id: "standings", label: "Standings", icon: Trophy }] : []),
+        ...(!isGroupKnockout
+          ? [{ id: "standings", label: "Standings", icon: Trophy }]
+          : []),
         { id: "reports", label: "Player Stats", icon: BarChart3 },
         { id: "team-stats", label: "Team Stats", icon: ShieldCheck },
-        { id: "messages", label: "Messages", icon: Mail }
+        { id: "messages", label: "Messages", icon: Mail },
       ] as const,
-    [isGroupKnockout]
+    [isGroupKnockout],
   );
 
-  const groupTeamRequirement = Number(season?.group_count ?? 0) * Number(season?.teams_per_group ?? 0);
-  const shouldShowGroupDivision =
-    Boolean(isGroupKnockout && !groupsReady && groupTeamRequirement > 0 && adminData.teams.length >= groupTeamRequirement);
+  const groupTeamRequirement =
+    Number(season?.group_count ?? 0) * Number(season?.teams_per_group ?? 0);
+  const shouldShowGroupDivision = Boolean(
+    isGroupKnockout &&
+      !groupsReady &&
+      groupTeamRequirement > 0 &&
+      adminData.teams.length >= groupTeamRequirement,
+  );
   const tournamentItems = useMemo(() => {
     if (!isGroupKnockout) return [];
     return [
-      ...(shouldShowGroupDivision ? [{ id: "divide-groups", label: "Divide Teams Into Groups", icon: GitBranch }] : []),
+      ...(shouldShowGroupDivision
+        ? [
+            {
+              id: "divide-groups",
+              label: "Divide Teams Into Groups",
+              icon: GitBranch,
+            },
+          ]
+        : []),
       { id: "groups", label: "Groups", icon: Users },
-      { id: "knockout", label: "Knockout Bracket", icon: GitBranch }
+      { id: "knockout", label: "Knockout Bracket", icon: GitBranch },
     ] as Array<{ id: TabId; label: string; icon: typeof Users }>;
   }, [isGroupKnockout, shouldShowGroupDivision]);
+  const allAdminPlayers = useMemo(
+    () =>
+      adminData.teams.flatMap((team) => [
+        ...team.players,
+        ...team.suspendedPlayers,
+      ]),
+    [adminData.teams],
+  );
+
+  function openLineupPlayer(player: MatchDetailLineupPlayer) {
+    const adminPlayer = allAdminPlayers.find(
+      (item) => item.id === player.player_registration_id,
+    );
+    if (adminPlayer) setSelectedLineupPlayer(adminPlayer);
+  }
 
   useEffect(() => {
     if (isGroupKnockout && activeTab === "standings") setActiveTab("dashboard");
   }, [activeTab, isGroupKnockout]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      `scoreline-admin-tab:${params.seasonId}`,
+      activeTab,
+    );
+  }, [activeTab, params.seasonId]);
 
   if (error) {
     return (
@@ -1236,12 +1679,18 @@ export default function AdminLeagueSeasonDashboard() {
   if (!league || !season) {
     return (
       <div className="fixed inset-0 z-50 grid place-items-center bg-slate-100 text-slate-900">
-        <div className="rounded-2xl bg-white p-8 shadow-xl">Loading selected league dashboard...</div>
+        <div className="rounded-2xl bg-white p-8 shadow-xl">
+          Loading selected league dashboard...
+        </div>
       </div>
     );
   }
 
-  const adminNotificationCount = adminData.teamRequests.length + adminData.playerRequests.length + adminData.pendingLineups + adminData.readyMatches.length;
+  const adminNotificationCount =
+    adminData.teamRequests.length +
+    adminData.playerRequests.length +
+    adminData.pendingLineups +
+    adminData.readyMatches.length;
 
   return (
     <div className="fixed inset-0 z-50 flex overflow-hidden bg-[#f6f8fb] text-[#0f172a]">
@@ -1255,7 +1704,11 @@ export default function AdminLeagueSeasonDashboard() {
 
         <div className="mx-3 mb-5 rounded-xl bg-white/7 p-4">
           <div className="flex items-center gap-3">
-            <TeamBadge name={league.short_name || league.name} logoUrl={league.logo_url} size="lg" />
+            <TeamBadge
+              name={league.short_name || league.name}
+              logoUrl={league.logo_url}
+              size="lg"
+            />
             <div className="min-w-0">
               <p className="truncate text-sm font-bold">{league.name}</p>
               <p className="mt-1 flex items-center gap-1 text-sm text-slate-300">
@@ -1268,17 +1721,29 @@ export default function AdminLeagueSeasonDashboard() {
 
         <nav className="space-y-1 px-3">
           {navItems.map((item) => (
-            <SidebarButton key={item.id} item={item} active={activeTab === item.id} onClick={() => setActiveTab(item.id as TabId)} />
+            <SidebarButton
+              key={item.id}
+              item={item}
+              active={activeTab === item.id}
+              onClick={() => setActiveTab(item.id as TabId)}
+            />
           ))}
         </nav>
 
         {tournamentItems.length > 0 ? (
           <>
             <div className="mx-3 my-6 h-px bg-white/15" />
-            <p className="px-6 pb-3 text-xs font-bold uppercase tracking-wide text-slate-300">Tournament</p>
+            <p className="px-6 pb-3 text-xs font-bold uppercase tracking-wide text-slate-300">
+              Tournament
+            </p>
             <nav className="space-y-1 px-3">
               {tournamentItems.map((item) => (
-                <SidebarButton key={item.id} item={item} active={activeTab === item.id} onClick={() => setActiveTab(item.id)} />
+                <SidebarButton
+                  key={item.id}
+                  item={item}
+                  active={activeTab === item.id}
+                  onClick={() => setActiveTab(item.id)}
+                />
               ))}
             </nav>
           </>
@@ -1286,7 +1751,11 @@ export default function AdminLeagueSeasonDashboard() {
 
         <div className="mt-auto px-3 pb-5">
           <div className="mb-5 h-px bg-white/15" />
-          <SidebarButton item={{ id: "settings", label: "Settings", icon: Settings }} active={activeTab === "settings"} onClick={() => setActiveTab("settings")} />
+          <SidebarButton
+            item={{ id: "settings", label: "Settings", icon: Settings }}
+            active={activeTab === "settings"}
+            onClick={() => setActiveTab("settings")}
+          />
           <button
             type="button"
             onClick={logout}
@@ -1301,13 +1770,18 @@ export default function AdminLeagueSeasonDashboard() {
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex h-[74px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
           <div className="flex items-center gap-5">
-            <TeamBadge name={league.short_name || league.name} logoUrl={league.logo_url} />
+            <TeamBadge
+              name={league.short_name || league.name}
+              logoUrl={league.logo_url}
+            />
             <div>
               <div className="flex items-center gap-2 text-base font-black">
                 {league.name}
                 <ChevronDown size={17} />
               </div>
-              <div className="text-sm font-semibold text-blue-700">{season.name}</div>
+              <div className="text-sm font-semibold text-blue-700">
+                {season.name}
+              </div>
             </div>
             <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-700">
               {formatPhase(season.phase)}
@@ -1318,7 +1792,10 @@ export default function AdminLeagueSeasonDashboard() {
           </div>
 
           <div className="flex items-center gap-6">
-            <Link href="/dashboard/admin" className="text-sm font-bold text-blue-700 hover:text-blue-900">
+            <Link
+              href="/dashboard/admin"
+              className="text-sm font-bold text-blue-700 hover:text-blue-900"
+            >
               Back to League Selector
             </Link>
             <div className="relative text-slate-700">
@@ -1331,7 +1808,9 @@ export default function AdminLeagueSeasonDashboard() {
             </div>
             <div className="flex items-center gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-sm font-black text-slate-600">
-                {(profile?.full_name ?? profile?.email ?? "AD").slice(0, 2).toUpperCase()}
+                {(profile?.full_name ?? profile?.email ?? "AD")
+                  .slice(0, 2)
+                  .toUpperCase()}
               </div>
               <div>
                 <p className="font-bold">Admin</p>
@@ -1343,20 +1822,93 @@ export default function AdminLeagueSeasonDashboard() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-8">
-          {activeTab === "dashboard" ? <DashboardView league={league} season={season} data={adminData} onNavigate={setActiveTab} /> : null}
-		          {activeTab === "teams" ? <TeamsView season={season} teams={adminData.teams} onKickOutTeam={kickOutTeam} onSendTeamMessage={sendTeamMessage} onPlayerDecision={decidePlayerRequest} onPlayerAbility={ratePlayer} onBulkRatePending={bulkRatePendingPlayers} onBulkApproveRated={bulkApproveRatedPlayers} onPlayerAction={(action, player) => setPlayerAction({ action, player })} onAbilityScoresUpdate={updateAbilityScores} /> : null}
-          {activeTab === "team-requests" ? <TeamRequestsView teamRequests={adminData.teamRequests} onDecision={decideTeamRequest} /> : null}
-          {activeTab === "player-requests" ? <PlayerRequestsView playerRequests={adminData.playerRequests} onDecision={decidePlayerRequest} onAbility={ratePlayer} onPlayerAction={(action, player) => setPlayerAction({ action, player })} /> : null}
+          {activeTab === "dashboard" ? (
+            <DashboardView
+              league={league}
+              season={season}
+              data={adminData}
+              onNavigate={setActiveTab}
+            />
+          ) : null}
+          {activeTab === "teams" ? (
+            <TeamsView
+              season={season}
+              teams={adminData.teams}
+              onKickOutTeam={kickOutTeam}
+              onSendTeamMessage={sendTeamMessage}
+              onPlayerDecision={decidePlayerRequest}
+              onPlayerAbility={ratePlayer}
+              onBulkRatePending={bulkRatePendingPlayers}
+              onBulkApproveRated={bulkApproveRatedPlayers}
+              onPlayerAction={(action, player) =>
+                setPlayerAction({ action, player })
+              }
+              onAbilityScoresUpdate={updateAbilityScores}
+            />
+          ) : null}
+          {activeTab === "team-requests" ? (
+            <TeamRequestsView
+              teamRequests={adminData.teamRequests}
+              onDecision={decideTeamRequest}
+            />
+          ) : null}
+          {activeTab === "player-requests" ? (
+            <PlayerRequestsView
+              playerRequests={adminData.playerRequests}
+              onDecision={decidePlayerRequest}
+              onAbility={ratePlayer}
+              onPlayerAction={(action, player) =>
+                setPlayerAction({ action, player })
+              }
+            />
+          ) : null}
           {activeTab === "fixtures" ? <FixturesView season={season} /> : null}
-          {activeTab === "matches-ready" ? <MatchesReadyView matches={adminData.readyMatches} onSimulate={simulateReadyMatch} onJumpToMatchday={jumpToMatchday} /> : null}
-          {activeTab === "standings" && !isGroupKnockout ? <StandingsView groupMode={false} teams={adminData.standings} /> : null}
-          {activeTab === "reports" ? <PlayerStatsView data={adminData} /> : null}
-          {activeTab === "team-stats" ? <TeamStatsView data={adminData} /> : null}
-          {activeTab === "messages" ? <MessagesView messages={adminData.messages} /> : null}
-          {activeTab === "divide-groups" ? <DivideGroupsView season={season} onSaved={async () => { await loadDashboardData(); setActiveTab("fixtures"); }} /> : null}
+          {activeTab === "lineups" ? (
+            <LineupConfirmationsView
+              season={season}
+              onDecision={decideLineup}
+              onPlayerClick={openLineupPlayer}
+            />
+          ) : null}
+          {activeTab === "matches-ready" ? (
+            <MatchesReadyView
+              matches={adminData.readyMatches}
+              onSimulate={simulateReadyMatch}
+              onJumpToMatchday={jumpToMatchday}
+              onLoadMatchday={loadCurrentMatchday}
+              onLineupPlayerClick={openLineupPlayer}
+            />
+          ) : null}
+          {activeTab === "standings" && !isGroupKnockout ? (
+            <StandingsView groupMode={false} teams={adminData.standings} />
+          ) : null}
+          {activeTab === "reports" ? (
+            <PlayerStatsView data={adminData} />
+          ) : null}
+          {activeTab === "team-stats" ? (
+            <TeamStatsView data={adminData} />
+          ) : null}
+          {activeTab === "messages" ? (
+            <MessagesView messages={adminData.messages} />
+          ) : null}
+          {activeTab === "divide-groups" ? (
+            <DivideGroupsView
+              season={season}
+              onSaved={async () => {
+                await loadDashboardData();
+                setActiveTab("fixtures");
+              }}
+            />
+          ) : null}
           {activeTab === "groups" ? <GroupsView season={season} /> : null}
           {activeTab === "knockout" ? <KnockoutView /> : null}
-          {activeTab === "settings" ? <SettingsView league={league} season={season} onSaved={loadDashboardData} /> : null}
+          {activeTab === "settings" ? (
+            <SettingsView
+              league={league}
+              season={season}
+              onSaved={loadDashboardData}
+            />
+          ) : null}
         </main>
       </section>
       {playerAction ? (
@@ -1367,13 +1919,31 @@ export default function AdminLeagueSeasonDashboard() {
           onSubmit={submitPlayerLifecycleAction}
         />
       ) : null}
+      {selectedLineupPlayer ? (
+        <PlayerRequestDetailModal
+          player={selectedLineupPlayer}
+          onClose={() => setSelectedLineupPlayer(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto; season: SeasonDto; data: AdminSeasonData; onNavigate: (tab: TabId) => void }) {
+function DashboardView({
+  league,
+  season,
+  data,
+  onNavigate,
+}: {
+  league: LeagueDto;
+  season: SeasonDto;
+  data: AdminSeasonData;
+  onNavigate: (tab: TabId) => void;
+}) {
   const tableTopper = data.standings[0] ?? null;
-  const isLeagueTableFormat = season.format === SeasonFormat.SINGLE_ROUND_ROBIN || season.format === SeasonFormat.DOUBLE_ROUND_ROBIN;
+  const isLeagueTableFormat =
+    season.format === SeasonFormat.SINGLE_ROUND_ROBIN ||
+    season.format === SeasonFormat.DOUBLE_ROUND_ROBIN;
   return (
     <div>
       <PageTitle
@@ -1382,20 +1952,65 @@ function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto
       />
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-5">
-        <SummaryCard icon={<UserPlus size={31} />} label="Pending Team Requests" value={String(data.teamRequests.length)} color="blue" action="View all requests" onAction={() => onNavigate("team-requests")} />
-        <SummaryCard icon={<User size={31} />} label="Pending Player Requests" value={String(data.playerRequests.length)} color="green" action="View all requests" onAction={() => onNavigate("player-requests")} />
-        <SummaryCard icon={<ClipboardCheck size={31} />} label="Pending Lineup Confirmations" value={String(data.pendingLineups)} color="orange" action="View all lineups" onAction={() => onNavigate("fixtures")} />
-        <SummaryCard icon={<PlayCircle size={31} />} label="Matches Ready for Simulation" value={String(data.readyMatches.length)} color="purple" action="View matches" onAction={() => onNavigate("matches-ready")} />
-        <SummaryCard icon={<CheckCircle2 size={31} />} label="Completed Matches" value={String(data.completedMatches.length)} color="cyan" action="View matches" onAction={() => onNavigate("fixtures")} />
+        <SummaryCard
+          icon={<UserPlus size={31} />}
+          label="Pending Team Requests"
+          value={String(data.teamRequests.length)}
+          color="blue"
+          action="View all requests"
+          onAction={() => onNavigate("team-requests")}
+        />
+        <SummaryCard
+          icon={<User size={31} />}
+          label="Pending Player Requests"
+          value={String(data.playerRequests.length)}
+          color="green"
+          action="View all requests"
+          onAction={() => onNavigate("player-requests")}
+        />
+        <SummaryCard
+          icon={<ClipboardCheck size={31} />}
+          label="Pending Lineup Confirmations"
+          value={String(data.pendingLineups)}
+          color="orange"
+          action="View all lineups"
+          onAction={() => onNavigate("lineups")}
+        />
+        <SummaryCard
+          icon={<PlayCircle size={31} />}
+          label="Matches Ready for Simulation"
+          value={String(data.readyMatches.length)}
+          color="purple"
+          action="View matches"
+          onAction={() => onNavigate("matches-ready")}
+        />
+        <SummaryCard
+          icon={<CheckCircle2 size={31} />}
+          label="Completed Matches"
+          value={String(data.completedMatches.length)}
+          color="cyan"
+          action="View matches"
+          onAction={() => onNavigate("fixtures")}
+        />
       </div>
 
-      <div className={`mt-6 grid grid-cols-1 gap-5 ${isLeagueTableFormat ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}>
+      <div
+        className={`mt-6 grid grid-cols-1 gap-5 ${isLeagueTableFormat ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
+      >
         {isLeagueTableFormat ? (
-          <FeatureCard title="Current Table Topper" icon={<Trophy size={20} />} className="xl:col-span-1">
+          <FeatureCard
+            title="Current Table Topper"
+            icon={<Trophy size={20} />}
+            className="xl:col-span-1"
+          >
             {tableTopper ? (
               <>
                 <div className="flex items-center gap-6">
-                  <TeamBadge name={tableTopper.short || tableTopper.name} logoUrl={tableTopper.logoUrl} size="xl" />
+                  <TeamBadge
+                    name={tableTopper.short || tableTopper.name}
+                    logoUrl={tableTopper.logoUrl}
+                    size="xl"
+                  />
                   <h3 className="text-2xl font-black">{tableTopper.name}</h3>
                 </div>
                 <StatStrip
@@ -1404,62 +2019,138 @@ function DashboardView({ league, season, data, onNavigate }: { league: LeagueDto
                     [String(tableTopper.played), "Played"],
                     [String(tableTopper.won), "Won"],
                     [String(tableTopper.draw), "Draw"],
-                    [String(tableTopper.lost), "Lost"]
+                    [String(tableTopper.lost), "Lost"],
                   ]}
                 />
               </>
-            ) : <EmptyState label="No standings yet. Standings appear after teams are approved and matches are finalized." />}
+            ) : (
+              <EmptyState label="No standings yet. Standings appear after teams are approved and matches are finalized." />
+            )}
           </FeatureCard>
         ) : null}
 
-        <FeatureCard title="Top Scorer" icon={<Target size={20} />} iconTone="green">
+        <FeatureCard
+          title="Top Scorer"
+          icon={<Target size={20} />}
+          iconTone="green"
+        >
           {data.topScorer ? (
             <>
-              <PlayerHero name={data.topScorer.name} team={data.topScorer.team} shirt="-" color="blue" />
-              <StatStrip stats={[[String(data.topScorer.goals), "Goals"], [String(data.topScorer.matches), "Matches"]]} />
+              <PlayerHero
+                name={data.topScorer.name}
+                team={data.topScorer.team}
+                shirt="-"
+                color="blue"
+              />
+              <StatStrip
+                stats={[
+                  [String(data.topScorer.goals), "Goals"],
+                  [String(data.topScorer.matches), "Matches"],
+                ]}
+              />
             </>
-          ) : <EmptyState label="No scorer data yet." />}
+          ) : (
+            <EmptyState label="No scorer data yet." />
+          )}
         </FeatureCard>
 
-        <FeatureCard title="Top Assist Provider" icon={<UserPlus size={20} />} iconTone="green">
+        <FeatureCard
+          title="Top Assist Provider"
+          icon={<UserPlus size={20} />}
+          iconTone="green"
+        >
           {data.topAssist ? (
             <>
-              <PlayerHero name={data.topAssist.name} team={data.topAssist.team} shirt="-" color="blue" />
-              <StatStrip stats={[[String(data.topAssist.assists), "Assists"], [String(data.topAssist.matches), "Matches"]]} />
+              <PlayerHero
+                name={data.topAssist.name}
+                team={data.topAssist.team}
+                shirt="-"
+                color="blue"
+              />
+              <StatStrip
+                stats={[
+                  [String(data.topAssist.assists), "Assists"],
+                  [String(data.topAssist.matches), "Matches"],
+                ]}
+              />
             </>
-          ) : <EmptyState label="No assist data yet." />}
+          ) : (
+            <EmptyState label="No assist data yet." />
+          )}
         </FeatureCard>
 
-        <FeatureCard title="Top Rated Player" icon={<Star size={20} />} iconTone="purple">
+        <FeatureCard
+          title="Top Rated Player"
+          icon={<Star size={20} />}
+          iconTone="purple"
+        >
           {data.topRated ? (
             <>
-              <PlayerHero name={data.topRated.name} team={data.topRated.team} shirt="-" color="black" />
-              <StatStrip stats={[[data.topRated.rating, "Average Rating"], [String(data.topRated.matches), "Matches"]]} />
+              <PlayerHero
+                name={data.topRated.name}
+                team={data.topRated.team}
+                shirt="-"
+                color="black"
+              />
+              <StatStrip
+                stats={[
+                  [data.topRated.rating, "Average Rating"],
+                  [String(data.topRated.matches), "Matches"],
+                ]}
+              />
             </>
-          ) : <EmptyState label="No rating data yet." />}
+          ) : (
+            <EmptyState label="No rating data yet." />
+          )}
         </FeatureCard>
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <Panel title="Matches Ready for Simulation" action="View all" onAction={() => onNavigate("matches-ready")}>
-          {data.readyMatches[0] ? <ReadyMatchCard match={data.readyMatches[0]} /> : <EmptyState label="No matches are ready for simulation." />}
+        <Panel
+          title="Matches Ready for Simulation"
+          action="View all"
+          onAction={() => onNavigate("matches-ready")}
+        >
+          {data.readyMatches[0] ? (
+            <ReadyMatchCard match={data.readyMatches[0]} />
+          ) : (
+            <EmptyState label="No matches are ready for simulation." />
+          )}
         </Panel>
 
-        <Panel title="Recently Completed Matches" action="View all" onAction={() => onNavigate("fixtures")}>
+        <Panel
+          title="Recently Completed Matches"
+          action="View all"
+          onAction={() => onNavigate("fixtures")}
+        >
           {data.completedMatches.length > 0 ? (
             <div className="divide-y divide-slate-200">
               {data.completedMatches.map((match) => (
-                <div key={`${match.date}-${match.home}`} className="grid grid-cols-[120px_1fr_68px_1fr_70px] items-center gap-3 py-4 text-sm">
+                <div
+                  key={`${match.date}-${match.home}`}
+                  className="grid grid-cols-[120px_1fr_68px_1fr_70px] items-center gap-3 py-4 text-sm"
+                >
                   <span className="text-slate-600">{match.date}</span>
                   <span className="text-right font-medium">{match.home}</span>
-                  <span className="rounded-md bg-green-100 px-3 py-1 text-center font-black text-green-800">{match.score}</span>
+                  <span className="rounded-md bg-green-100 px-3 py-1 text-center font-black text-green-800">
+                    {match.score}
+                  </span>
                   <span className="font-medium">{match.away}</span>
-                  <button className="rounded-md border border-slate-200 px-4 py-2 font-semibold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm active:translate-y-0 active:scale-[0.97]">View</button>
+                  <button className="rounded-md border border-slate-200 px-4 py-2 font-semibold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm active:translate-y-0 active:scale-[0.97]">
+                    View
+                  </button>
                 </div>
               ))}
             </div>
-          ) : <EmptyState label="No completed matches yet." />}
-          <button className="mt-4 w-full text-sm font-bold text-indigo-700 transition hover:text-indigo-900 hover:drop-shadow-[0_0_8px_rgba(79,70,229,0.25)]" onClick={() => onNavigate("fixtures")}>View all completed matches →</button>
+          ) : (
+            <EmptyState label="No completed matches yet." />
+          )}
+          <button
+            className="mt-4 w-full text-sm font-bold text-indigo-700 transition hover:text-indigo-900 hover:drop-shadow-[0_0_8px_rgba(79,70,229,0.25)]"
+            onClick={() => onNavigate("fixtures")}
+          >
+            View all completed matches →
+          </button>
         </Panel>
       </div>
     </div>
@@ -1476,26 +2167,38 @@ function TeamsView({
   onBulkRatePending,
   onBulkApproveRated,
   onPlayerAction,
-  onAbilityScoresUpdate
+  onAbilityScoresUpdate,
 }: {
   season: SeasonDto;
   teams: AdminTeam[];
   onKickOutTeam: (id: string) => Promise<void>;
   onSendTeamMessage: (id: string) => Promise<void>;
-  onPlayerDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
-  onPlayerAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerDecision: (
+    id: string,
+    status: "APPROVED" | "REJECTED",
+  ) => Promise<void>;
+  onPlayerAbility: (
+    id: string,
+    ability: "LOW" | "MODERATE" | "HIGH",
+  ) => Promise<void>;
   onBulkRatePending: (teamId: string, rerate?: boolean) => Promise<void>;
   onBulkApproveRated: (teamId: string) => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
-  onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
+  onAbilityScoresUpdate: (
+    id: string,
+    scores: Record<string, number>,
+  ) => Promise<void>;
 }) {
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [playerTab, setPlayerTab] = useState<"personal" | "stats">("personal");
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
-  const allTeamPlayers = selectedTeam ? [...selectedTeam.players, ...selectedTeam.suspendedPlayers] : [];
-  const selectedPlayer = allTeamPlayers.find((player) => player.id === selectedPlayerId) ?? null;
+  const allTeamPlayers = selectedTeam
+    ? [...selectedTeam.players, ...selectedTeam.suspendedPlayers]
+    : [];
+  const selectedPlayer =
+    allTeamPlayers.find((player) => player.id === selectedPlayerId) ?? null;
 
   if (selectedTeam && selectedPlayer) {
     return (
@@ -1526,11 +2229,13 @@ function TeamsView({
         onBack={() => setSelectedTeamId(null)}
         onKickOutTeam={() => onKickOutTeam(selectedTeam.id)}
         onSendMessage={() => onSendTeamMessage(selectedTeam.id)}
-		        onPlayerDecision={onPlayerDecision}
-		        onPlayerAbility={onPlayerAbility}
-		        onBulkRatePending={(rerate) => onBulkRatePending(selectedTeam.id, rerate)}
-		        onBulkApproveRated={() => onBulkApproveRated(selectedTeam.id)}
-		        onPlayerAction={onPlayerAction}
+        onPlayerDecision={onPlayerDecision}
+        onPlayerAbility={onPlayerAbility}
+        onBulkRatePending={(rerate) =>
+          onBulkRatePending(selectedTeam.id, rerate)
+        }
+        onBulkApproveRated={() => onBulkApproveRated(selectedTeam.id)}
+        onPlayerAction={onPlayerAction}
         onAbilityScoresUpdate={onAbilityScoresUpdate}
         onOpenPlayer={(playerId) => {
           setSelectedPlayerId(playerId);
@@ -1542,25 +2247,49 @@ function TeamsView({
 
   return (
     <div>
-      <PageTitle title="Teams" subtitle="Approved teams in this selected league season. Open a team to review manager, players, requests, fixtures, results, and messages." />
-      {teams.length === 0 ? <EmptyState label="No approved teams yet. Teams will appear here after managers register and admin approves them." /> : null}
+      <PageTitle
+        title="Teams"
+        subtitle="Approved teams in this selected league season. Open a team to review manager, players, requests, fixtures, results, and messages."
+      />
+      {teams.length === 0 ? (
+        <EmptyState label="No approved teams yet. Teams will appear here after managers register and admin approves them." />
+      ) : null}
       <div className="grid gap-5 xl:grid-cols-2">
         {teams.map((team) => (
-          <div key={team.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-xl">
+          <div
+            key={team.id}
+            className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-xl"
+          >
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-4">
-                <TeamBadge name={team.logo || team.name} logoUrl={team.logoUrl} size="lg" />
+                <TeamBadge
+                  name={team.logo || team.name}
+                  logoUrl={team.logoUrl}
+                  size="lg"
+                />
                 <div>
                   <h2 className="text-xl font-black">{team.name}</h2>
-                  <p className="text-sm text-slate-600">Manager: {team.managerName}</p>
+                  <p className="text-sm text-slate-600">
+                    Manager: {team.managerName}
+                  </p>
                 </div>
               </div>
-              <StatusPill tone={team.status === "Approved" ? "green" : "orange"}>{team.status}</StatusPill>
+              <StatusPill
+                tone={team.status === "Approved" ? "green" : "orange"}
+              >
+                {team.status}
+              </StatusPill>
             </div>
             <div className="mt-5 grid grid-cols-3 gap-3 text-center">
               <StatusBox label="Squad Count" value={String(team.squadCount)} />
-              <StatusBox label="Approved Players" value={String(team.approvedPlayers)} />
-              <StatusBox label="Pending Players" value={String(team.pendingPlayers)} />
+              <StatusBox
+                label="Approved Players"
+                value={String(team.approvedPlayers)}
+              />
+              <StatusBox
+                label="Pending Players"
+                value={String(team.pendingPlayers)}
+              />
             </div>
             <button
               type="button"
@@ -1588,29 +2317,54 @@ function TeamDetailView({
   onBulkApproveRated,
   onPlayerAction,
   onAbilityScoresUpdate,
-  onOpenPlayer
+  onOpenPlayer,
 }: {
   team: AdminTeam;
   season: SeasonDto;
   onBack: () => void;
   onKickOutTeam: () => Promise<void>;
   onSendMessage: () => Promise<void>;
-  onPlayerDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
-  onPlayerAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onPlayerDecision: (
+    id: string,
+    status: "APPROVED" | "REJECTED",
+  ) => Promise<void>;
+  onPlayerAbility: (
+    id: string,
+    ability: "LOW" | "MODERATE" | "HIGH",
+  ) => Promise<void>;
   onBulkRatePending: (rerate?: boolean) => Promise<void>;
   onBulkApproveRated: () => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
-  onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
+  onAbilityScoresUpdate: (
+    id: string,
+    scores: Record<string, number>,
+  ) => Promise<void>;
   onOpenPlayer: (playerId: string) => void;
 }) {
-  const approvedPlayers = team.players.filter((player) => player.approvalStatus === "Approved");
-  const pendingPlayers = team.players.filter((player) => player.approvalStatus === "Pending");
-  const squadBreakdown = positionBreakdown(team.players.filter((player) => player.playerStatus !== "Removed" && player.playerStatus !== "Rejected"));
-  const pendingUnratedCount = pendingPlayers.filter((player) => player.abilityRating === "Not rated").length;
-  const allPendingRated = pendingPlayers.length > 0 && pendingUnratedCount === 0;
-  const [playerPanel, setPlayerPanel] = useState<"approved" | "pending" | null>(null);
+  const approvedPlayers = team.players.filter(
+    (player) => player.approvalStatus === "Approved",
+  );
+  const pendingPlayers = team.players.filter(
+    (player) => player.approvalStatus === "Pending",
+  );
+  const squadBreakdown = positionBreakdown(
+    team.players.filter(
+      (player) =>
+        player.playerStatus !== "Removed" && player.playerStatus !== "Rejected",
+    ),
+  );
+  const pendingUnratedCount = pendingPlayers.filter(
+    (player) => player.abilityRating === "Not rated",
+  ).length;
+  const allPendingRated =
+    pendingPlayers.length > 0 && pendingUnratedCount === 0;
+  const [playerPanel, setPlayerPanel] = useState<"approved" | "pending" | null>(
+    null,
+  );
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
-  const [bulkLoading, setBulkLoading] = useState<"rating" | "approving" | null>(null);
+  const [bulkLoading, setBulkLoading] = useState<"rating" | "approving" | null>(
+    null,
+  );
 
   async function runBulkRate(rerate = false) {
     setBulkLoading("rating");
@@ -1645,22 +2399,36 @@ function TeamDetailView({
       <div
         className="mb-7 flex flex-col justify-between gap-5 rounded-xl border border-white/40 p-6 text-white shadow-xl md:flex-row md:items-center"
         style={{
-          background: `linear-gradient(110deg, ${team.accentColor ?? "#F59E0B"} 0%, ${team.primaryColor ?? "#6D28D9"} 48%, ${team.secondaryColor ?? "#0B1626"} 100%)`
+          background: `linear-gradient(110deg, ${team.accentColor ?? "#F59E0B"} 0%, ${team.primaryColor ?? "#6D28D9"} 48%, ${team.secondaryColor ?? "#0B1626"} 100%)`,
         }}
       >
         <div className="flex items-center gap-5">
-          <TeamBadge name={team.logo || team.name} logoUrl={team.logoUrl} size="lg" />
+          <TeamBadge
+            name={team.logo || team.name}
+            logoUrl={team.logoUrl}
+            size="lg"
+          />
           <div>
             <h1 className="text-3xl font-black">{team.name}</h1>
-            <p className="text-white/85">{season.name} team profile and squad control.</p>
+            <p className="text-white/85">
+              {season.name} team profile and squad control.
+            </p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={onKickOutTeam} className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/25">
+          <button
+            type="button"
+            onClick={onKickOutTeam}
+            className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/25"
+          >
             <Ban size={15} />
             Kick Out Team
           </button>
-          <button type="button" onClick={onSendMessage} className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/25">
+          <button
+            type="button"
+            onClick={onSendMessage}
+            className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-black text-white backdrop-blur transition hover:-translate-y-0.5 hover:bg-white/25"
+          >
             <MessageSquare size={15} />
             Send Message
           </button>
@@ -1677,7 +2445,10 @@ function TeamDetailView({
               {squadBreakdown.length > 0 ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {squadBreakdown.map(([position, count]) => (
-                    <span key={position} className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-700">
+                    <span
+                      key={position}
+                      className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-700"
+                    >
                       {position} {count}
                     </span>
                   ))}
@@ -1692,33 +2463,63 @@ function TeamDetailView({
             <DetailRow label="Manager Name" value={team.managerName} />
             <DetailRow label="Email" value={team.managerEmail} />
             <DetailRow label="Phone" value={team.managerPhone} />
-            <DetailRow label="Pending Players" value={String(team.pendingPlayers)} />
+            <DetailRow
+              label="Pending Players"
+              value={String(team.pendingPlayers)}
+            />
           </div>
         </Panel>
 
         <Panel title="Admin Messages">
           <div className="space-y-3">
-            {team.messages.length > 0 ? team.messages.map((message) => (
-              <div key={`${message.date}-${message.text}`} className="rounded-lg bg-slate-50 p-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-black">{message.type}</span>
-                  <StatusPill tone={message.read === "Read" ? "green" : "orange"}>{message.read}</StatusPill>
+            {team.messages.length > 0 ? (
+              team.messages.map((message) => (
+                <div
+                  key={`${message.date}-${message.text}`}
+                  className="rounded-lg bg-slate-50 p-3 text-sm"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-black">{message.type}</span>
+                    <StatusPill
+                      tone={message.read === "Read" ? "green" : "orange"}
+                    >
+                      {message.read}
+                    </StatusPill>
+                  </div>
+                  <p className="mt-2 text-slate-600">{message.text}</p>
+                  <p className="mt-2 text-xs text-slate-400">{message.date}</p>
                 </div>
-                <p className="mt-2 text-slate-600">{message.text}</p>
-                <p className="mt-2 text-xs text-slate-400">{message.date}</p>
-              </div>
-            )) : <p className="text-sm text-slate-500">No admin messages yet.</p>}
+              ))
+            ) : (
+              <p className="text-sm text-slate-500">No admin messages yet.</p>
+            )}
           </div>
         </Panel>
       </div>
 
-      <div className={`mt-6 grid gap-5 ${pendingPlayers.length > 0 ? "xl:grid-cols-2" : "xl:grid-cols-1"}`}>
-        <Panel title="Approved Players" action="View all" onAction={() => setPlayerPanel("approved")}>
-          <PlayerMiniTable players={approvedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} />
+      <div
+        className={`mt-6 grid gap-5 ${pendingPlayers.length > 0 ? "xl:grid-cols-2" : "xl:grid-cols-1"}`}
+      >
+        <Panel
+          title="Approved Players"
+          action="View all"
+          onAction={() => setPlayerPanel("approved")}
+        >
+          <PlayerMiniTable
+            players={approvedPlayers}
+            onOpenPlayer={onOpenPlayer}
+            onDecision={onPlayerDecision}
+            onAbility={onPlayerAbility}
+            onPlayerAction={onPlayerAction}
+          />
         </Panel>
 
         {pendingPlayers.length > 0 ? (
-          <Panel title="Pending Player Requests" action="Review all" onAction={() => setPlayerPanel("pending")}>
+          <Panel
+            title="Pending Player Requests"
+            action="Review all"
+            onAction={() => setPlayerPanel("pending")}
+          >
             <BulkPendingActions
               pendingCount={pendingPlayers.length}
               unratedCount={pendingUnratedCount}
@@ -1728,24 +2529,50 @@ function TeamDetailView({
               onRateAgain={() => void runBulkRate(true)}
               onApprove={() => setBulkApproveOpen(true)}
             />
-            <PlayerMiniTable players={pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending />
+            <PlayerMiniTable
+              players={pendingPlayers}
+              onOpenPlayer={onOpenPlayer}
+              onDecision={onPlayerDecision}
+              onAbility={onPlayerAbility}
+              onPlayerAction={onPlayerAction}
+              pending
+            />
           </Panel>
         ) : null}
       </div>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
         <Panel title="Removed / Suspended Players">
-          <PlayerMiniTable players={team.suspendedPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} />
+          <PlayerMiniTable
+            players={team.suspendedPlayers}
+            onOpenPlayer={onOpenPlayer}
+            onDecision={onPlayerDecision}
+            onAbility={onPlayerAbility}
+            onPlayerAction={onPlayerAction}
+          />
         </Panel>
 
         <Panel title="Team Fixtures">
-          <SimpleRows rows={team.fixtures.map((fixture) => [fixture.date, `${fixture.home} vs ${fixture.away}`, fixture.status])} />
+          <SimpleRows
+            rows={team.fixtures.map((fixture) => [
+              fixture.date,
+              `${fixture.home} vs ${fixture.away}`,
+              fixture.status,
+            ])}
+          />
         </Panel>
       </div>
 
       <div className="mt-6">
         <Panel title="Team Results">
-          <SimpleRows rows={team.results.map((result) => [result.date, result.match, result.result, result.status])} />
+          <SimpleRows
+            rows={team.results.map((result) => [
+              result.date,
+              result.match,
+              result.result,
+              result.status,
+            ])}
+          />
         </Panel>
       </div>
 
@@ -1754,39 +2581,56 @@ function TeamDetailView({
           <div className="max-h-[86vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
-	                <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">{playerPanel === "approved" ? "Approved Players" : "Pending Player Requests"}</p>
-	                <h2 className="mt-1 text-2xl font-black">{team.name}</h2>
-	              </div>
-              <button type="button" onClick={() => setPlayerPanel(null)} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">
+                <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">
+                  {playerPanel === "approved"
+                    ? "Approved Players"
+                    : "Pending Player Requests"}
+                </p>
+                <h2 className="mt-1 text-2xl font-black">{team.name}</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlayerPanel(null)}
+                className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+              >
                 Close
               </button>
-	            </div>
-	            {playerPanel === "pending" ? (
-	              <BulkPendingActions
-	                pendingCount={pendingPlayers.length}
-	                unratedCount={pendingUnratedCount}
-	                allRated={allPendingRated}
-	                loading={bulkLoading}
-	                onRate={() => void runBulkRate()}
-	                onRateAgain={() => void runBulkRate(true)}
-	                onApprove={() => setBulkApproveOpen(true)}
-	              />
-	            ) : null}
-	            <PlayerMiniTable players={playerPanel === "approved" ? approvedPlayers : pendingPlayers} onOpenPlayer={onOpenPlayer} onDecision={onPlayerDecision} onAbility={onPlayerAbility} onPlayerAction={onPlayerAction} pending={playerPanel === "pending"} />
-	          </div>
-	        </div>
-	      ) : null}
-	      {bulkApproveOpen ? (
-	        <BulkApproveConfirmModal
-	          count={pendingPlayers.length}
-	          loading={bulkLoading === "approving"}
-	          onClose={() => setBulkApproveOpen(false)}
-	          onConfirm={() => void runBulkApprove()}
-	        />
-	      ) : null}
-	    </div>
-	  );
-	}
+            </div>
+            {playerPanel === "pending" ? (
+              <BulkPendingActions
+                pendingCount={pendingPlayers.length}
+                unratedCount={pendingUnratedCount}
+                allRated={allPendingRated}
+                loading={bulkLoading}
+                onRate={() => void runBulkRate()}
+                onRateAgain={() => void runBulkRate(true)}
+                onApprove={() => setBulkApproveOpen(true)}
+              />
+            ) : null}
+            <PlayerMiniTable
+              players={
+                playerPanel === "approved" ? approvedPlayers : pendingPlayers
+              }
+              onOpenPlayer={onOpenPlayer}
+              onDecision={onPlayerDecision}
+              onAbility={onPlayerAbility}
+              onPlayerAction={onPlayerAction}
+              pending={playerPanel === "pending"}
+            />
+          </div>
+        </div>
+      ) : null}
+      {bulkApproveOpen ? (
+        <BulkApproveConfirmModal
+          count={pendingPlayers.length}
+          loading={bulkLoading === "approving"}
+          onClose={() => setBulkApproveOpen(false)}
+          onConfirm={() => void runBulkApprove()}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 function PlayerDetailView({
   season,
@@ -1799,7 +2643,7 @@ function PlayerDetailView({
   onPlayerAction,
   onAbilityScoresUpdate,
   onMessageManager,
-  onBack
+  onBack,
 }: {
   season: SeasonDto;
   team: AdminTeam;
@@ -1807,9 +2651,15 @@ function PlayerDetailView({
   activeTab: "personal" | "stats";
   onTabChange: (tab: "personal" | "stats") => void;
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
-  onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onAbility: (
+    id: string,
+    ability: "LOW" | "MODERATE" | "HIGH",
+  ) => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
-  onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
+  onAbilityScoresUpdate: (
+    id: string,
+    scores: Record<string, number>,
+  ) => Promise<void>;
   onMessageManager: () => Promise<void>;
   onBack: () => void;
 }) {
@@ -1831,27 +2681,67 @@ function PlayerDetailView({
             <div>
               <h1 className="text-3xl font-black">{player.fullName}</h1>
               <p className="text-slate-600">
-                {team.name} · {season.name} · #{player.jerseyNumber} · {player.footballPosition}
+                {team.name} · {season.name} · #{player.jerseyNumber} ·{" "}
+                {player.footballPosition}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <StatusPill tone={player.playerStatus === "Approved" ? "green" : player.playerStatus === "Pending" ? "orange" : "blue"}>
+            <StatusPill
+              tone={
+                player.playerStatus === "Approved"
+                  ? "green"
+                  : player.playerStatus === "Pending"
+                    ? "orange"
+                    : "blue"
+              }
+            >
               {player.playerStatus}
             </StatusPill>
-            <StatusPill tone={player.abilityRating === "High" ? "green" : player.abilityRating === "Moderate" ? "blue" : "orange"}>
+            <StatusPill
+              tone={
+                player.abilityRating === "High"
+                  ? "green"
+                  : player.abilityRating === "Moderate"
+                    ? "blue"
+                    : "orange"
+              }
+            >
               Rating: {player.abilityRating}
             </StatusPill>
           </div>
         </div>
 
         <div className="mt-6 grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-2 md:w-[420px]">
-          <TabButton active={activeTab === "personal"} onClick={() => onTabChange("personal")}>Personal Data</TabButton>
-          <TabButton active={activeTab === "stats"} onClick={() => onTabChange("stats")}>League Stats</TabButton>
+          <TabButton
+            active={activeTab === "personal"}
+            onClick={() => onTabChange("personal")}
+          >
+            Personal Data
+          </TabButton>
+          <TabButton
+            active={activeTab === "stats"}
+            onClick={() => onTabChange("stats")}
+          >
+            League Stats
+          </TabButton>
         </div>
       </div>
 
-      {activeTab === "personal" ? <PlayerPersonalData team={team} season={season} player={player} onDecision={onDecision} onAbility={onAbility} onPlayerAction={onPlayerAction} onAbilityScoresUpdate={onAbilityScoresUpdate} onMessageManager={onMessageManager} /> : <PlayerLeagueStats player={player} />}
+      {activeTab === "personal" ? (
+        <PlayerPersonalData
+          team={team}
+          season={season}
+          player={player}
+          onDecision={onDecision}
+          onAbility={onAbility}
+          onPlayerAction={onPlayerAction}
+          onAbilityScoresUpdate={onAbilityScoresUpdate}
+          onMessageManager={onMessageManager}
+        />
+      ) : (
+        <PlayerLeagueStats player={player} />
+      )}
     </div>
   );
 }
@@ -1861,7 +2751,7 @@ function TeamJerseyStrip({ team }: { team: AdminTeam }) {
     { label: "Home", url: team.homeJerseyUrl },
     { label: "Away", url: team.awayJerseyUrl },
     { label: "GK Home", url: team.gkHomeJerseyUrl },
-    { label: "GK Away", url: team.gkAwayJerseyUrl }
+    { label: "GK Away", url: team.gkAwayJerseyUrl },
   ];
   const hasJerseys = jerseys.some((jersey) => jersey.url);
 
@@ -1869,12 +2759,19 @@ function TeamJerseyStrip({ team }: { team: AdminTeam }) {
     <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-4">
         <h2 className="text-xl font-black">Team Jerseys</h2>
-        <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-indigo-700">Home / Away / GK</span>
+        <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-indigo-700">
+          Home / Away / GK
+        </span>
       </div>
       {hasJerseys ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {jerseys.map((jersey) => (
-            <AdminJerseyCard key={jersey.label} teamName={team.name} label={jersey.label} url={jersey.url} />
+            <AdminJerseyCard
+              key={jersey.label}
+              teamName={team.name}
+              label={jersey.label}
+              url={jersey.url}
+            />
           ))}
         </div>
       ) : (
@@ -1886,11 +2783,21 @@ function TeamJerseyStrip({ team }: { team: AdminTeam }) {
   );
 }
 
-function AdminJerseyCard({ teamName, label, url }: { teamName: string; label: string; url: string | null | undefined }) {
+function AdminJerseyCard({
+  teamName,
+  label,
+  url,
+}: {
+  teamName: string;
+  label: string;
+  url: string | null | undefined;
+}) {
   const [previewOpen, setPreviewOpen] = useState(false);
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-      <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
       <div className="mt-2 flex h-56 items-center justify-center rounded-lg bg-white p-1">
         {url ? (
           <button
@@ -1900,29 +2807,61 @@ function AdminJerseyCard({ teamName, label, url }: { teamName: string; label: st
             title={`Open ${teamName} ${label} jersey`}
             aria-label={`Open ${teamName} ${label} jersey`}
           >
-            <img src={url} alt={`${teamName} ${label} jersey`} className="max-h-full max-w-full object-contain" />
+            <img
+              src={url}
+              alt={`${teamName} ${label} jersey`}
+              className="max-h-full max-w-full object-contain"
+            />
           </button>
         ) : (
           <span className="text-sm font-semibold text-slate-400">Not set</span>
         )}
       </div>
-      {previewOpen && url ? <AdminImagePreviewModal title={`${teamName} ${label} Jersey`} src={url} onClose={() => setPreviewOpen(false)} /> : null}
+      {previewOpen && url ? (
+        <AdminImagePreviewModal
+          title={`${teamName} ${label} Jersey`}
+          src={url}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function AdminImagePreviewModal({ title, src, onClose }: { title: string; src: string; onClose: () => void }) {
+function AdminImagePreviewModal({
+  title,
+  src,
+  onClose,
+}: {
+  title: string;
+  src: string;
+  onClose: () => void;
+}) {
   return (
-    <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-5 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-3xl rounded-3xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-5 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl rounded-3xl bg-white p-5 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="mb-4 flex items-center justify-between gap-4">
           <h3 className="text-xl font-black">{title}</h3>
-          <button type="button" className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200" onClick={onClose}>
+          <button
+            type="button"
+            className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200"
+            onClick={onClose}
+          >
             Close
           </button>
         </div>
         <div className="grid place-items-center rounded-3xl bg-slate-100 p-4">
-          <img src={src} alt={title} className="max-h-[75vh] max-w-full rounded-2xl object-contain" />
+          <img
+            src={src}
+            alt={title}
+            className="max-h-[75vh] max-w-full rounded-2xl object-contain"
+          />
         </div>
       </div>
     </div>
@@ -1937,15 +2876,21 @@ function PlayerPersonalData({
   onAbility,
   onPlayerAction,
   onAbilityScoresUpdate,
-  onMessageManager
+  onMessageManager,
 }: {
   team: AdminTeam;
   season: SeasonDto;
   player: AdminPlayer;
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
-  onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onAbility: (
+    id: string,
+    ability: "LOW" | "MODERATE" | "HIGH",
+  ) => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
-  onAbilityScoresUpdate: (id: string, scores: Record<string, number>) => Promise<void>;
+  onAbilityScoresUpdate: (
+    id: string,
+    scores: Record<string, number>,
+  ) => Promise<void>;
   onMessageManager: () => Promise<void>;
 }) {
   const [editingAbility, setEditingAbility] = useState(false);
@@ -1956,9 +2901,15 @@ function PlayerPersonalData({
   const isRemoved = player.playerStatus === "Removed";
   const canApprove = isPending && player.abilityRating !== "Not rated";
   const canRate = isPending;
-  const editableAbilityRows = player.abilityDetails.filter((ability) => ability.label !== "Tier" && ability.label !== "Overall");
+  const editableAbilityRows = player.abilityDetails.filter(
+    (ability) => ability.label !== "Tier" && ability.label !== "Overall",
+  );
   function startAbilityEdit() {
-    setAbilityDraft(Object.fromEntries(editableAbilityRows.map((ability) => [ability.label, ability.value])));
+    setAbilityDraft(
+      Object.fromEntries(
+        editableAbilityRows.map((ability) => [ability.label, ability.value]),
+      ),
+    );
     setEditingAbility(true);
   }
   function toAbilityKey(label: string) {
@@ -1968,7 +2919,7 @@ function PlayerPersonalData({
     const scores = Object.fromEntries(
       Object.entries(abilityDraft)
         .map(([label, value]) => [toAbilityKey(label), Number(value)] as const)
-        .filter(([, value]) => Number.isFinite(value))
+        .filter(([, value]) => Number.isFinite(value)),
     );
     await onAbilityScoresUpdate(player.id, scores);
     setEditingAbility(false);
@@ -1985,17 +2936,34 @@ function PlayerPersonalData({
           <DetailRow label="Masked ID Number" value={player.maskedId} />
           <DetailRow label="Team Name" value={team.name} />
           <DetailRow label="Season Name" value={season.name} />
-          <DetailRow label="Jersey Number" value={String(player.jerseyNumber)} />
-          <DetailRow label="Position" value={`${player.footballPosition} (${player.position})`} />
+          <DetailRow
+            label="Jersey Number"
+            value={String(player.jerseyNumber)}
+          />
+          <DetailRow
+            label="Position"
+            value={`${player.footballPosition} (${player.position})`}
+          />
           <DetailRow label="Preferred Foot" value={player.preferredFoot} />
           <DetailRow label="Approval Status" value={player.approvalStatus} />
           <DetailRow label="Player Status" value={player.playerStatus} />
-          <DetailRow label="Registration Date" value={player.registrationDate} />
-          <DetailRow label="Submitted By Manager" value={player.submittedByManager} />
-          <DetailRow label="Admin Approval Date" value={player.adminApprovalDate} />
+          <DetailRow
+            label="Registration Date"
+            value={player.registrationDate}
+          />
+          <DetailRow
+            label="Submitted By Manager"
+            value={player.submittedByManager}
+          />
+          <DetailRow
+            label="Admin Approval Date"
+            value={player.adminApprovalDate}
+          />
         </div>
         <div className="mt-5 rounded-xl bg-slate-50 p-4">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500">Admin Message</p>
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Admin Message
+          </p>
           <p className="mt-2 text-sm text-slate-700">{player.adminMessage}</p>
         </div>
       </Panel>
@@ -2015,57 +2983,127 @@ function PlayerPersonalData({
           <div className="grid gap-2">
             {isPending ? (
               <>
-                <AdminActionButton label="Approve Player" disabled={!canApprove} onClick={() => onDecision(player.id, "APPROVED")} />
-                <DangerButton label="Reject Player" onClick={() => onPlayerAction("reject", player)} />
+                <AdminActionButton
+                  label="Approve Player"
+                  disabled={!canApprove}
+                  onClick={() => onDecision(player.id, "APPROVED")}
+                />
+                <DangerButton
+                  label="Reject Player"
+                  onClick={() => onPlayerAction("reject", player)}
+                />
               </>
             ) : null}
             {isApproved && !isSuspended && !isRemoved ? (
               <>
-                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
-                <DangerButton label="Suspend Player" onClick={() => onPlayerAction("suspend", player)} />
+                <DangerButton
+                  label="Remove Player"
+                  onClick={() => onPlayerAction("remove", player)}
+                />
+                <DangerButton
+                  label="Suspend Player"
+                  onClick={() => onPlayerAction("suspend", player)}
+                />
               </>
             ) : null}
             {isSuspended ? (
               <>
-                <AdminActionButton label="Unsuspend Player" onClick={() => onPlayerAction("unsuspend", player)} />
-                <DangerButton label="Remove Player" onClick={() => onPlayerAction("remove", player)} />
+                <AdminActionButton
+                  label="Unsuspend Player"
+                  onClick={() => onPlayerAction("unsuspend", player)}
+                />
+                <DangerButton
+                  label="Remove Player"
+                  onClick={() => onPlayerAction("remove", player)}
+                />
               </>
             ) : null}
-            <AdminActionButton label="Send Message to Manager" onClick={onMessageManager} />
+            <AdminActionButton
+              label="Send Message to Manager"
+              onClick={onMessageManager}
+            />
             <div className="grid grid-cols-3 gap-2">
-              <AdminActionButton label="Low" selected={player.abilityRating === "Low"} disabled={!canRate} onClick={() => onAbility(player.id, "LOW")} />
-              <AdminActionButton label="Moderate" selected={player.abilityRating === "Moderate"} disabled={!canRate} onClick={() => onAbility(player.id, "MODERATE")} />
-              <AdminActionButton label="High" selected={player.abilityRating === "High"} disabled={!canRate} onClick={() => onAbility(player.id, "HIGH")} />
+              <AdminActionButton
+                label="Low"
+                selected={player.abilityRating === "Low"}
+                disabled={!canRate}
+                onClick={() => onAbility(player.id, "LOW")}
+              />
+              <AdminActionButton
+                label="Moderate"
+                selected={player.abilityRating === "Moderate"}
+                disabled={!canRate}
+                onClick={() => onAbility(player.id, "MODERATE")}
+              />
+              <AdminActionButton
+                label="High"
+                selected={player.abilityRating === "High"}
+                disabled={!canRate}
+                onClick={() => onAbility(player.id, "HIGH")}
+              />
             </div>
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            Ability scores stay hidden from managers and public users. Approval is blocked until Low, Moderate, or High is assigned.
+            Ability scores stay hidden from managers and public users. Approval
+            is blocked until Low, Moderate, or High is assigned.
           </p>
         </Panel>
 
-        <Panel title="Hidden Ability Scores" action={player.abilityDetails.length > 0 ? (editingAbility ? "Save scores" : "Edit scores") : undefined} onAction={player.abilityDetails.length > 0 ? () => { if (editingAbility) void saveAbilityEdit(); else startAbilityEdit(); } : undefined}>
+        <Panel
+          title="Hidden Ability Scores"
+          action={
+            player.abilityDetails.length > 0
+              ? editingAbility
+                ? "Save scores"
+                : "Edit scores"
+              : undefined
+          }
+          onAction={
+            player.abilityDetails.length > 0
+              ? () => {
+                  if (editingAbility) void saveAbilityEdit();
+                  else startAbilityEdit();
+                }
+              : undefined
+          }
+        >
           {player.abilityDetails.length > 0 ? (
             <div className="grid grid-cols-2 gap-3">
               {player.abilityDetails.map((ability) =>
-                editingAbility && ability.label !== "Tier" && ability.label !== "Overall" ? (
-                  <label key={ability.label} className="rounded-lg bg-slate-50 p-3">
-                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">{ability.label}</span>
+                editingAbility &&
+                ability.label !== "Tier" &&
+                ability.label !== "Overall" ? (
+                  <label
+                    key={ability.label}
+                    className="rounded-lg bg-slate-50 p-3"
+                  >
+                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                      {ability.label}
+                    </span>
                     <input
                       type="number"
                       min={1}
                       max={92}
                       value={abilityDraft[ability.label] ?? ability.value}
-                      onChange={(event) => setAbilityDraft((current) => ({ ...current, [ability.label]: event.target.value }))}
+                      onChange={(event) =>
+                        setAbilityDraft((current) => ({
+                          ...current,
+                          [ability.label]: event.target.value,
+                        }))
+                      }
                       className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-black text-slate-800"
                     />
                   </label>
                 ) : (
                   <AbilityDetailCard key={ability.label} ability={ability} />
-                )
+                ),
               )}
             </div>
           ) : (
-            <p className="text-sm text-slate-500">No ability scores generated yet. Click Low, Moderate, or High first.</p>
+            <p className="text-sm text-slate-500">
+              No ability scores generated yet. Click Low, Moderate, or High
+              first.
+            </p>
           )}
         </Panel>
       </div>
@@ -2098,7 +3136,7 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
     ["Average Rating", stats.averageRating],
     ["Best Match Rating", stats.bestMatchRating],
     ["Lowest Match Rating", stats.lowestMatchRating],
-    ["Player of the Match", stats.playerOfTheMatch]
+    ["Player of the Match", stats.playerOfTheMatch],
   ];
 
   return (
@@ -2117,18 +3155,41 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
             <table className="w-full min-w-[1100px] text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <tr>
-                  {["Match", "Date", "Opponent", "Result", "Minutes", "Goals", "Assists", "Shots", "SOT", "Chances", "Pass Accuracy", "Dribbles", "Tackles", "Cards", "Rating"].map((header) => (
-                    <th key={header} className="px-4 py-3 text-left font-black">{header}</th>
+                  {[
+                    "Match",
+                    "Date",
+                    "Opponent",
+                    "Result",
+                    "Minutes",
+                    "Goals",
+                    "Assists",
+                    "Shots",
+                    "SOT",
+                    "Chances",
+                    "Pass Accuracy",
+                    "Dribbles",
+                    "Tackles",
+                    "Cards",
+                    "Rating",
+                  ].map((header) => (
+                    <th key={header} className="px-4 py-3 text-left font-black">
+                      {header}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {player.performances.map((row) => (
-                  <tr key={`${row.date}-${row.match}`} className="hover:bg-slate-50">
+                  <tr
+                    key={`${row.date}-${row.match}`}
+                    className="hover:bg-slate-50"
+                  >
                     <td className="px-4 py-3 font-bold">{row.match}</td>
                     <td className="px-4 py-3">{row.date}</td>
                     <td className="px-4 py-3">{row.opponent}</td>
-                    <td className="px-4 py-3 font-black text-indigo-700">{row.result}</td>
+                    <td className="px-4 py-3 font-black text-indigo-700">
+                      {row.result}
+                    </td>
                     <td className="px-4 py-3">{row.minutes}</td>
                     <td className="px-4 py-3">{row.goals}</td>
                     <td className="px-4 py-3">{row.assists}</td>
@@ -2139,14 +3200,18 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
                     <td className="px-4 py-3">{row.successfulDribbles}</td>
                     <td className="px-4 py-3">{row.tackles}</td>
                     <td className="px-4 py-3">{row.cards}</td>
-                    <td className="px-4 py-3 font-black text-indigo-700">{row.rating}</td>
+                    <td className="px-4 py-3 font-black text-indigo-700">
+                      {row.rating}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         ) : (
-          <p className="text-sm text-slate-500">No match performance yet. Stats will appear after confirmed matches.</p>
+          <p className="text-sm text-slate-500">
+            No match performance yet. Stats will appear after confirmed matches.
+          </p>
         )}
       </Panel>
     </div>
@@ -2160,7 +3225,7 @@ function BulkPendingActions({
   loading,
   onRate,
   onRateAgain,
-  onApprove
+  onApprove,
 }: {
   pendingCount: number;
   unratedCount: number;
@@ -2175,9 +3240,12 @@ function BulkPendingActions({
   return (
     <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <p className="text-xs font-black uppercase tracking-[0.25em] text-indigo-700">Bulk Actions</p>
+        <p className="text-xs font-black uppercase tracking-[0.25em] text-indigo-700">
+          Bulk Actions
+        </p>
         <p className="mt-1 text-sm font-semibold text-slate-600">
-          {ratedCount}/{pendingCount} pending players rated. Moderate stays the majority, with occasional Low/High exceptions.
+          {ratedCount}/{pendingCount} pending players rated. Moderate stays the
+          majority, with occasional Low/High exceptions.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -2218,7 +3286,7 @@ function BulkApproveConfirmModal({
   count,
   loading,
   onClose,
-  onConfirm
+  onConfirm,
 }: {
   count: number;
   loading: boolean;
@@ -2228,17 +3296,30 @@ function BulkApproveConfirmModal({
   return (
     <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/55 p-5 backdrop-blur-sm">
       <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
-        <p className="text-xs font-black uppercase tracking-[0.3em] text-emerald-700">Bulk Approval</p>
+        <p className="text-xs font-black uppercase tracking-[0.3em] text-emerald-700">
+          Bulk Approval
+        </p>
         <h2 className="mt-2 text-3xl font-black">Approve all rated players?</h2>
         <p className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-          This will approve all {count} pending players who already have Low, Moderate, or High rating selected.
-          Approved players will become available for lineup selection.
+          This will approve all {count} pending players who already have Low,
+          Moderate, or High rating selected. Approved players will become
+          available for lineup selection.
         </p>
         <div className="mt-6 flex justify-end gap-3">
-          <button type="button" onClick={onClose} disabled={loading} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200 disabled:opacity-50">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200 disabled:opacity-50"
+          >
             Cancel
           </button>
-          <button type="button" onClick={onConfirm} disabled={loading} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0">
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+          >
             {loading ? "Approving..." : "Approve All"}
           </button>
         </div>
@@ -2253,24 +3334,40 @@ function PlayerMiniTable({
   onDecision,
   onAbility,
   onPlayerAction,
-  pending = false
+  pending = false,
 }: {
   players: AdminPlayer[];
   onOpenPlayer: (playerId: string) => void;
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
-  onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onAbility: (
+    id: string,
+    ability: "LOW" | "MODERATE" | "HIGH",
+  ) => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
   pending?: boolean;
 }) {
-  if (players.length === 0) return <p className="text-sm text-slate-500">No players in this section.</p>;
+  if (players.length === 0)
+    return (
+      <p className="text-sm text-slate-500">No players in this section.</p>
+    );
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[620px] text-sm">
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
           <tr>
-            {["Player", "Code", "Position", "Jersey", "OVR", "Status", "Actions"].map((header) => (
-              <th key={header} className="px-4 py-3 text-left font-black">{header}</th>
+            {[
+              "Player",
+              "Code",
+              "Position",
+              "Jersey",
+              "OVR",
+              "Status",
+              "Actions",
+            ].map((header) => (
+              <th key={header} className="px-4 py-3 text-left font-black">
+                {header}
+              </th>
             ))}
           </tr>
         </thead>
@@ -2290,15 +3387,34 @@ function PlayerMiniTable({
               <td className="px-4 py-3">{player.code}</td>
               <td className="px-4 py-3">{player.footballPosition}</td>
               <td className="px-4 py-3">#{player.jerseyNumber}</td>
-              <td className="px-4 py-3"><AbilityCapsule player={player} /></td>
               <td className="px-4 py-3">
-                <StatusPill tone={player.playerStatus === "Approved" ? "green" : player.playerStatus === "Removed" || player.playerStatus === "Suspended" || player.playerStatus === "Rejected" ? "orange" : "orange"}>
+                <AbilityCapsule player={player} />
+              </td>
+              <td className="px-4 py-3">
+                <StatusPill
+                  tone={
+                    player.playerStatus === "Approved"
+                      ? "green"
+                      : player.playerStatus === "Removed" ||
+                          player.playerStatus === "Suspended" ||
+                          player.playerStatus === "Rejected"
+                        ? "orange"
+                        : "orange"
+                  }
+                >
                   {player.playerStatus}
                 </StatusPill>
               </td>
               <td className="px-4 py-3">
                 <ActionGroup
-                  actions={playerMiniActions(player, pending, onOpenPlayer, onDecision, onAbility, onPlayerAction)}
+                  actions={playerMiniActions(
+                    player,
+                    pending,
+                    onOpenPlayer,
+                    onDecision,
+                    onAbility,
+                    onPlayerAction,
+                  )}
                 />
               </td>
             </tr>
@@ -2314,23 +3430,53 @@ function playerMiniActions(
   pending: boolean,
   onOpenPlayer: (playerId: string) => void,
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>,
-  onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>,
-  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void
+  onAbility: (
+    id: string,
+    ability: "LOW" | "MODERATE" | "HIGH",
+  ) => Promise<void>,
+  onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void,
 ): ActionItem[] {
   if (pending || player.approvalStatus === "Pending") {
     return [
-      { label: "Low", onClick: () => void onAbility(player.id, "LOW"), selected: player.abilityRating === "Low" },
-      { label: "Moderate", onClick: () => void onAbility(player.id, "MODERATE"), selected: player.abilityRating === "Moderate" },
-      { label: "High", onClick: () => void onAbility(player.id, "HIGH"), selected: player.abilityRating === "High" },
-      { label: "Approve", onClick: () => void onDecision(player.id, "APPROVED"), disabled: player.abilityRating === "Not rated" },
-      { label: "Reject", onClick: () => onPlayerAction("reject", player), danger: true }
+      {
+        label: "Low",
+        onClick: () => void onAbility(player.id, "LOW"),
+        selected: player.abilityRating === "Low",
+      },
+      {
+        label: "Moderate",
+        onClick: () => void onAbility(player.id, "MODERATE"),
+        selected: player.abilityRating === "Moderate",
+      },
+      {
+        label: "High",
+        onClick: () => void onAbility(player.id, "HIGH"),
+        selected: player.abilityRating === "High",
+      },
+      {
+        label: "Approve",
+        onClick: () => void onDecision(player.id, "APPROVED"),
+        disabled: player.abilityRating === "Not rated",
+      },
+      {
+        label: "Reject",
+        onClick: () => onPlayerAction("reject", player),
+        danger: true,
+      },
     ];
   }
   if (player.playerStatus === "Suspended") {
     return [
       { label: "Open", onClick: () => onOpenPlayer(player.id) },
-      { label: "Unsuspend", onClick: () => onPlayerAction("unsuspend", player) },
-      { label: "Remove", onClick: () => onPlayerAction("remove", player), danger: true }
+      {
+        label: "Unsuspend",
+        onClick: () => onPlayerAction("unsuspend", player),
+      },
+      {
+        label: "Remove",
+        onClick: () => onPlayerAction("remove", player),
+        danger: true,
+      },
     ];
   }
   if (player.playerStatus === "Removed" || player.playerStatus === "Rejected") {
@@ -2338,19 +3484,33 @@ function playerMiniActions(
   }
   return [
     { label: "Open", onClick: () => onOpenPlayer(player.id) },
-    { label: "Remove", onClick: () => onPlayerAction("remove", player), danger: true },
-    { label: "Suspend", onClick: () => onPlayerAction("suspend", player), danger: true }
+    {
+      label: "Remove",
+      onClick: () => onPlayerAction("remove", player),
+      danger: true,
+    },
+    {
+      label: "Suspend",
+      onClick: () => onPlayerAction("suspend", player),
+      danger: true,
+    },
   ];
 }
 
 function SimpleRows({ rows }: { rows: Array<Array<string>> }) {
-  if (rows.length === 0) return <p className="text-sm text-slate-500">No records yet.</p>;
+  if (rows.length === 0)
+    return <p className="text-sm text-slate-500">No records yet.</p>;
   return (
     <div className="divide-y divide-slate-100">
       {rows.map((row, index) => (
-        <div key={`${row.join("-")}-${index}`} className="grid gap-2 py-3 text-sm md:grid-cols-4">
+        <div
+          key={`${row.join("-")}-${index}`}
+          className="grid gap-2 py-3 text-sm md:grid-cols-4"
+        >
           {row.map((cell) => (
-            <span key={cell} className="font-medium text-slate-700">{cell}</span>
+            <span key={cell} className="font-medium text-slate-700">
+              {cell}
+            </span>
           ))}
         </div>
       ))}
@@ -2361,7 +3521,9 @@ function SimpleRows({ rows }: { rows: Array<Array<string>> }) {
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg bg-slate-50 p-3">
-      <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
       <p className="mt-1 font-bold text-slate-800">{value}</p>
     </div>
   );
@@ -2376,25 +3538,46 @@ function abilityTone(tier: AdminPlayer["abilityRating"]) {
 
 function AbilityCapsule({ player }: { player: AdminPlayer }) {
   if (player.overallRating === null || player.overallRating === undefined) {
-    return <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-400 ring-1 ring-slate-200">N/A</span>;
+    return (
+      <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-400 ring-1 ring-slate-200">
+        N/A
+      </span>
+    );
   }
   return (
-    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${abilityTone(player.abilityRating)}`}>
+    <span
+      className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${abilityTone(player.abilityRating)}`}
+    >
       {player.overallRating}
     </span>
   );
 }
 
-function AbilityDetailCard({ ability }: { ability: { label: string; value: string } }) {
+function AbilityDetailCard({
+  ability,
+}: {
+  ability: { label: string; value: string };
+}) {
   const numeric = Number(ability.value);
-  const bg = ability.label === "Tier"
-    ? ability.value === "HIGH" ? "bg-sky-50 ring-sky-100" : ability.value === "MODERATE" ? "bg-green-50 ring-green-100" : "bg-amber-50 ring-amber-100"
-    : Number.isFinite(numeric)
-      ? numeric >= 73 ? "bg-sky-50 ring-sky-100" : numeric >= 55 ? "bg-green-50 ring-green-100" : "bg-amber-50 ring-amber-100"
-      : "bg-slate-50 ring-slate-100";
+  const bg =
+    ability.label === "Tier"
+      ? ability.value === "HIGH"
+        ? "bg-sky-50 ring-sky-100"
+        : ability.value === "MODERATE"
+          ? "bg-green-50 ring-green-100"
+          : "bg-amber-50 ring-amber-100"
+      : Number.isFinite(numeric)
+        ? numeric >= 73
+          ? "bg-sky-50 ring-sky-100"
+          : numeric >= 55
+            ? "bg-green-50 ring-green-100"
+            : "bg-amber-50 ring-amber-100"
+        : "bg-slate-50 ring-slate-100";
   return (
     <div className={`rounded-lg p-3 ring-1 ${bg}`}>
-      <p className="text-xs font-black uppercase tracking-wide text-slate-500">{ability.label}</p>
+      <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+        {ability.label}
+      </p>
       <p className="mt-1 font-bold text-slate-800">{ability.value}</p>
     </div>
   );
@@ -2429,9 +3612,18 @@ function PlayerAvatar({ player }: { player: AdminPlayer }) {
           title={`Open ${player.fullName} miniface`}
           aria-label={`Open ${player.fullName} miniface`}
         >
-          <img src={player.avatarUrl} alt={player.fullName} className="h-full w-full object-cover" />
+          <img
+            src={player.avatarUrl}
+            alt={player.fullName}
+            className="h-full w-full object-cover"
+          />
         </button>
-        {previewOpen ? <AdminFacePreviewModal player={player} onClose={() => setPreviewOpen(false)} /> : null}
+        {previewOpen ? (
+          <AdminFacePreviewModal
+            player={player}
+            onClose={() => setPreviewOpen(false)}
+          />
+        ) : null}
       </>
     );
   }
@@ -2442,49 +3634,97 @@ function PlayerAvatar({ player }: { player: AdminPlayer }) {
   );
 }
 
-function AdminFacePreviewModal({ player, onClose }: { player: AdminPlayer; onClose: () => void }) {
+function AdminFacePreviewModal({
+  player,
+  onClose,
+}: {
+  player: AdminPlayer;
+  onClose: () => void;
+}) {
   if (!player.avatarUrl) return null;
   return (
-    <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-5 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/70 p-5 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-3xl bg-white p-5 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
             <h3 className="text-xl font-black">{player.fullName}</h3>
-            <p className="text-sm font-semibold text-slate-500">#{player.jerseyNumber} · {player.footballPosition}</p>
+            <p className="text-sm font-semibold text-slate-500">
+              #{player.jerseyNumber} · {player.footballPosition}
+            </p>
           </div>
-          <button type="button" className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200" onClick={onClose}>
+          <button
+            type="button"
+            className="rounded-full bg-slate-100 px-4 py-2 font-bold transition hover:bg-slate-200"
+            onClick={onClose}
+          >
             Close
           </button>
         </div>
         <div className="grid place-items-center rounded-3xl bg-slate-100 p-4">
-          <img src={player.avatarUrl} alt={player.fullName} className="max-h-[70vh] max-w-full rounded-2xl object-contain" />
+          <img
+            src={player.avatarUrl}
+            alt={player.fullName}
+            className="max-h-[70vh] max-w-full rounded-2xl object-contain"
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+function TabButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg px-4 py-2 text-sm font-black transition-all duration-200 ${active ? "bg-indigo-600 text-white shadow" : "text-slate-600 hover:bg-white hover:text-indigo-700"
-        }`}
+      className={`rounded-lg px-4 py-2 text-sm font-black transition-all duration-200 ${
+        active
+          ? "bg-indigo-600 text-white shadow"
+          : "text-slate-600 hover:bg-white hover:text-indigo-700"
+      }`}
     >
       {children}
     </button>
   );
 }
 
-function AdminActionButton({ label, icon, onClick, disabled, selected }: { label: string; icon?: React.ReactNode; onClick?: () => void; disabled?: boolean; selected?: boolean }) {
+function AdminActionButton({
+  label,
+  icon,
+  onClick,
+  disabled,
+  selected,
+}: {
+  label: string;
+  icon?: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  selected?: boolean;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-black transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none ${selected ? "border-green-300 bg-green-100 text-green-800 ring-2 ring-green-200" : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-        }`}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-black transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:shadow-none ${
+        selected
+          ? "border-green-300 bg-green-100 text-green-800 ring-2 ring-green-200"
+          : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+      }`}
     >
       {selected ? <CheckCircle2 size={14} /> : null}
       {icon}
@@ -2493,7 +3733,17 @@ function AdminActionButton({ label, icon, onClick, disabled, selected }: { label
   );
 }
 
-function DangerButton({ label, icon, onClick, disabled }: { label: string; icon?: React.ReactNode; onClick?: () => void; disabled?: boolean }) {
+function DangerButton({
+  label,
+  icon,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  icon?: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
@@ -2509,7 +3759,7 @@ function DangerButton({ label, icon, onClick, disabled }: { label: string; icon?
 
 function TeamRequestsView({
   teamRequests,
-  onDecision
+  onDecision,
 }: {
   teamRequests: TeamRequest[];
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
@@ -2518,20 +3768,36 @@ function TeamRequestsView({
     <CrudPage
       title="Team Requests"
       subtitle="Approve or reject manager team applications for this selected season."
-      columns={["Team Name", "Manager Name", "Season", "Squad Count", "Status", "Actions"]}
+      columns={[
+        "Team Name",
+        "Manager Name",
+        "Season",
+        "Squad Count",
+        "Status",
+        "Actions",
+      ]}
       rows={teamRequests.map((row) => [
         <TeamCompact key="team" name={row.team} logoUrl={row.logoUrl} />,
         row.manager,
         row.season,
         String(row.squad),
-        <StatusPill key="status" tone="orange">{row.status}</StatusPill>,
+        <StatusPill key="status" tone="orange">
+          {row.status}
+        </StatusPill>,
         <ActionGroup
           key="actions"
           actions={[
-            { label: "Approve", onClick: () => void onDecision(row.id, "APPROVED") },
-            { label: "Reject", onClick: () => void onDecision(row.id, "REJECTED"), danger: true }
+            {
+              label: "Approve",
+              onClick: () => void onDecision(row.id, "APPROVED"),
+            },
+            {
+              label: "Reject",
+              onClick: () => void onDecision(row.id, "REJECTED"),
+              danger: true,
+            },
           ]}
-        />
+        />,
       ])}
     />
   );
@@ -2541,20 +3807,35 @@ function PlayerRequestsView({
   playerRequests,
   onDecision,
   onAbility,
-  onPlayerAction
+  onPlayerAction,
 }: {
   playerRequests: PlayerRequest[];
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
-  onAbility: (id: string, ability: "LOW" | "MODERATE" | "HIGH") => Promise<void>;
+  onAbility: (
+    id: string,
+    ability: "LOW" | "MODERATE" | "HIGH",
+  ) => Promise<void>;
   onPlayerAction: (action: PlayerLifecycleAction, player: AdminPlayer) => void;
 }) {
-  const [selectedPlayer, setSelectedPlayer] = useState<AdminPlayer | null>(null);
+  const [selectedPlayer, setSelectedPlayer] = useState<AdminPlayer | null>(
+    null,
+  );
   return (
     <>
       <CrudPage
         title="Player Requests"
         subtitle="Review players, assign ability rating, approve, reject, or remove them."
-        columns={["Player Code", "Player Name", "Team Name", "Position", "Jersey", "ID Type", "Approval", "OVR", "Actions"]}
+        columns={[
+          "Player Code",
+          "Player Name",
+          "Team Name",
+          "Position",
+          "Jersey",
+          "ID Type",
+          "Approval",
+          "OVR",
+          "Actions",
+        ]}
         rows={playerRequests.map((row) => {
           const canRate = row.teamStatus === RegistrationStatus.APPROVED;
           const canApprove = canRate && row.abilityRating !== "Not rated";
@@ -2575,23 +3856,61 @@ function PlayerRequestsView({
             row.idType,
             <div key="status" className="flex flex-col items-start gap-2">
               <StatusPill tone="orange">{row.status}</StatusPill>
-              <span className="text-xs font-bold text-slate-500">Ability: {row.abilityRating}</span>
+              <span className="text-xs font-bold text-slate-500">
+                Ability: {row.abilityRating}
+              </span>
             </div>,
-            row.player ? <AbilityCapsule key="ovr" player={row.player} /> : <span key="ovr" className="text-xs font-bold text-slate-400">N/A</span>,
+            row.player ? (
+              <AbilityCapsule key="ovr" player={row.player} />
+            ) : (
+              <span key="ovr" className="text-xs font-bold text-slate-400">
+                N/A
+              </span>
+            ),
             <ActionGroup
               key="actions"
               actions={[
-                { label: "Low", onClick: () => void onAbility(row.id, "LOW"), disabled: !canRate, selected: row.abilityRating === "Low" },
-                { label: "Moderate", onClick: () => void onAbility(row.id, "MODERATE"), disabled: !canRate, selected: row.abilityRating === "Moderate" },
-                { label: "High", onClick: () => void onAbility(row.id, "HIGH"), disabled: !canRate, selected: row.abilityRating === "High" },
-                { label: "Approve", onClick: () => void onDecision(row.id, "APPROVED"), disabled: !canApprove },
-                { label: "Reject", onClick: () => row.player && onPlayerAction("reject", row.player), disabled: !row.player, danger: true }
+                {
+                  label: "Low",
+                  onClick: () => void onAbility(row.id, "LOW"),
+                  disabled: !canRate,
+                  selected: row.abilityRating === "Low",
+                },
+                {
+                  label: "Moderate",
+                  onClick: () => void onAbility(row.id, "MODERATE"),
+                  disabled: !canRate,
+                  selected: row.abilityRating === "Moderate",
+                },
+                {
+                  label: "High",
+                  onClick: () => void onAbility(row.id, "HIGH"),
+                  disabled: !canRate,
+                  selected: row.abilityRating === "High",
+                },
+                {
+                  label: "Approve",
+                  onClick: () => void onDecision(row.id, "APPROVED"),
+                  disabled: !canApprove,
+                },
+                {
+                  label: "Reject",
+                  onClick: () =>
+                    row.player && onPlayerAction("reject", row.player),
+                  disabled: !row.player,
+                  danger: true,
+                },
               ]}
-            />
+            />,
           ];
         })}
       />
-      {selectedPlayer ? <PlayerRequestDetailModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} /> : null}
+      {selectedPlayer ? (
+        <PlayerRequestDetailModal
+          player={selectedPlayer}
+          onClose={() => setSelectedPlayer(null)}
+        />
+      ) : null}
     </>
   );
 }
@@ -2599,14 +3918,18 @@ function PlayerRequestsView({
 function FixturesView({ season }: { season: SeasonDto }) {
   const [data, setData] = useState<AdminFixturesResponse | null>(null);
   const [preview, setPreview] = useState<FixturePreviewResponse | null>(null);
-  const [previewMode, setPreviewMode] = useState<"all" | "group" | "knockout" | null>(null);
+  const [previewMode, setPreviewMode] = useState<
+    "all" | "group" | "knockout" | null
+  >(null);
   const [tab, setTab] = useState<"group" | "knockout" | "all">("all");
   const [teamFilter, setTeamFilter] = useState("ALL");
   const [message, setMessage] = useState("");
   const isGroupKnockout = season.format === SeasonFormat.GROUP_STAGE_KNOCKOUT;
 
   async function loadFixtures() {
-    const result = await api<AdminFixturesResponse>(`/admin/seasons/${season.id}/fixtures`);
+    const result = await api<AdminFixturesResponse>(
+      `/admin/seasons/${season.id}/fixtures`,
+    );
     setData(result);
   }
 
@@ -2614,11 +3937,21 @@ function FixturesView({ season }: { season: SeasonDto }) {
     setPreview(null);
     setPreviewMode(null);
     setTab(isGroupKnockout ? "group" : "all");
-    void loadFixtures().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load fixtures"));
+    void loadFixtures().catch((error) =>
+      setMessage(
+        error instanceof Error ? error.message : "Could not load fixtures",
+      ),
+    );
   }, [season.id, isGroupKnockout]);
 
-  const teamById = useMemo(() => new Map((data?.approved_teams ?? []).map((team) => [team.id, team])), [data?.approved_teams]);
-  const groupById = useMemo(() => new Map((data?.groups ?? []).map((group) => [group.id, group])), [data?.groups]);
+  const teamById = useMemo(
+    () => new Map((data?.approved_teams ?? []).map((team) => [team.id, team])),
+    [data?.approved_teams],
+  );
+  const groupById = useMemo(
+    () => new Map((data?.groups ?? []).map((group) => [group.id, group])),
+    [data?.groups],
+  );
   const rows = preview?.fixtures ?? data?.fixtures ?? [];
   const stageFilteredRows = rows.filter((row) => {
     if (!isGroupKnockout || tab === "all") return true;
@@ -2627,28 +3960,74 @@ function FixturesView({ season }: { season: SeasonDto }) {
   });
   const filteredRows = stageFilteredRows.filter((row) => {
     if (teamFilter === "ALL") return true;
-    return row.home_team_registration_id === teamFilter || row.away_team_registration_id === teamFilter;
+    return (
+      row.home_team_registration_id === teamFilter ||
+      row.away_team_registration_id === teamFilter
+    );
   });
-  const groupFixtures = data?.fixtures.filter((fixture) => fixture.stage === "GROUP") ?? [];
+  const groupFixtures =
+    data?.fixtures.filter((fixture) => fixture.stage === "GROUP") ?? [];
   const groupStageComplete =
-    groupFixtures.length > 0 && groupFixtures.every((fixture) => fixture.status === FixtureStatus.FINAL || fixture.status === "COMPLETED" || fixture.result_confirmed);
+    groupFixtures.length > 0 &&
+    groupFixtures.every(
+      (fixture) =>
+        fixture.status === FixtureStatus.FINAL ||
+        fixture.status === "COMPLETED" ||
+        fixture.result_confirmed,
+    );
   const hasSavedFixtures = (data?.fixtures.length ?? 0) > 0;
 
-  function rowTeamName(row: FixtureApiRow | FixturePreviewRow, side: "home" | "away") {
-    const id = side === "home" ? row.home_team_registration_id : row.away_team_registration_id;
+  function rowTeamName(
+    row: FixtureApiRow | FixturePreviewRow,
+    side: "home" | "away",
+  ) {
+    const id =
+      side === "home"
+        ? row.home_team_registration_id
+        : row.away_team_registration_id;
     const source = side === "home" ? row.home_source : row.away_source;
-    const embedded = "home_team" in row && side === "home" ? row.home_team : "away_team" in row && side === "away" ? row.away_team : null;
-    return embedded?.teams?.name ?? (id ? teamById.get(id)?.name : null) ?? source ?? "TBD";
+    const embedded =
+      "home_team" in row && side === "home"
+        ? row.home_team
+        : "away_team" in row && side === "away"
+          ? row.away_team
+          : null;
+    return (
+      embedded?.teams?.name ??
+      (id ? teamById.get(id)?.name : null) ??
+      source ??
+      "TBD"
+    );
   }
 
-  function rowTeamLogo(row: FixtureApiRow | FixturePreviewRow, side: "home" | "away") {
-    const id = side === "home" ? row.home_team_registration_id : row.away_team_registration_id;
-    const embedded = "home_team" in row && side === "home" ? row.home_team : "away_team" in row && side === "away" ? row.away_team : null;
-    return embedded?.teams?.logo_url ?? (id ? teamById.get(id)?.logo_url : null) ?? null;
+  function rowTeamLogo(
+    row: FixtureApiRow | FixturePreviewRow,
+    side: "home" | "away",
+  ) {
+    const id =
+      side === "home"
+        ? row.home_team_registration_id
+        : row.away_team_registration_id;
+    const embedded =
+      "home_team" in row && side === "home"
+        ? row.home_team
+        : "away_team" in row && side === "away"
+          ? row.away_team
+          : null;
+    return (
+      embedded?.teams?.logo_url ??
+      (id ? teamById.get(id)?.logo_url : null) ??
+      null
+    );
   }
 
   function rowGroupName(row: FixtureApiRow | FixturePreviewRow) {
-    return ("season_groups" in row ? row.season_groups?.name : null) ?? row.group_name ?? (row.group_id ? groupById.get(row.group_id)?.name : null) ?? "—";
+    return (
+      ("season_groups" in row ? row.season_groups?.name : null) ??
+      row.group_name ??
+      (row.group_id ? groupById.get(row.group_id)?.name : null) ??
+      "—"
+    );
   }
 
   async function makePreview(mode: "all" | "group" | "knockout") {
@@ -2661,11 +4040,13 @@ function FixturesView({ season }: { season: SeasonDto }) {
           : `/admin/seasons/${season.id}/fixtures/preview`;
     const result = await api<FixturePreviewResponse>(endpoint, {
       method: "POST",
-      body: JSON.stringify({ stage: mode })
+      body: JSON.stringify({ stage: mode }),
     });
     setPreview(result);
     setPreviewMode(mode);
-    setTab(mode === "knockout" ? "knockout" : mode === "group" ? "group" : "all");
+    setTab(
+      mode === "knockout" ? "knockout" : mode === "group" ? "group" : "all",
+    );
   }
 
   async function confirmPreview() {
@@ -2678,7 +4059,7 @@ function FixturesView({ season }: { season: SeasonDto }) {
           : `/admin/seasons/${season.id}/fixtures/confirm`;
     await api(endpoint, {
       method: "POST",
-      body: JSON.stringify({ stage: previewMode })
+      body: JSON.stringify({ stage: previewMode }),
     });
     setPreview(null);
     setPreviewMode(null);
@@ -2686,23 +4067,34 @@ function FixturesView({ season }: { season: SeasonDto }) {
   }
 
   async function regenerateFixtures() {
-    if (!window.confirm("Delete generated fixtures and allow a fresh generation?")) return;
-    await api(`/admin/seasons/${season.id}/fixtures/regenerate`, { method: "DELETE" });
+    if (
+      !window.confirm("Delete generated fixtures and allow a fresh generation?")
+    )
+      return;
+    await api(`/admin/seasons/${season.id}/fixtures/regenerate`, {
+      method: "DELETE",
+    });
     setPreview(null);
     setPreviewMode(null);
     await loadFixtures();
   }
 
   async function finalizeFixtures() {
-    if (!window.confirm("Finalize fixtures? Regeneration will be disabled.")) return;
-    await api(`/admin/seasons/${season.id}/fixtures/finalize`, { method: "POST" });
+    if (!window.confirm("Finalize fixtures? Regeneration will be disabled."))
+      return;
+    await api(`/admin/seasons/${season.id}/fixtures/finalize`, {
+      method: "POST",
+    });
     await loadFixtures();
   }
 
   if (!data) {
     return (
       <div>
-        <PageTitle title="Fixtures" subtitle="Generate and manage season fixtures" />
+        <PageTitle
+          title="Fixtures"
+          subtitle="Generate and manage season fixtures"
+        />
         <EmptyState label={message || "Loading fixture settings..."} />
       </div>
     );
@@ -2712,46 +4104,98 @@ function FixturesView({ season }: { season: SeasonDto }) {
 
   return (
     <div>
-      <PageTitle title="Fixtures" subtitle="Generate and manage season fixtures" />
+      <PageTitle
+        title="Fixtures"
+        subtitle="Generate and manage season fixtures"
+      />
 
-      {message ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{message}</div> : null}
+      {message ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">
+          {message}
+        </div>
+      ) : null}
 
       <div className="mb-6 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <SummaryCard label="Season Format" value={formatLabel(season.format)} />
-        <SummaryCard label="Round Format" value={formatLabel(data.season.round_format ?? season.format)} />
+        <SummaryCard
+          label="Round Format"
+          value={formatLabel(data.season.round_format ?? season.format)}
+        />
         <SummaryCard label="Season Start" value={safeDate(season.start_date)} />
         <SummaryCard label="Season End" value={safeDate(season.end_date)} />
-        <SummaryCard label="Approved Teams" value={String(data.approved_teams.length)} />
+        <SummaryCard
+          label="Approved Teams"
+          value={String(data.approved_teams.length)}
+        />
         <SummaryCard label="Fixture Status" value={data.fixture_status} />
       </div>
 
       {isGroupKnockout ? (
         <div className="mb-6 grid gap-4 md:grid-cols-4">
-          <SummaryCard label="Group Count" value={String(season.group_count ?? 0)} />
-          <SummaryCard label="Teams Per Group" value={String(season.teams_per_group ?? 0)} />
-          <SummaryCard label="Qualifiers Per Group" value={String(season.qualifiers_per_group ?? 0)} />
-          <SummaryCard label="Total Knockout Qualifiers" value={String(Number(season.group_count ?? 0) * Number(season.qualifiers_per_group ?? 0))} />
+          <SummaryCard
+            label="Group Count"
+            value={String(season.group_count ?? 0)}
+          />
+          <SummaryCard
+            label="Teams Per Group"
+            value={String(season.teams_per_group ?? 0)}
+          />
+          <SummaryCard
+            label="Qualifiers Per Group"
+            value={String(season.qualifiers_per_group ?? 0)}
+          />
+          <SummaryCard
+            label="Total Knockout Qualifiers"
+            value={String(
+              Number(season.group_count ?? 0) *
+                Number(season.qualifiers_per_group ?? 0),
+            )}
+          />
         </div>
       ) : null}
 
       <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           {!hasSavedFixtures && !preview && !isGroupKnockout ? (
-            <button type="button" onClick={() => void makePreview("all").catch((error) => setMessage(error.message))} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700">
+            <button
+              type="button"
+              onClick={() =>
+                void makePreview("all").catch((error) =>
+                  setMessage(error.message),
+                )
+              }
+              className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700"
+            >
               Generate Fixtures
             </button>
           ) : null}
 
           {isGroupKnockout && !preview ? (
             <>
-              <button type="button" onClick={() => void makePreview("group").catch((error) => setMessage(error.message))} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700">
+              <button
+                type="button"
+                onClick={() =>
+                  void makePreview("group").catch((error) =>
+                    setMessage(error.message),
+                  )
+                }
+                className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700"
+              >
                 Generate Group Fixtures
               </button>
               <button
                 type="button"
                 disabled={!groupStageComplete}
-                title={!groupStageComplete ? "Knockout fixtures will unlock after all group stage results are confirmed." : undefined}
-                onClick={() => void makePreview("knockout").catch((error) => setMessage(error.message))}
+                title={
+                  !groupStageComplete
+                    ? "Knockout fixtures will unlock after all group stage results are confirmed."
+                    : undefined
+                }
+                onClick={() =>
+                  void makePreview("knockout").catch((error) =>
+                    setMessage(error.message),
+                  )
+                }
                 className="rounded-xl border border-indigo-200 bg-white px-5 py-3 text-sm font-black text-indigo-700 transition hover:-translate-y-0.5 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
               >
                 Generate Knockout Fixtures
@@ -2761,10 +4205,25 @@ function FixturesView({ season }: { season: SeasonDto }) {
 
           {preview ? (
             <>
-              <button type="button" onClick={() => void confirmPreview().catch((error) => setMessage(error.message))} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700">
+              <button
+                type="button"
+                onClick={() =>
+                  void confirmPreview().catch((error) =>
+                    setMessage(error.message),
+                  )
+                }
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700"
+              >
                 Confirm & Save Fixtures
               </button>
-              <button type="button" onClick={() => { setPreview(null); setPreviewMode(null); }} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50">
+              <button
+                type="button"
+                onClick={() => {
+                  setPreview(null);
+                  setPreviewMode(null);
+                }}
+                className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50"
+              >
                 Cancel Preview
               </button>
             </>
@@ -2778,14 +4237,30 @@ function FixturesView({ season }: { season: SeasonDto }) {
                 </span>
               ) : (
                 <>
-                  <button type="button" onClick={() => void finalizeFixtures().catch((error) => setMessage(error.message))} className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-black text-emerald-700 transition hover:-translate-y-0.5 hover:bg-emerald-100">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void finalizeFixtures().catch((error) =>
+                        setMessage(error.message),
+                      )
+                    }
+                    className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-black text-emerald-700 transition hover:-translate-y-0.5 hover:bg-emerald-100"
+                  >
                     Finalize Fixtures
                   </button>
                   <button
                     type="button"
                     disabled={!data.can_regenerate}
-                    title={!data.can_regenerate ? "Fixtures cannot be regenerated because matches have already started or completed." : undefined}
-                    onClick={() => void regenerateFixtures().catch((error) => setMessage(error.message))}
+                    title={
+                      !data.can_regenerate
+                        ? "Fixtures cannot be regenerated because matches have already started or completed."
+                        : undefined
+                    }
+                    onClick={() =>
+                      void regenerateFixtures().catch((error) =>
+                        setMessage(error.message),
+                      )
+                    }
                     className="rounded-xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-black text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
                   >
                     Regenerate Fixtures
@@ -2798,7 +4273,9 @@ function FixturesView({ season }: { season: SeasonDto }) {
 
         {preview?.warnings.length ? (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-            {preview.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+            {preview.warnings.map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
           </div>
         ) : null}
       </div>
@@ -2806,20 +4283,20 @@ function FixturesView({ season }: { season: SeasonDto }) {
       {isGroupKnockout ? (
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
-          {[
-            ["group", "Group Stage Fixtures"],
-            ["knockout", "Knockout Fixtures"],
-            ["all", "All Fixtures"]
-          ].map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id as "group" | "knockout" | "all")}
-              className={`rounded-full px-4 py-2 text-sm font-black transition ${tab === id ? "bg-indigo-600 text-white shadow" : "border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"}`}
-            >
-              {label}
-            </button>
-          ))}
+            {[
+              ["group", "Group Stage Fixtures"],
+              ["knockout", "Knockout Fixtures"],
+              ["all", "All Fixtures"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id as "group" | "knockout" | "all")}
+                className={`rounded-full px-4 py-2 text-sm font-black transition ${tab === id ? "bg-indigo-600 text-white shadow" : "border border-slate-200 bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           <select
             value={teamFilter}
@@ -2828,7 +4305,9 @@ function FixturesView({ season }: { season: SeasonDto }) {
           >
             <option value="ALL">All teams</option>
             {data.approved_teams.map((team) => (
-              <option key={team.id} value={team.id}>{team.name ?? team.short_name ?? "Team"}</option>
+              <option key={team.id} value={team.id}>
+                {team.name ?? team.short_name ?? "Team"}
+              </option>
             ))}
           </select>
         </div>
@@ -2841,7 +4320,9 @@ function FixturesView({ season }: { season: SeasonDto }) {
           >
             <option value="ALL">All teams</option>
             {data.approved_teams.map((team) => (
-              <option key={team.id} value={team.id}>{team.name ?? team.short_name ?? "Team"}</option>
+              <option key={team.id} value={team.id}>
+                {team.name ?? team.short_name ?? "Team"}
+              </option>
             ))}
           </select>
         </div>
@@ -2849,35 +4330,85 @@ function FixturesView({ season }: { season: SeasonDto }) {
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 p-5">
-          <h3 className="text-xl font-black">{preview ? "Fixture Preview" : "Fixture List"}</h3>
-          <p className="mt-1 text-sm text-slate-500">Season settings are read from the database. Dates are auto-distributed inside the saved season range.</p>
+          <h3 className="text-xl font-black">
+            {preview ? "Fixture Preview" : "Fixture List"}
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Season settings are read from the database. Dates are
+            auto-distributed inside the saved season range.
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px] text-sm">
             <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                {["Matchday", "Date", "Stage", "Group", "Home Team", "Away Team", "Status"].map((header) => (
-                  <th key={header} className="px-5 py-4 text-left font-black">{header}</th>
+                {[
+                  "Matchday",
+                  "Date",
+                  "Stage",
+                  "Group",
+                  "Home Team",
+                  "Away Team",
+                  "Status",
+                ].map((header) => (
+                  <th key={header} className="px-5 py-4 text-left font-black">
+                    {header}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredRows.length === 0 ? (
-                <tr><td colSpan={7} className="px-5 py-10 text-center font-semibold text-slate-500">No fixtures generated yet.</td></tr>
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="px-5 py-10 text-center font-semibold text-slate-500"
+                  >
+                    No fixtures generated yet.
+                  </td>
+                </tr>
               ) : (
                 filteredRows.map((row, index) => (
-                  <tr key={`${row.stage}-${row.round_no}-${row.home_team_registration_id ?? row.home_source}-${row.away_team_registration_id ?? row.away_source}-${index}`} className="hover:bg-slate-50">
-                    <td className="px-5 py-4 font-bold">{row.matchday_number ?? row.round_no ?? "—"}</td>
-                    <td className="px-5 py-4">{row.kickoff_at ? safeDate(row.kickoff_at) : "Not set"}</td>
-                    <td className="px-5 py-4 font-semibold">{formatLabel(row.stage ?? "")}</td>
+                  <tr
+                    key={`${row.stage}-${row.round_no}-${row.home_team_registration_id ?? row.home_source}-${row.away_team_registration_id ?? row.away_source}-${index}`}
+                    className="hover:bg-slate-50"
+                  >
+                    <td className="px-5 py-4 font-bold">
+                      {row.matchday_number ?? row.round_no ?? "—"}
+                    </td>
+                    <td className="px-5 py-4">
+                      {row.kickoff_at ? safeDate(row.kickoff_at) : "Not set"}
+                    </td>
+                    <td className="px-5 py-4 font-semibold">
+                      {formatLabel(row.stage ?? "")}
+                    </td>
                     <td className="px-5 py-4">{rowGroupName(row)}</td>
                     <td className="px-5 py-4 font-bold">
-                      <TeamCompact name={rowTeamName(row, "home")} logoUrl={rowTeamLogo(row, "home")} />
+                      <TeamCompact
+                        name={rowTeamName(row, "home")}
+                        logoUrl={rowTeamLogo(row, "home")}
+                      />
                     </td>
                     <td className="px-5 py-4 font-bold">
-                      <TeamCompact name={rowTeamName(row, "away")} logoUrl={rowTeamLogo(row, "away")} />
+                      <TeamCompact
+                        name={rowTeamName(row, "away")}
+                        logoUrl={rowTeamLogo(row, "away")}
+                      />
                     </td>
-                    <td className="px-5 py-4"><StatusPill tone={row.status === "WAITING_FOR_TEAMS" ? "orange" : row.status === "FINAL" || row.status === "COMPLETED" ? "green" : "blue"}>{statusLabel(row.status)}</StatusPill></td>
+                    <td className="px-5 py-4">
+                      <StatusPill
+                        tone={
+                          row.status === "WAITING_FOR_TEAMS"
+                            ? "orange"
+                            : row.status === "FINAL" ||
+                                row.status === "COMPLETED"
+                              ? "green"
+                              : "blue"
+                        }
+                      >
+                        {statusLabel(row.status)}
+                      </StatusPill>
+                    </td>
                   </tr>
                 ))
               )}
@@ -2889,7 +4420,13 @@ function FixturesView({ season }: { season: SeasonDto }) {
   );
 }
 
-function PlayerRequestDetailModal({ player, onClose }: { player: AdminPlayer; onClose: () => void }) {
+function PlayerRequestDetailModal({
+  player,
+  onClose,
+}: {
+  player: AdminPlayer;
+  onClose: () => void;
+}) {
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
       <div className="max-h-[86vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
@@ -2897,12 +4434,21 @@ function PlayerRequestDetailModal({ player, onClose }: { player: AdminPlayer; on
           <div className="flex items-center gap-4">
             <PlayerAvatar player={player} />
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">Player Personal Data</p>
+              <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">
+                Player Personal Data
+              </p>
               <h2 className="mt-1 text-3xl font-black">{player.fullName}</h2>
-              <p className="text-sm font-semibold text-slate-500">#{player.jerseyNumber} · {player.footballPosition} · {player.playerStatus}</p>
+              <p className="text-sm font-semibold text-slate-500">
+                #{player.jerseyNumber} · {player.footballPosition} ·{" "}
+                {player.playerStatus}
+              </p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+          >
             Close
           </button>
         </div>
@@ -2913,22 +4459,41 @@ function PlayerRequestDetailModal({ player, onClose }: { player: AdminPlayer; on
           <DetailRow label="Age" value={String(player.age)} />
           <DetailRow label="ID Type" value={player.idType} />
           <DetailRow label="Masked ID Number" value={player.maskedId} />
-          <DetailRow label="Jersey Number" value={String(player.jerseyNumber)} />
-          <DetailRow label="Position" value={`${player.footballPosition} (${player.position})`} />
+          <DetailRow
+            label="Jersey Number"
+            value={String(player.jerseyNumber)}
+          />
+          <DetailRow
+            label="Position"
+            value={`${player.footballPosition} (${player.position})`}
+          />
           <DetailRow label="Preferred Foot" value={player.preferredFoot} />
           <DetailRow label="Approval Status" value={player.approvalStatus} />
           <DetailRow label="Player Status" value={player.playerStatus} />
-          <DetailRow label="Registration Date" value={player.registrationDate} />
-          <DetailRow label="Submitted By Manager" value={player.submittedByManager} />
-          <DetailRow label="Admin Approval Date" value={player.adminApprovalDate} />
+          <DetailRow
+            label="Registration Date"
+            value={player.registrationDate}
+          />
+          <DetailRow
+            label="Submitted By Manager"
+            value={player.submittedByManager}
+          />
+          <DetailRow
+            label="Admin Approval Date"
+            value={player.adminApprovalDate}
+          />
           <DetailRow label="Ability Rating" value={player.abilityRating} />
         </div>
         <div className="mt-5 rounded-xl bg-slate-50 p-4">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500">Admin Message</p>
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Admin Message
+          </p>
           <p className="mt-2 text-sm text-slate-700">{player.adminMessage}</p>
         </div>
         <div className="mt-5 rounded-xl border border-slate-200 p-4">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500">Hidden Ability Scores</p>
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Hidden Ability Scores
+          </p>
           {player.abilityDetails.length > 0 ? (
             <div className="mt-3 grid gap-3 md:grid-cols-3">
               {player.abilityDetails.map((ability) => (
@@ -2936,7 +4501,9 @@ function PlayerRequestDetailModal({ player, onClose }: { player: AdminPlayer; on
               ))}
             </div>
           ) : (
-            <p className="mt-2 text-sm text-slate-500">No ability scores generated yet.</p>
+            <p className="mt-2 text-sm text-slate-500">
+              No ability scores generated yet.
+            </p>
           )}
         </div>
       </div>
@@ -2948,7 +4515,7 @@ function PlayerLifecycleModal({
   action,
   player,
   onClose,
-  onSubmit
+  onSubmit,
 }: {
   action: PlayerLifecycleAction;
   player: AdminPlayer;
@@ -2965,12 +4532,21 @@ function PlayerLifecycleModal({
 }) {
   const [reason, setReason] = useState("");
   const [allowResubmission, setAllowResubmission] = useState(false);
-  const [suspensionType, setSuspensionType] = useState("UNTIL_ADMIN_UNSUSPENDS");
+  const [suspensionType, setSuspensionType] = useState(
+    "UNTIL_ADMIN_UNSUSPENDS",
+  );
   const [suspensionUntil, setSuspensionUntil] = useState("");
-  const [suspensionMatchesRemaining, setSuspensionMatchesRemaining] = useState("1");
+  const [suspensionMatchesRemaining, setSuspensionMatchesRemaining] =
+    useState("1");
   const [submitting, setSubmitting] = useState(false);
   const title =
-    action === "reject" ? "Reject Player" : action === "remove" ? "Remove Player" : action === "suspend" ? "Suspend Player" : "Unsuspend Player";
+    action === "reject"
+      ? "Reject Player"
+      : action === "remove"
+        ? "Remove Player"
+        : action === "suspend"
+          ? "Suspend Player"
+          : "Unsuspend Player";
   const description =
     action === "reject"
       ? "Rejected players cannot be used in lineups and free a squad slot. Add a reason for the manager."
@@ -2990,7 +4566,7 @@ function PlayerLifecycleModal({
         allowResubmission,
         suspensionType,
         suspensionUntil,
-        suspensionMatchesRemaining: Number(suspensionMatchesRemaining)
+        suspensionMatchesRemaining: Number(suspensionMatchesRemaining),
       });
     } finally {
       setSubmitting(false);
@@ -3001,45 +4577,89 @@ function PlayerLifecycleModal({
       <div className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">Player Action</p>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">
+              Player Action
+            </p>
             <h2 className="mt-1 text-3xl font-black">{title}</h2>
-            <p className="mt-2 text-sm text-slate-600">{player.fullName} · #{player.jerseyNumber} · {player.footballPosition}</p>
+            <p className="mt-2 text-sm text-slate-600">
+              {player.fullName} · #{player.jerseyNumber} ·{" "}
+              {player.footballPosition}
+            </p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black transition hover:bg-slate-200">Close</button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-black transition hover:bg-slate-200"
+          >
+            Close
+          </button>
         </div>
-        <p className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">{description}</p>
+        <p className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+          {description}
+        </p>
         {action === "suspend" ? (
           <div className="mt-5 grid gap-4">
             <label className="grid gap-2">
-              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Suspension Type</span>
-              <select value={suspensionType} onChange={(event) => setSuspensionType(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-bold">
-                <option value="UNTIL_ADMIN_UNSUSPENDS">Until Admin Unsuspends</option>
+              <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                Suspension Type
+              </span>
+              <select
+                value={suspensionType}
+                onChange={(event) => setSuspensionType(event.target.value)}
+                className="rounded-xl border border-slate-200 px-4 py-3 font-bold"
+              >
+                <option value="UNTIL_ADMIN_UNSUSPENDS">
+                  Until Admin Unsuspends
+                </option>
                 <option value="UNTIL_DATE">Until Specific Date</option>
                 <option value="NEXT_MATCHES">For Next X Matches</option>
               </select>
             </label>
             {suspensionType === "UNTIL_DATE" ? (
               <label className="grid gap-2">
-                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Suspended Until</span>
-                <input type="date" value={suspensionUntil} onChange={(event) => setSuspensionUntil(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-bold" />
+                <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  Suspended Until
+                </span>
+                <input
+                  type="date"
+                  value={suspensionUntil}
+                  onChange={(event) => setSuspensionUntil(event.target.value)}
+                  className="rounded-xl border border-slate-200 px-4 py-3 font-bold"
+                />
               </label>
             ) : null}
             {suspensionType === "NEXT_MATCHES" ? (
               <label className="grid gap-2">
-                <span className="text-xs font-black uppercase tracking-wide text-slate-500">Match Count</span>
-                <input type="number" min={1} value={suspensionMatchesRemaining} onChange={(event) => setSuspensionMatchesRemaining(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-bold" />
+                <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  Match Count
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  value={suspensionMatchesRemaining}
+                  onChange={(event) =>
+                    setSuspensionMatchesRemaining(event.target.value)
+                  }
+                  className="rounded-xl border border-slate-200 px-4 py-3 font-bold"
+                />
               </label>
             ) : null}
           </div>
         ) : null}
         {action === "reject" ? (
           <label className="mt-5 flex items-center gap-3 rounded-2xl bg-indigo-50 p-4 text-sm font-bold text-indigo-900">
-            <input type="checkbox" checked={allowResubmission} onChange={(event) => setAllowResubmission(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={allowResubmission}
+              onChange={(event) => setAllowResubmission(event.target.checked)}
+            />
             Allow manager to edit and resubmit this player
           </label>
         ) : null}
         <label className="mt-5 grid gap-2">
-          <span className="text-xs font-black uppercase tracking-wide text-slate-500">Required Message / Reason</span>
+          <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+            Required Message / Reason
+          </span>
           <textarea
             value={reason}
             onChange={(event) => setReason(event.target.value)}
@@ -3049,11 +4669,23 @@ function PlayerLifecycleModal({
           />
         </label>
         <div className="mt-6 flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Cancel</button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={!reason.trim() || submitting || (action === "suspend" && suspensionType === "UNTIL_DATE" && !suspensionUntil)}
+            disabled={
+              !reason.trim() ||
+              submitting ||
+              (action === "suspend" &&
+                suspensionType === "UNTIL_DATE" &&
+                !suspensionUntil)
+            }
             className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
           >
             {submitting ? "Saving..." : title}
@@ -3064,32 +4696,497 @@ function PlayerLifecycleModal({
   );
 }
 
+function LineupConfirmationsView({
+  season,
+  onDecision,
+  onPlayerClick,
+}: {
+  season: SeasonDto;
+  onDecision: (
+    lineupId: string,
+    status: "APPROVED" | "REJECTED",
+    reason?: string,
+  ) => Promise<void>;
+  onPlayerClick: (player: MatchDetailLineupPlayer) => void;
+}) {
+  const [lineups, setLineups] = useState<AdminPendingLineupRow[]>([]);
+  const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(
+    null,
+  );
+  const [detail, setDetail] = useState<MatchDetailResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadLineups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season.id]);
+
+  async function loadLineups() {
+    setLoading(true);
+    setMessage("");
+    try {
+      const result = await api<{ lineups: AdminPendingLineupRow[] }>(
+        `/admin/seasons/${season.id}/lineups/pending`,
+      );
+      setLineups(result.lineups ?? []);
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Could not load pending lineups",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function openFixture(fixtureId: string) {
+    setSelectedFixtureId(fixtureId);
+    setDetailLoading(true);
+    setMessage("");
+    try {
+      const result = await api<MatchDetailResponse>(
+        `/admin/matches/${fixtureId}/detail`,
+      );
+      setDetail(result);
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Could not load lineup detail",
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  async function decide(lineupId: string, status: "APPROVED" | "REJECTED") {
+    const reason =
+      status === "REJECTED"
+        ? window.prompt("Reason for rejecting/blocking this lineup?")?.trim()
+        : undefined;
+    if (status === "REJECTED" && !reason) return;
+    setSubmittingId(lineupId);
+    try {
+      await onDecision(lineupId, status, reason);
+      await loadLineups();
+      if (selectedFixtureId) {
+        const result = await api<MatchDetailResponse>(
+          `/admin/matches/${selectedFixtureId}/detail`,
+        );
+        setDetail(result);
+      }
+      setMessage(
+        status === "APPROVED" ? "Lineup confirmed." : "Lineup rejected.",
+      );
+    } catch (err) {
+      setMessage(
+        err instanceof Error ? err.message : "Could not update lineup",
+      );
+    } finally {
+      setSubmittingId(null);
+    }
+  }
+
+  const selectedLineups = selectedFixtureId
+    ? lineups.filter((lineup) => lineup.fixture_id === selectedFixtureId)
+    : [];
+  const selectedFixture = selectedLineups[0]?.fixtures ?? null;
+  const homeName = selectedFixture?.home_team?.teams?.name ?? "Home team";
+  const awayName = selectedFixture?.away_team?.teams?.name ?? "Away team";
+  const showSide = season.format !== SeasonFormat.GROUP_STAGE_KNOCKOUT;
+
+  if (selectedFixtureId) {
+    const homeLineup =
+      detail?.lineups.find((lineup) => lineup.side === "HOME") ?? null;
+    const awayLineup =
+      detail?.lineups.find((lineup) => lineup.side === "AWAY") ?? null;
+    return (
+      <div className="space-y-6">
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedFixtureId(null);
+            setDetail(null);
+          }}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-indigo-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-50"
+        >
+          <ArrowLeft size={17} /> Back to lineups
+        </button>
+        <Panel
+          title={`${homeName} vs ${awayName}`}
+          action={
+            selectedFixture?.kickoff_at
+              ? safeDateTime(selectedFixture.kickoff_at)
+              : "Kickoff not set"
+          }
+        >
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <TeamCompact
+              name={homeName}
+              logoUrl={selectedFixture?.home_team?.teams?.logo_url ?? null}
+            />
+            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm font-black text-slate-600">
+              Lineup Review
+            </span>
+            <TeamCompact
+              name={awayName}
+              logoUrl={selectedFixture?.away_team?.teams?.logo_url ?? null}
+            />
+          </div>
+        </Panel>
+        {message ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+            {message}
+          </div>
+        ) : null}
+        {detailLoading ? <EmptyState label="Loading lineups..." /> : null}
+        {!detailLoading ? (
+          <div className="grid gap-6 xl:grid-cols-2">
+            <AdminLineupPitch
+              title={homeName}
+              logoUrl={selectedFixture?.home_team?.teams?.logo_url ?? null}
+              lineup={homeLineup}
+              onDecision={decide}
+              submittingId={submittingId}
+              onPlayerClick={onPlayerClick}
+            />
+            <AdminLineupPitch
+              title={awayName}
+              logoUrl={selectedFixture?.away_team?.teams?.logo_url ?? null}
+              lineup={awayLineup}
+              onDecision={decide}
+              submittingId={submittingId}
+              onPlayerClick={onPlayerClick}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageTitle
+        title="Lineup Confirmations"
+        subtitle="Review submitted match lineups before they become locked for simulation."
+      />
+      {message ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+          {message}
+        </div>
+      ) : null}
+      {loading ? <EmptyState label="Loading pending lineups..." /> : null}
+      {!loading && lineups.length === 0 ? (
+        <EmptyState label="No pending lineup confirmations." />
+      ) : null}
+      {!loading && lineups.length > 0 ? (
+        <Panel title="Pending Lineups">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Match</th>
+                  <th className="px-4 py-3 text-left">Team</th>
+                  {showSide ? (
+                    <th className="px-4 py-3 text-left">Side</th>
+                  ) : null}
+                  <th className="px-4 py-3 text-left">Formation</th>
+                  <th className="px-4 py-3 text-left">Submitted</th>
+                  <th className="px-4 py-3 text-left">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lineups.map((lineup) => {
+                  const fixture = lineup.fixtures;
+                  const match = `${fixture?.home_team?.teams?.name ?? "Home"} vs ${fixture?.away_team?.teams?.name ?? "Away"}`;
+                  const team = lineup.team_registrations?.teams;
+                  return (
+                    <tr key={lineup.id} className="border-t border-slate-100">
+                      <td className="px-4 py-4 font-bold">{match}</td>
+                      <td className="px-4 py-4">
+                        <TeamCompact
+                          name={team?.name ?? "Team"}
+                          logoUrl={team?.logo_url ?? null}
+                        />
+                      </td>
+                      {showSide ? (
+                        <td className="px-4 py-4 font-black">{lineup.side}</td>
+                      ) : null}
+                      <td className="px-4 py-4 font-black">
+                        {lineup.formation}
+                      </td>
+                      <td className="px-4 py-4 text-slate-600">
+                        {lineup.submitted_at
+                          ? safeDateTime(lineup.submitted_at)
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-4">
+                        <button
+                          type="button"
+                          onClick={() => void openFixture(lineup.fixture_id)}
+                          className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700"
+                        >
+                          Review Lineup
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
+function AdminLineupPitch({
+  title,
+  logoUrl,
+  lineup,
+  onDecision,
+  submittingId,
+  onPlayerClick,
+  showActions = true,
+}: {
+  title: string;
+  logoUrl?: string | null;
+  lineup: MatchDetailLineup | null;
+  onDecision: (
+    lineupId: string,
+    status: "APPROVED" | "REJECTED",
+  ) => Promise<void>;
+  submittingId: string | null;
+  onPlayerClick?: (player: MatchDetailLineupPlayer) => void;
+  showActions?: boolean;
+}) {
+  const players = lineup?.lineup_players ?? [];
+  const slots = lineup?.formation_slots ?? [];
+  const playerBySlot = new Map(
+    players
+      .filter((player) => player.is_starter && player.slot_key)
+      .map((player) => [player.slot_key as string, player]),
+  );
+  const bench = players.filter((player) => !player.is_starter);
+  const isPending = lineup?.status === "PENDING";
+  return (
+    <Panel
+      title={title}
+      action={
+        lineup
+          ? `${lineup.formation ?? "Formation"} · ${lineup.status ?? "Status"}`
+          : "Not submitted"
+      }
+    >
+      <div className="mb-4 flex items-center gap-3">
+        <TeamBadge name={title} logoUrl={logoUrl} />
+        <div>
+          <h3 className="text-xl font-black">{title}</h3>
+          <p className="text-sm font-semibold text-slate-500">
+            Formation {lineup?.formation ?? "N/A"} · Playing style{" "}
+            {formatLabel(lineup?.playing_style ?? "N/A")}
+          </p>
+        </div>
+      </div>
+      {!lineup ? (
+        <EmptyState label="This team has not submitted a lineup yet." />
+      ) : null}
+      {lineup ? (
+        <>
+          <div className="relative h-[720px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
+            <div className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
+            <div className="absolute left-1/2 top-0 h-20 w-40 -translate-x-1/2 rounded-b-3xl border-x-[5px] border-b-[5px] border-white/10" />
+            <div className="absolute bottom-0 left-1/2 h-20 w-40 -translate-x-1/2 rounded-t-3xl border-x-[5px] border-t-[5px] border-white/10" />
+            <div className="absolute inset-y-0 left-[35%] w-1 bg-white/5" />
+            <div className="absolute inset-y-0 right-[35%] w-1 bg-white/5" />
+            {slots.map((slot) => {
+              const player = playerBySlot.get(slot.slotKey);
+              const registration = player?.player_season_registrations;
+              const name = registration?.players?.full_name ?? "Player";
+              return (
+                <div
+                  key={slot.slotKey}
+                  className="absolute z-10 w-[112px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center"
+                  style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                >
+                  {player ? (
+                    <button
+                      type="button"
+                      className="inline-flex flex-col items-center outline-none transition hover:-translate-y-0.5"
+                      onClick={() => onPlayerClick?.(player)}
+                    >
+                      <div className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
+                        {registration?.players?.avatar_url ? (
+                          <img
+                            src={registration.players.avatar_url}
+                            alt={name}
+                            className="h-[118%] w-full rounded-full object-cover object-top"
+                          />
+                        ) : (
+                          <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
+                            {initials(name)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
+                        {player.is_captain ? (
+                          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-black lowercase text-slate-700 shadow">
+                            c
+                          </span>
+                        ) : null}
+                        <span className="min-w-0 truncate text-[13px] font-black text-white drop-shadow">
+                          #
+                          {registration?.shirt_number ??
+                            player.shirt_number ??
+                            "-"}{" "}
+                          {name}
+                        </span>
+                      </div>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-white/70">
+                        {player.display_role ?? slot.displayRole}
+                      </p>
+                    </button>
+                  ) : (
+                    <span className="inline-block h-14 w-14 rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <h4 className="font-black">Bench · {bench.length}</h4>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {bench.map((player) => {
+                const registration = player.player_season_registrations;
+                const name = registration?.players?.full_name ?? "Player";
+                return (
+                  <button
+                    key={player.id}
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-xl bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-50"
+                    onClick={() => onPlayerClick?.(player)}
+                  >
+                    <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-100 font-black text-indigo-700">
+                      {registration?.players?.avatar_url ? (
+                        <img
+                          src={registration.players.avatar_url}
+                          alt={name}
+                          className="h-[118%] w-full object-cover object-top"
+                        />
+                      ) : (
+                        initials(name)
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate font-black">
+                        #
+                        {registration?.shirt_number ??
+                          player.shirt_number ??
+                          "-"}{" "}
+                        {name}
+                      </p>
+                      <p className="text-xs font-bold text-slate-500">
+                        {registration?.football_position ??
+                          player.football_position ??
+                          player.player_natural_position ??
+                          "POS"}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {showActions ? (
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                disabled={!isPending || submittingId === lineup.id}
+                onClick={() => void onDecision(lineup.id, "APPROVED")}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Confirm Lineup
+              </button>
+              <button
+                type="button"
+                disabled={!isPending || submittingId === lineup.id}
+                onClick={() => void onDecision(lineup.id, "REJECTED")}
+                className="rounded-xl border border-red-200 bg-red-50 px-5 py-3 text-sm font-black text-red-700 transition hover:-translate-y-0.5 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Reject / Block
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </Panel>
+  );
+}
+
 function MatchesReadyView({
   matches,
   onSimulate,
-  onJumpToMatchday
+  onJumpToMatchday,
+  onLoadMatchday,
+  onLineupPlayerClick,
 }: {
   matches: ReadyMatchRow[];
   onSimulate: (fixtureId: string) => Promise<void>;
-  onJumpToMatchday: () => Promise<void>;
+  onJumpToMatchday: () => Promise<{
+    updated_count: number;
+    matches?: ReadyMatchRow[];
+  }>;
+  onLoadMatchday: () => Promise<{ matches?: ReadyMatchRow[] }>;
+  onLineupPlayerClick: (player: MatchDetailLineupPlayer) => void;
 }) {
-  const [selectedMatch, setSelectedMatch] = useState<ReadyMatchRow | null>(null);
+  const [selectedMatch, setSelectedMatch] = useState<ReadyMatchRow | null>(
+    null,
+  );
   const [detail, setDetail] = useState<MatchDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [simulatingId, setSimulatingId] = useState<string | null>(null);
   const [jumping, setJumping] = useState(false);
-  const [selectedStat, setSelectedStat] = useState<MatchDetailPlayerStat | null>(null);
+  const [selectedStat, setSelectedStat] =
+    useState<MatchDetailPlayerStat | null>(null);
+  const [jumpMatches, setJumpMatches] = useState<ReadyMatchRow[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void onLoadMatchday()
+      .then((result) => {
+        if (cancelled) return;
+        setJumpMatches(
+          (result.matches ?? []).map((match) => ({
+            ...match,
+            kickoff: safeDateTime(match.kickoff),
+            status: statusLabel(match.status),
+          })),
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function openDetail(match: ReadyMatchRow) {
     setSelectedMatch(match);
     setDetailLoading(true);
     setError("");
     try {
-      const data = await api<MatchDetailResponse>(`/admin/matches/${match.id}/detail`);
+      const data = await api<MatchDetailResponse>(
+        `/admin/matches/${match.id}/detail`,
+      );
       setDetail(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load match detail");
+      setError(
+        err instanceof Error ? err.message : "Could not load match detail",
+      );
     } finally {
       setDetailLoading(false);
     }
@@ -3100,7 +5197,9 @@ function MatchesReadyView({
     setError("");
     try {
       await onSimulate(match.id);
-      const data = await api<MatchDetailResponse>(`/admin/matches/${match.id}/detail`);
+      const data = await api<MatchDetailResponse>(
+        `/admin/matches/${match.id}/detail`,
+      );
       setSelectedMatch(match);
       setDetail(data);
     } catch (err) {
@@ -3113,16 +5212,36 @@ function MatchesReadyView({
   return (
     <div>
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <PageTitle title="Matches Ready" subtitle="Matches appear here only after both lineups are confirmed." />
+        <PageTitle
+          title="Matches Ready"
+          subtitle="Matches appear here only after both lineups are confirmed."
+        />
         <button
           type="button"
           onClick={async () => {
             setJumping(true);
             setError("");
+            setNotice("");
             try {
-              await onJumpToMatchday();
+              const result = await onJumpToMatchday();
+              setJumpMatches(
+                (result.matches ?? []).map((match) => ({
+                  ...match,
+                  kickoff: safeDateTime(match.kickoff),
+                  status: statusLabel(match.status),
+                })),
+              );
+              setNotice(
+                result.updated_count > 0
+                  ? `${result.updated_count} confirmed-lineup match${result.updated_count === 1 ? "" : "es"} moved to ready simulation.`
+                  : "No matches were moved. Cards below show the next matchday, but simulation needs both lineups submitted and admin-confirmed.",
+              );
             } catch (err) {
-              setError(err instanceof Error ? err.message : "Could not jump to matchday");
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : "Could not jump to matchday",
+              );
             } finally {
               setJumping(false);
             }
@@ -3133,40 +5252,81 @@ function MatchesReadyView({
           {jumping ? "Jumping..." : "Jump to Matchday"}
         </button>
       </div>
-      {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</div> : null}
+      {error ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+          {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+          {notice}
+        </div>
+      ) : null}
       <div className="grid gap-5 xl:grid-cols-2">
-        {matches.length === 0 ? <EmptyState label="No matches are ready for simulation. Confirm both team lineups first." /> : null}
-        {matches.map((match, index) => (
-          <Panel key={match.id} title={`Ready Match ${index + 1}`}>
-            <div className="flex items-center justify-between">
-              <TeamCompact name={match.home} />
-              <span className="font-black text-slate-500">VS</span>
-              <TeamCompact name={match.away} />
-            </div>
-            <div className="mt-6 grid grid-cols-3 gap-3 text-center text-sm">
-              <StatusBox label="Home Lineup" value="Confirmed" />
-              <StatusBox label="Away Lineup" value="Confirmed" />
-              <StatusBox label="Abilities" value="Ready" />
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => void openDetail(match)}
-                className="rounded-md border border-indigo-200 bg-white px-5 py-3 text-sm font-bold text-indigo-700 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-50 hover:shadow-lg active:translate-y-0 active:scale-[0.98]"
-              >
-                Open Detail →
-              </button>
-              <button
-                type="button"
-                onClick={() => void simulate(match)}
-                disabled={simulatingId === match.id}
-                className="rounded-md bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98]"
-              >
-                {simulatingId === match.id ? "Simulating..." : "Simulate Match"}
-              </button>
-            </div>
-          </Panel>
-        ))}
+        {(jumpMatches.length ? jumpMatches : matches).length === 0 ? (
+          <EmptyState label="No matches are ready for simulation. Confirm both team lineups first." />
+        ) : null}
+        {(jumpMatches.length ? jumpMatches : matches).map((match, index) => {
+          const canSimulate =
+            match.can_simulate ??
+            !["Scheduled", "Lineup Pending", "Lineups Submitted"].includes(
+              match.status,
+            );
+          return (
+            <Panel
+              key={match.id}
+              title={`${canSimulate ? "Ready" : "Matchday"} Match ${index + 1}`}
+            >
+              <div className="flex items-center justify-between">
+                <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
+                <span className="font-black text-slate-500">VS</span>
+                <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
+              </div>
+              <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-center text-sm font-black text-slate-700">
+                {match.kickoff}
+              </p>
+              <div className="mt-6 grid grid-cols-3 gap-3 text-center text-sm">
+                <StatusBox
+                  label="Submitted Lineups"
+                  value={String(
+                    match.submitted_lineups ?? (canSimulate ? 2 : 0),
+                  )}
+                />
+                <StatusBox
+                  label="Confirmed Lineups"
+                  value={String(
+                    match.confirmed_lineups ?? (canSimulate ? 2 : 0),
+                  )}
+                />
+                <StatusBox label="Status" value={match.status} />
+              </div>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => void openDetail(match)}
+                  className="rounded-md border border-indigo-200 bg-white px-5 py-3 text-sm font-bold text-indigo-700 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-50 hover:shadow-lg active:translate-y-0 active:scale-[0.98]"
+                >
+                  Open Detail →
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void simulate(match)}
+                  disabled={!canSimulate || simulatingId === match.id}
+                  title={
+                    !canSimulate
+                      ? "Simulation needs both lineups submitted and admin-confirmed."
+                      : undefined
+                  }
+                  className="rounded-md bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                >
+                  {simulatingId === match.id
+                    ? "Simulating..."
+                    : "Simulate Match"}
+                </button>
+              </div>
+            </Panel>
+          );
+        })}
       </div>
       {selectedMatch ? (
         <MatchDetailModal
@@ -3181,9 +5341,15 @@ function MatchesReadyView({
           }}
           onSimulate={() => void simulate(selectedMatch)}
           onPlayerStat={setSelectedStat}
+          onLineupPlayerClick={onLineupPlayerClick}
         />
       ) : null}
-      {selectedStat ? <PlayerMatchStatModal stat={selectedStat} onClose={() => setSelectedStat(null)} /> : null}
+      {selectedStat ? (
+        <PlayerMatchStatModal
+          stat={selectedStat}
+          onClose={() => setSelectedStat(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3195,7 +5361,8 @@ function MatchDetailModal({
   simulating,
   onClose,
   onSimulate,
-  onPlayerStat
+  onPlayerStat,
+  onLineupPlayerClick,
 }: {
   match: ReadyMatchRow;
   detail: MatchDetailResponse | null;
@@ -3204,38 +5371,95 @@ function MatchDetailModal({
   onClose: () => void;
   onSimulate: () => void;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+  onLineupPlayerClick: (player: MatchDetailLineupPlayer) => void;
 }) {
-  const statsByPlayer = new Map((detail?.player_stats ?? []).map((stat) => [stat.player_registration_id, stat]));
-  const homeLineup = detail?.lineups.find((lineup) => lineup.side === "HOME") ?? detail?.lineups[0] ?? null;
-  const awayLineup = detail?.lineups.find((lineup) => lineup.side === "AWAY") ?? detail?.lineups[1] ?? null;
-  const hasSimulation = (detail?.player_stats?.length ?? 0) > 0 || (detail?.team_stats?.length ?? 0) > 0;
+  const statsByPlayer = new Map(
+    (detail?.player_stats ?? []).map((stat) => [
+      stat.player_registration_id,
+      stat,
+    ]),
+  );
+  const homeLineup =
+    detail?.lineups.find((lineup) => lineup.side === "HOME") ??
+    detail?.lineups[0] ??
+    null;
+  const awayLineup =
+    detail?.lineups.find((lineup) => lineup.side === "AWAY") ??
+    detail?.lineups[1] ??
+    null;
+  const hasSimulation =
+    (detail?.player_stats?.length ?? 0) > 0 ||
+    (detail?.team_stats?.length ?? 0) > 0;
   return (
     <div className="fixed inset-0 z-[70] overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm">
       <div className="mx-auto my-8 max-w-7xl rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.35em] text-indigo-600">Match Detail</p>
-            <h2 className="mt-2 text-3xl font-black">{match.home} vs {match.away}</h2>
-            <p className="mt-1 text-sm font-semibold text-slate-500">{match.stage} · {match.kickoff}</p>
+            <p className="text-xs font-black uppercase tracking-[0.35em] text-indigo-600">
+              Match Detail
+            </p>
+            <h2 className="mt-2 text-3xl font-black">
+              {match.home} vs {match.away}
+            </h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              {match.stage} · {match.kickoff}
+            </p>
           </div>
           <div className="flex gap-3">
-            <button type="button" onClick={onSimulate} disabled={simulating} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:opacity-50">
-              {simulating ? "Simulating..." : hasSimulation ? "Simulate Again" : "Simulate Match"}
+            <button
+              type="button"
+              onClick={onSimulate}
+              disabled={simulating}
+              className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {simulating
+                ? "Simulating..."
+                : hasSimulation
+                  ? "Simulate Again"
+                  : "Simulate Match"}
             </button>
-            <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+            >
+              Close
+            </button>
           </div>
         </div>
 
         {loading ? <EmptyState label="Loading match detail..." /> : null}
         {!loading ? (
           <div className="mt-6 space-y-6">
-            <div className="rounded-3xl bg-gradient-to-b from-emerald-500 to-emerald-700 p-5 text-white shadow-inner">
-              <div className="grid gap-5 lg:grid-cols-2">
-                <LineupSide title={match.home} lineup={homeLineup} statsByPlayer={statsByPlayer} onPlayerStat={onPlayerStat} />
-                <LineupSide title={match.away} lineup={awayLineup} statsByPlayer={statsByPlayer} onPlayerStat={onPlayerStat} />
-              </div>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <AdminLineupPitch
+                title={match.home}
+                logoUrl={match.homeLogoUrl ?? null}
+                lineup={homeLineup}
+                onDecision={async () => undefined}
+                submittingId={null}
+                onPlayerClick={onLineupPlayerClick}
+                showActions={false}
+              />
+              <AdminLineupPitch
+                title={match.away}
+                logoUrl={match.awayLogoUrl ?? null}
+                lineup={awayLineup}
+                onDecision={async () => undefined}
+                submittingId={null}
+                onPlayerClick={onLineupPlayerClick}
+                showActions={false}
+              />
             </div>
-            {detail?.team_stats?.length ? <MatchTeamStatsPanel home={match.home} away={match.away} stats={detail.team_stats} /> : <EmptyState label="No match stats yet. Click Simulate Match to generate ratings and stats." />}
+            {detail?.team_stats?.length ? (
+              <MatchTeamStatsPanel
+                home={match.home}
+                away={match.away}
+                stats={detail.team_stats}
+              />
+            ) : (
+              <EmptyState label="No match stats yet. Click Simulate Match to generate ratings and stats." />
+            )}
           </div>
         ) : null}
       </div>
@@ -3247,19 +5471,23 @@ function LineupSide({
   title,
   lineup,
   statsByPlayer,
-  onPlayerStat
+  onPlayerStat,
 }: {
   title: string;
   lineup: MatchDetailLineup | null;
   statsByPlayer: Map<string, MatchDetailPlayerStat>;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
 }) {
-  const players = [...(lineup?.lineup_players ?? [])].sort((a, b) => Number(b.is_starter) - Number(a.is_starter));
+  const players = [...(lineup?.lineup_players ?? [])].sort(
+    (a, b) => Number(b.is_starter) - Number(a.is_starter),
+  );
   return (
     <div className="rounded-2xl bg-white/10 p-4">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-black">{title}</h3>
-        <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-bold">{lineup?.formation ?? "Formation N/A"}</span>
+        <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-bold">
+          {lineup?.formation ?? "Formation N/A"}
+        </span>
       </div>
       {players.length ? (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
@@ -3272,17 +5500,33 @@ function LineupSide({
                 key={player.id}
                 type="button"
                 disabled={!stat}
-                onClick={() => stat ? onPlayerStat(stat) : undefined}
+                onClick={() => (stat ? onPlayerStat(stat) : undefined)}
                 className="relative rounded-2xl bg-white/15 p-3 text-left text-sm transition hover:-translate-y-0.5 hover:bg-white/25 disabled:cursor-default disabled:hover:translate-y-0"
               >
-                {stat ? <span className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-xs font-black text-white ${ratingTone(Number(stat.rating))}`}>{formatNumber(stat.rating)}</span> : null}
+                {stat ? (
+                  <span
+                    className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-xs font-black text-white ${ratingTone(Number(stat.rating))}`}
+                  >
+                    {formatNumber(stat.rating)}
+                  </span>
+                ) : null}
                 <div className="flex items-center gap-2">
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white font-black text-emerald-700">
                     {initials(name)}
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate font-black">#{registration?.shirt_number ?? player.shirt_number ?? "-"} {name}</p>
-                    <p className="text-xs text-white/75">{registration?.football_position ?? player.football_position ?? registration?.position ?? "POS"} · {player.is_starter ? "Starter" : "Bench"}</p>
+                    <p className="truncate font-black">
+                      #
+                      {registration?.shirt_number ?? player.shirt_number ?? "-"}{" "}
+                      {name}
+                    </p>
+                    <p className="text-xs text-white/75">
+                      {registration?.football_position ??
+                        player.football_position ??
+                        registration?.position ??
+                        "POS"}{" "}
+                      · {player.is_starter ? "Starter" : "Bench"}
+                    </p>
                   </div>
                 </div>
               </button>
@@ -3290,16 +5534,32 @@ function LineupSide({
           })}
         </div>
       ) : (
-        <div className="rounded-xl border border-white/20 p-4 text-sm font-semibold text-white/80">No lineup players found.</div>
+        <div className="rounded-xl border border-white/20 p-4 text-sm font-semibold text-white/80">
+          No lineup players found.
+        </div>
       )}
     </div>
   );
 }
 
-function MatchTeamStatsPanel({ home, away, stats }: { home: string; away: string; stats: MatchDetailTeamStat[] }) {
+function MatchTeamStatsPanel({
+  home,
+  away,
+  stats,
+}: {
+  home: string;
+  away: string;
+  stats: MatchDetailTeamStat[];
+}) {
   const [first, second] = stats;
   if (!first || !second) return null;
-  const rows: Array<[string, keyof MatchDetailTeamStat, "number" | "percent" | "passes" | "rating"]> = [
+  const rows: Array<
+    [
+      string,
+      keyof MatchDetailTeamStat,
+      "number" | "percent" | "passes" | "rating",
+    ]
+  > = [
     ["Team Rating", "rating", "rating"],
     ["Possession", "possession", "percent"],
     ["Total Shots", "shots", "number"],
@@ -3311,17 +5571,26 @@ function MatchTeamStatsPanel({ home, away, stats }: { home: string; away: string
     ["Offsides", "offsides", "number"],
     ["Fouls", "fouls", "number"],
     ["Yellow Cards", "yellow_cards", "number"],
-    ["Red Cards", "red_cards", "number"]
+    ["Red Cards", "red_cards", "number"],
   ];
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5">
       <h3 className="text-xl font-black">Match Stats</h3>
       <div className="mt-5 space-y-3">
         {rows.map(([label, field, format]) => (
-          <div key={label} className="grid grid-cols-[1fr_180px_1fr] items-center gap-4 text-sm">
-            <div className="font-black">{formatTeamStat(first, field, format)}</div>
-            <div className="text-center font-semibold text-slate-500">{label}</div>
-            <div className="text-right font-black">{formatTeamStat(second, field, format)}</div>
+          <div
+            key={label}
+            className="grid grid-cols-[1fr_180px_1fr] items-center gap-4 text-sm"
+          >
+            <div className="font-black">
+              {formatTeamStat(first, field, format)}
+            </div>
+            <div className="text-center font-semibold text-slate-500">
+              {label}
+            </div>
+            <div className="text-right font-black">
+              {formatTeamStat(second, field, format)}
+            </div>
           </div>
         ))}
       </div>
@@ -3333,9 +5602,16 @@ function MatchTeamStatsPanel({ home, away, stats }: { home: string; away: string
   );
 }
 
-function PlayerMatchStatModal({ stat, onClose }: { stat: MatchDetailPlayerStat; onClose: () => void }) {
+function PlayerMatchStatModal({
+  stat,
+  onClose,
+}: {
+  stat: MatchDetailPlayerStat;
+  onClose: () => void;
+}) {
   const player = stat.player_season_registrations;
-  const isGoalkeeper = (stat.position_played ?? player?.football_position) === "GK";
+  const isGoalkeeper =
+    (stat.position_played ?? player?.football_position) === "GK";
   const name = player?.players?.full_name ?? "Player";
   const items: Array<[string, unknown]> = isGoalkeeper
     ? [
@@ -3349,7 +5625,7 @@ function PlayerMatchStatModal({ stat, onClose }: { stat: MatchDetailPlayerStat; 
         ["Clearances", stat.clearances],
         ["Yellow Cards", stat.yellow_cards],
         ["Red Cards", stat.red_cards],
-        ["Rating", stat.rating]
+        ["Rating", stat.rating],
       ]
     : [
         ["Minutes Played", stat.minutes],
@@ -3367,7 +5643,10 @@ function PlayerMatchStatModal({ stat, onClose }: { stat: MatchDetailPlayerStat; 
         ["Pass Accuracy", percent(stat.accurate_passes, stat.passes)],
         ["Dribbles Attempted", stat.dribbles_attempted],
         ["Successful Dribbles", stat.successful_dribbles],
-        ["Dribble Success Rate", percent(stat.successful_dribbles, stat.dribbles_attempted)],
+        [
+          "Dribble Success Rate",
+          percent(stat.successful_dribbles, stat.dribbles_attempted),
+        ],
         ["Dispossessed", stat.dispossessed],
         ["Tackles", stat.tackles],
         ["Interceptions", stat.interceptions],
@@ -3376,25 +5655,41 @@ function PlayerMatchStatModal({ stat, onClose }: { stat: MatchDetailPlayerStat; 
         ["Fouls Committed", stat.fouls_committed],
         ["Yellow Cards", stat.yellow_cards],
         ["Red Cards", stat.red_cards],
-        ["Rating", stat.rating]
+        ["Rating", stat.rating],
       ];
   return (
     <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
       <div className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-indigo-100 text-xl font-black text-indigo-700">{initials(name)}</div>
+            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-indigo-100 text-xl font-black text-indigo-700">
+              {initials(name)}
+            </div>
             <div>
               <h3 className="text-2xl font-black">{name}</h3>
-              <p className="font-semibold text-slate-500">#{player?.shirt_number ?? "-"} · {stat.position_played ?? player?.football_position ?? player?.position ?? "POS"}</p>
+              <p className="font-semibold text-slate-500">
+                #{player?.shirt_number ?? "-"} ·{" "}
+                {stat.position_played ??
+                  player?.football_position ??
+                  player?.position ??
+                  "POS"}
+              </p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+          >
+            Close
+          </button>
         </div>
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {items.map(([label, value]) => (
             <div key={label} className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</p>
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
+                {label}
+              </p>
               <p className="mt-2 text-xl font-black">{formatValue(value)}</p>
             </div>
           ))}
@@ -3404,11 +5699,20 @@ function PlayerMatchStatModal({ stat, onClose }: { stat: MatchDetailPlayerStat; 
   );
 }
 
-function StandingsView({ groupMode, teams }: { groupMode: boolean; teams: StandingTeam[] }) {
+function StandingsView({
+  groupMode,
+  teams,
+}: {
+  groupMode: boolean;
+  teams: StandingTeam[];
+}) {
   if (groupMode) {
     return (
       <div>
-        <PageTitle title="Group Standings" subtitle="Group table with qualified and eliminated status." />
+        <PageTitle
+          title="Group Standings"
+          subtitle="Group table with qualified and eliminated status."
+        />
         <EmptyState label="Group standings will appear after groups are generated and matches are finalized." />
       </div>
     );
@@ -3416,7 +5720,10 @@ function StandingsView({ groupMode, teams }: { groupMode: boolean; teams: Standi
 
   return (
     <div>
-      <PageTitle title="Standings" subtitle="League table. Table topper becomes champion for round robin formats." />
+      <PageTitle
+        title="Standings"
+        subtitle="League table. Table topper becomes champion for round robin formats."
+      />
       <StandingTable title="Current Table" teams={teams} />
     </div>
   );
@@ -3425,16 +5732,31 @@ function StandingsView({ groupMode, teams }: { groupMode: boolean; teams: Standi
 function PlayerStatsView({ data }: { data: AdminSeasonData }) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
   const [teamFilter, setTeamFilter] = useState("ALL");
-  const sections = filterStatSections(data.statsReport.player_sections, teamFilter, data.teams, "player");
+  const sections = filterStatSections(
+    data.statsReport.player_sections,
+    teamFilter,
+    data.teams,
+    "player",
+  );
   return (
     <div>
       <PageTitle
         title="Player Stats"
         subtitle="Player leaderboards update after confirmed match simulations. xG/xA are intentionally not tracked in this project."
       />
-      <AdminStatsFilter value={teamFilter} teams={data.teams} onChange={setTeamFilter} />
-      <LeaderboardSections title="Player Stats" sections={sections} onOpen={setOpenCard} />
-      {openCard ? <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} /> : null}
+      <AdminStatsFilter
+        value={teamFilter}
+        teams={data.teams}
+        onChange={setTeamFilter}
+      />
+      <LeaderboardSections
+        title="Player Stats"
+        sections={sections}
+        onOpen={setOpenCard}
+      />
+      {openCard ? (
+        <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} />
+      ) : null}
     </div>
   );
 }
@@ -3442,37 +5764,75 @@ function PlayerStatsView({ data }: { data: AdminSeasonData }) {
 function TeamStatsView({ data }: { data: AdminSeasonData }) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
   const [teamFilter, setTeamFilter] = useState("ALL");
-  const sections = filterStatSections(data.statsReport.team_sections, teamFilter, data.teams, "team");
+  const sections = filterStatSections(
+    data.statsReport.team_sections,
+    teamFilter,
+    data.teams,
+    "team",
+  );
   return (
     <div>
       <PageTitle
         title="Team Stats"
         subtitle="Team leaderboards update after confirmed match simulations. xG/xA are intentionally not tracked in this project."
       />
-      <AdminStatsFilter value={teamFilter} teams={data.teams} onChange={setTeamFilter} />
-      <LeaderboardSections title="Team Stats" sections={sections} onOpen={setOpenCard} />
-      {openCard ? <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} /> : null}
+      <AdminStatsFilter
+        value={teamFilter}
+        teams={data.teams}
+        onChange={setTeamFilter}
+      />
+      <LeaderboardSections
+        title="Team Stats"
+        sections={sections}
+        onOpen={setOpenCard}
+      />
+      {openCard ? (
+        <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} />
+      ) : null}
     </div>
   );
 }
 
-function AdminStatsFilter({ value, teams, onChange }: { value: string; teams: AdminTeam[]; onChange: (value: string) => void }) {
+function AdminStatsFilter({
+  value,
+  teams,
+  onChange,
+}: {
+  value: string;
+  teams: AdminTeam[];
+  onChange: (value: string) => void;
+}) {
   return (
     <div className="mb-5 flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <button type="button" onClick={() => onChange("ALL")} className={`rounded-xl px-4 py-2 text-sm font-black transition ${value === "ALL" ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-700 hover:bg-indigo-50"}`}>
+      <button
+        type="button"
+        onClick={() => onChange("ALL")}
+        className={`rounded-xl px-4 py-2 text-sm font-black transition ${value === "ALL" ? "bg-indigo-600 text-white" : "bg-slate-50 text-slate-700 hover:bg-indigo-50"}`}
+      >
         All Stats
       </button>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700">
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700"
+      >
         <option value="ALL">All teams</option>
         {teams.map((team) => (
-          <option key={team.id} value={team.id}>{team.name}</option>
+          <option key={team.id} value={team.id}>
+            {team.name}
+          </option>
         ))}
       </select>
     </div>
   );
 }
 
-function filterStatSections(sections: StatSectionData[], teamFilter: string, teams: AdminTeam[], mode: "player" | "team") {
+function filterStatSections(
+  sections: StatSectionData[],
+  teamFilter: string,
+  teams: AdminTeam[],
+  mode: "player" | "team",
+) {
   if (teamFilter === "ALL") return sections;
   const team = teams.find((item) => item.id === teamFilter);
   if (!team) return sections;
@@ -3480,24 +5840,44 @@ function filterStatSections(sections: StatSectionData[], teamFilter: string, tea
     ...section,
     cards: section.cards.map((card) => ({
       ...card,
-      entries: card.entries.filter((entry) => (mode === "team" ? entry.id === team.id : entry.subLabel === team.name))
-    }))
+      entries: card.entries.filter((entry) =>
+        mode === "team" ? entry.id === team.id : entry.subLabel === team.name,
+      ),
+    })),
   }));
 }
 
-function LeaderboardSections({ title, sections, onOpen }: { title: string; sections: StatSectionData[]; onOpen: (card: StatCardData) => void }) {
-  const hasData = sections.some((section) => section.cards.some((card) => card.entries.length > 0));
+function LeaderboardSections({
+  title,
+  sections,
+  onOpen,
+}: {
+  title: string;
+  sections: StatSectionData[];
+  onOpen: (card: StatCardData) => void;
+}) {
+  const hasData = sections.some((section) =>
+    section.cards.some((card) => card.entries.length > 0),
+  );
   return (
     <section>
       <h2 className="mb-4 text-2xl font-black">{title}</h2>
-      {!hasData ? <EmptyState label={`${title} will appear after confirmed match results generate stats.`} /> : null}
+      {!hasData ? (
+        <EmptyState
+          label={`${title} will appear after confirmed match results generate stats.`}
+        />
+      ) : null}
       <div className="space-y-6">
         {sections.map((section) => (
           <div key={section.title}>
             <h3 className="mb-3 text-lg font-black">{section.title}</h3>
             <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
               {section.cards.map((card) => (
-                <LeaderboardCard key={card.id} card={card} onOpen={() => onOpen(card)} />
+                <LeaderboardCard
+                  key={card.id}
+                  card={card}
+                  onOpen={() => onOpen(card)}
+                />
               ))}
             </div>
           </div>
@@ -3507,7 +5887,13 @@ function LeaderboardSections({ title, sections, onOpen }: { title: string; secti
   );
 }
 
-function LeaderboardCard({ card, onOpen }: { card: StatCardData; onOpen: () => void }) {
+function LeaderboardCard({
+  card,
+  onOpen,
+}: {
+  card: StatCardData;
+  onOpen: () => void;
+}) {
   const topEntries = card.entries.slice(0, 3);
   return (
     <button
@@ -3520,11 +5906,17 @@ function LeaderboardCard({ card, onOpen }: { card: StatCardData; onOpen: () => v
         <span className="text-2xl font-black text-slate-300">›</span>
       </div>
       {topEntries.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm font-bold text-slate-500">No data yet.</div>
+        <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm font-bold text-slate-500">
+          No data yet.
+        </div>
       ) : (
         <div className="divide-y divide-slate-100">
           {topEntries.map((entry, index) => (
-            <LeaderboardEntryRow key={entry.id} entry={entry} rank={index + 1} />
+            <LeaderboardEntryRow
+              key={entry.id}
+              entry={entry}
+              rank={index + 1}
+            />
           ))}
         </div>
       )}
@@ -3532,7 +5924,13 @@ function LeaderboardCard({ card, onOpen }: { card: StatCardData; onOpen: () => v
   );
 }
 
-function LeaderboardEntryRow({ entry, rank }: { entry: StatEntry; rank: number }) {
+function LeaderboardEntryRow({
+  entry,
+  rank,
+}: {
+  entry: StatEntry;
+  rank: number;
+}) {
   return (
     <div className="flex items-center justify-between gap-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
@@ -3541,12 +5939,22 @@ function LeaderboardEntryRow({ entry, rank }: { entry: StatEntry; rank: number }
         <div className="min-w-0">
           <p className="truncate font-black">{entry.name}</p>
           <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-slate-500">
-            {entry.teamLogoUrl ? <img src={entry.teamLogoUrl} alt="" className="h-4 w-4 rounded-full object-cover" /> : null}
+            {entry.teamLogoUrl ? (
+              <img
+                src={entry.teamLogoUrl}
+                alt=""
+                className="h-4 w-4 rounded-full object-cover"
+              />
+            ) : null}
             <span className="truncate">{entry.subLabel}</span>
           </div>
         </div>
       </div>
-      <span className={`rounded-full px-3 py-1 text-sm font-black ${rank === 1 ? "bg-blue-500 text-white" : "text-slate-900"}`}>{entry.value}</span>
+      <span
+        className={`rounded-full px-3 py-1 text-sm font-black ${rank === 1 ? "bg-blue-500 text-white" : "text-slate-900"}`}
+      >
+        {entry.value}
+      </span>
     </div>
   );
 }
@@ -3554,26 +5962,57 @@ function LeaderboardEntryRow({ entry, rank }: { entry: StatEntry; rank: number }
 function PlayerOrTeamAvatar({ entry }: { entry: StatEntry }) {
   const [failed, setFailed] = useState(false);
   if (entry.logoUrl && !failed) {
-    return <img src={entry.logoUrl} alt={entry.name} onError={() => setFailed(true)} className="h-9 w-9 rounded-full object-cover" />;
+    return (
+      <img
+        src={entry.logoUrl}
+        alt={entry.name}
+        onError={() => setFailed(true)}
+        className="h-9 w-9 rounded-full object-cover"
+      />
+    );
   }
-  return <div className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-xs font-black text-slate-700">{entry.initials}</div>;
+  return (
+    <div className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-xs font-black text-slate-700">
+      {entry.initials}
+    </div>
+  );
 }
 
-function LeaderboardModal({ card, onClose }: { card: StatCardData; onClose: () => void }) {
+function LeaderboardModal({
+  card,
+  onClose,
+}: {
+  card: StatCardData;
+  onClose: () => void;
+}) {
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
       <div className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
         <div className="mb-5 flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">Full Leaderboard</p>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">
+              Full Leaderboard
+            </p>
             <h2 className="mt-1 text-2xl font-black">{card.title}</h2>
           </div>
-          <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200">Close</button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+          >
+            Close
+          </button>
         </div>
-        {card.entries.length === 0 ? <EmptyState label="No data yet." /> : (
+        {card.entries.length === 0 ? (
+          <EmptyState label="No data yet." />
+        ) : (
           <div className="divide-y divide-slate-100">
             {card.entries.map((entry, index) => (
-              <LeaderboardEntryRow key={entry.id} entry={entry} rank={index + 1} />
+              <LeaderboardEntryRow
+                key={entry.id}
+                entry={entry}
+                rank={index + 1}
+              />
             ))}
           </div>
         )}
@@ -3587,50 +6026,82 @@ function MessagesView({ messages }: { messages: AdminMessageRow[] }) {
     <CrudPage
       title="Messages"
       subtitle="Messages sent to managers after rejection, blocking, removal, or notices."
-      columns={["Manager Name", "Team Name", "Message", "Related Type", "Read Status"]}
+      columns={[
+        "Manager Name",
+        "Team Name",
+        "Message",
+        "Related Type",
+        "Read Status",
+      ]}
       rows={messages.map((row) => [
         row.manager,
         row.team,
         row.message,
         row.type,
-        <StatusPill key="read" tone={row.read === "Read" ? "green" : "orange"}>{row.read}</StatusPill>
+        <StatusPill key="read" tone={row.read === "Read" ? "green" : "orange"}>
+          {row.read}
+        </StatusPill>,
       ])}
     />
   );
 }
 
-function DivideGroupsView({ season, onSaved }: { season: SeasonDto; onSaved: () => Promise<void> }) {
+function DivideGroupsView({
+  season,
+  onSaved,
+}: {
+  season: SeasonDto;
+  onSaved: () => Promise<void>;
+}) {
   const [data, setData] = useState<AdminGroupsResponse | null>(null);
   const [draftGroups, setDraftGroups] = useState<AdminFixtureGroup[]>([]);
   const [message, setMessage] = useState("");
 
   async function loadGroups() {
-    const result = await api<AdminGroupsResponse>(`/admin/seasons/${season.id}/groups`);
+    const result = await api<AdminGroupsResponse>(
+      `/admin/seasons/${season.id}/groups`,
+    );
     setData(result);
     setDraftGroups(result.groups);
   }
 
   useEffect(() => {
-    void loadGroups().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load group data"));
+    void loadGroups().catch((error) =>
+      setMessage(
+        error instanceof Error ? error.message : "Could not load group data",
+      ),
+    );
   }, [season.id]);
 
-  const assignedTeamIds = new Set(draftGroups.flatMap((group) => group.teams.map((team) => team.id)));
-  const unassignedTeams = (data?.approved_teams ?? []).filter((team) => !assignedTeamIds.has(team.id));
-  const requiredTeams = Number(season.group_count ?? 0) * Number(season.teams_per_group ?? 0);
+  const assignedTeamIds = new Set(
+    draftGroups.flatMap((group) => group.teams.map((team) => team.id)),
+  );
+  const unassignedTeams = (data?.approved_teams ?? []).filter(
+    (team) => !assignedTeamIds.has(team.id),
+  );
+  const requiredTeams =
+    Number(season.group_count ?? 0) * Number(season.teams_per_group ?? 0);
   const canSave =
     draftGroups.length === Number(season.group_count ?? 0) &&
-    draftGroups.every((group) => group.teams.length === Number(season.teams_per_group ?? 0)) &&
+    draftGroups.every(
+      (group) => group.teams.length === Number(season.teams_per_group ?? 0),
+    ) &&
     unassignedTeams.length === 0;
 
   async function randomizeGroups() {
     setMessage("");
-    const result = await api<{ groups: AdminFixtureGroup[] }>(`/admin/seasons/${season.id}/groups/randomize`, { method: "POST" });
+    const result = await api<{ groups: AdminFixtureGroup[] }>(
+      `/admin/seasons/${season.id}/groups/randomize`,
+      { method: "POST" },
+    );
     setDraftGroups(result.groups);
     await loadGroups();
   }
 
   function moveTeam(teamId: string, targetGroupId: string) {
-    const team = (data?.approved_teams ?? []).find((item) => item.id === teamId);
+    const team = (data?.approved_teams ?? []).find(
+      (item) => item.id === teamId,
+    );
     if (!team) return;
     setDraftGroups((groups) =>
       groups.map((group) => ({
@@ -3640,8 +6111,8 @@ function DivideGroupsView({ season, onSaved }: { season: SeasonDto; onSaved: () 
             ? group.teams.some((item) => item.id === teamId)
               ? group.teams
               : [...group.teams, team]
-            : group.teams.filter((item) => item.id !== teamId)
-      }))
+            : group.teams.filter((item) => item.id !== teamId),
+      })),
     );
   }
 
@@ -3651,9 +6122,9 @@ function DivideGroupsView({ season, onSaved }: { season: SeasonDto; onSaved: () 
       body: JSON.stringify({
         groups: draftGroups.map((group) => ({
           group_id: group.id,
-          team_registration_ids: group.teams.map((team) => team.id)
-        }))
-      })
+          team_registration_ids: group.teams.map((team) => team.id),
+        })),
+      }),
     });
     await onSaved();
   }
@@ -3661,7 +6132,10 @@ function DivideGroupsView({ season, onSaved }: { season: SeasonDto; onSaved: () 
   if (!data) {
     return (
       <div>
-        <PageTitle title="Divide Teams Into Groups" subtitle="Loading group settings from the database." />
+        <PageTitle
+          title="Divide Teams Into Groups"
+          subtitle="Loading group settings from the database."
+        />
         <EmptyState label={message || "Loading groups..."} />
       </div>
     );
@@ -3669,51 +6143,124 @@ function DivideGroupsView({ season, onSaved }: { season: SeasonDto; onSaved: () 
 
   return (
     <div>
-      <PageTitle title="Divide Teams Into Groups" subtitle="Generate groups randomly, then manually move or swap teams before saving." />
-      {message ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">{message}</div> : null}
+      <PageTitle
+        title="Divide Teams Into Groups"
+        subtitle="Generate groups randomly, then manually move or swap teams before saving."
+      />
+      {message ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-700">
+          {message}
+        </div>
+      ) : null}
       <div className="mb-6 grid gap-4 md:grid-cols-4">
-        <SummaryCard label="Group Count" value={String(season.group_count ?? 0)} />
-        <SummaryCard label="Teams Per Group" value={String(season.teams_per_group ?? 0)} />
-        <SummaryCard label="Approved Teams" value={`${data.approved_teams.length}/${requiredTeams}`} />
-        <SummaryCard label="Groups Ready" value={canSave ? "Yes" : "No"} color={canSave ? "green" : "orange"} />
+        <SummaryCard
+          label="Group Count"
+          value={String(season.group_count ?? 0)}
+        />
+        <SummaryCard
+          label="Teams Per Group"
+          value={String(season.teams_per_group ?? 0)}
+        />
+        <SummaryCard
+          label="Approved Teams"
+          value={`${data.approved_teams.length}/${requiredTeams}`}
+        />
+        <SummaryCard
+          label="Groups Ready"
+          value={canSave ? "Yes" : "No"}
+          color={canSave ? "green" : "orange"}
+        />
       </div>
       <div className="mb-6 flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <button type="button" onClick={() => void randomizeGroups().catch((error) => setMessage(error.message))} className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700">
+        <button
+          type="button"
+          onClick={() =>
+            void randomizeGroups().catch((error) => setMessage(error.message))
+          }
+          className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700"
+        >
           Generate Groups Randomly
         </button>
-        <button type="button" disabled={!canSave} onClick={() => void saveGroups().catch((error) => setMessage(error.message))} className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0">
+        <button
+          type="button"
+          disabled={!canSave}
+          onClick={() =>
+            void saveGroups().catch((error) => setMessage(error.message))
+          }
+          className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0"
+        >
           Save Group Division
         </button>
-        {!canSave ? <p className="self-center text-sm font-semibold text-slate-500">Each group must have exactly {season.teams_per_group ?? 0} approved teams.</p> : null}
+        {!canSave ? (
+          <p className="self-center text-sm font-semibold text-slate-500">
+            Each group must have exactly {season.teams_per_group ?? 0} approved
+            teams.
+          </p>
+        ) : null}
       </div>
       {draftGroups.length === 0 ? (
         <EmptyState label="No groups created yet. Click Generate Groups Randomly first, then adjust manually if needed." />
       ) : (
         <div className="grid gap-5 xl:grid-cols-2">
           {draftGroups.map((group) => (
-            <Panel key={group.id} title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}>
-              {group.teams.length === 0 ? <EmptyState label="No teams in this group yet." /> : group.teams.map((team) => (
-                <div key={team.id} className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0">
-                  <TeamCompact name={team.name ?? "Unnamed team"} logoUrl={team.logo_url ?? null} />
-                  <select
-                    value={group.id}
-                    onChange={(event) => moveTeam(team.id, event.target.value)}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+            <Panel
+              key={group.id}
+              title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}
+            >
+              {group.teams.length === 0 ? (
+                <EmptyState label="No teams in this group yet." />
+              ) : (
+                group.teams.map((team) => (
+                  <div
+                    key={team.id}
+                    className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0"
                   >
-                    {draftGroups.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
-                  </select>
-                </div>
-              ))}
+                    <TeamCompact
+                      name={team.name ?? "Unnamed team"}
+                      logoUrl={team.logo_url ?? null}
+                    />
+                    <select
+                      value={group.id}
+                      onChange={(event) =>
+                        moveTeam(team.id, event.target.value)
+                      }
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+                    >
+                      {draftGroups.map((target) => (
+                        <option key={target.id} value={target.id}>
+                          {target.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))
+              )}
             </Panel>
           ))}
           {unassignedTeams.length > 0 ? (
             <Panel title="Unassigned Teams">
               {unassignedTeams.map((team) => (
-                <div key={team.id} className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0">
-                  <TeamCompact name={team.name ?? "Unnamed team"} logoUrl={team.logo_url ?? null} />
-                  <select defaultValue="" onChange={(event) => moveTeam(team.id, event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
-                    <option value="" disabled>Move to...</option>
-                    {draftGroups.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+                <div
+                  key={team.id}
+                  className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0"
+                >
+                  <TeamCompact
+                    name={team.name ?? "Unnamed team"}
+                    logoUrl={team.logo_url ?? null}
+                  />
+                  <select
+                    defaultValue=""
+                    onChange={(event) => moveTeam(team.id, event.target.value)}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold"
+                  >
+                    <option value="" disabled>
+                      Move to...
+                    </option>
+                    {draftGroups.map((target) => (
+                      <option key={target.id} value={target.id}>
+                        {target.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
               ))}
@@ -3732,22 +6279,46 @@ function GroupsView({ season }: { season: SeasonDto }) {
   useEffect(() => {
     void api<AdminGroupsResponse>(`/admin/seasons/${season.id}/groups`)
       .then(setData)
-      .catch((error) => setMessage(error instanceof Error ? error.message : "Could not load groups"));
+      .catch((error) =>
+        setMessage(
+          error instanceof Error ? error.message : "Could not load groups",
+        ),
+      );
   }, [season.id]);
 
   return (
     <div>
-      <PageTitle title="Groups" subtitle="Saved group division for this season." />
-      {!data ? <EmptyState label={message || "Loading groups..."} /> : data.groups.length === 0 ? <EmptyState label="Groups are not divided yet." /> : (
+      <PageTitle
+        title="Groups"
+        subtitle="Saved group division for this season."
+      />
+      {!data ? (
+        <EmptyState label={message || "Loading groups..."} />
+      ) : data.groups.length === 0 ? (
+        <EmptyState label="Groups are not divided yet." />
+      ) : (
         <div className="grid gap-5 xl:grid-cols-2">
           {data.groups.map((group) => (
-            <Panel key={group.id} title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}>
-              {group.teams.length === 0 ? <EmptyState label="No teams in this group." /> : group.teams.map((team) => (
-                <div key={team.id} className="flex items-center justify-between border-b border-slate-100 py-3 last:border-b-0">
-                  <TeamCompact name={team.name ?? "Unnamed team"} logoUrl={team.logo_url ?? null} />
-                  <StatusPill tone="blue">Assigned</StatusPill>
-                </div>
-              ))}
+            <Panel
+              key={group.id}
+              title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}
+            >
+              {group.teams.length === 0 ? (
+                <EmptyState label="No teams in this group." />
+              ) : (
+                group.teams.map((team) => (
+                  <div
+                    key={team.id}
+                    className="flex items-center justify-between border-b border-slate-100 py-3 last:border-b-0"
+                  >
+                    <TeamCompact
+                      name={team.name ?? "Unnamed team"}
+                      logoUrl={team.logo_url ?? null}
+                    />
+                    <StatusPill tone="blue">Assigned</StatusPill>
+                  </div>
+                ))
+              )}
             </Panel>
           ))}
         </div>
@@ -3759,7 +6330,10 @@ function GroupsView({ season }: { season: SeasonDto }) {
 function KnockoutView() {
   return (
     <div>
-      <PageTitle title="Knockout Bracket" subtitle="Generated after group stage is finished. Knockout matches cannot end in draw." />
+      <PageTitle
+        title="Knockout Bracket"
+        subtitle="Generated after group stage is finished. Knockout matches cannot end in draw."
+      />
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <EmptyState label="Knockout bracket will appear after qualifiers are generated from real group standings." />
       </div>
@@ -3767,14 +6341,22 @@ function KnockoutView() {
   );
 }
 
-function SettingsView({ league, season, onSaved }: { league: LeagueDto; season: SeasonDto; onSaved: () => Promise<void> }) {
+function SettingsView({
+  league,
+  season,
+  onSaved,
+}: {
+  league: LeagueDto;
+  season: SeasonDto;
+  onSaved: () => Promise<void>;
+}) {
   const [leagueDraft, setLeagueDraft] = useState({
     name: league.name,
     short_name: league.short_name ?? "",
     logo_url: league.logo_url ?? "",
     organizer_name: league.organizer_name ?? "",
     country: league.country ?? "",
-    description: league.description ?? ""
+    description: league.description ?? "",
   });
   const [seasonDraft, setSeasonDraft] = useState({
     format: season.format,
@@ -3785,7 +6367,7 @@ function SettingsView({ league, season, onSaved }: { league: LeagueDto; season: 
     registration_start_date: season.registration_start_date ?? "",
     registration_deadline: season.registration_deadline ?? "",
     start_date: season.start_date ?? "",
-    end_date: season.end_date ?? ""
+    end_date: season.end_date ?? "",
   });
   const [saving, setSaving] = useState(false);
   async function saveSettings() {
@@ -3794,12 +6376,12 @@ function SettingsView({ league, season, onSaved }: { league: LeagueDto; season: 
       await Promise.all([
         api(`/admin/leagues/${league.id}`, {
           method: "PATCH",
-          body: JSON.stringify(leagueDraft)
+          body: JSON.stringify(leagueDraft),
         }),
         api(`/admin/seasons/${season.id}`, {
           method: "PATCH",
-          body: JSON.stringify(seasonDraft)
-        })
+          body: JSON.stringify(seasonDraft),
+        }),
       ]);
       await onSaved();
     } finally {
@@ -3808,39 +6390,179 @@ function SettingsView({ league, season, onSaved }: { league: LeagueDto; season: 
   }
   return (
     <div>
-      <PageTitle title="Settings" subtitle="Edit selected league and season configuration." />
+      <PageTitle
+        title="Settings"
+        subtitle="Edit selected league and season configuration."
+      />
       <div className="grid gap-5 xl:grid-cols-2">
         <Panel title="League Settings">
           <div className="grid gap-4">
-            <EditableField label="League Name" value={leagueDraft.name} onChange={(value) => setLeagueDraft((current) => ({ ...current, name: value }))} />
-            <EditableField label="Short Name" value={leagueDraft.short_name} onChange={(value) => setLeagueDraft((current) => ({ ...current, short_name: value }))} />
-            <EditableField label="League Logo URL" value={leagueDraft.logo_url} onChange={(value) => setLeagueDraft((current) => ({ ...current, logo_url: value }))} />
-            <EditableField label="Organizer Name" value={leagueDraft.organizer_name} onChange={(value) => setLeagueDraft((current) => ({ ...current, organizer_name: value }))} />
-            <EditableField label="Country / Category" value={leagueDraft.country} onChange={(value) => setLeagueDraft((current) => ({ ...current, country: value }))} />
-            <EditableField label="Description" value={leagueDraft.description} onChange={(value) => setLeagueDraft((current) => ({ ...current, description: value }))} textarea />
+            <EditableField
+              label="League Name"
+              value={leagueDraft.name}
+              onChange={(value) =>
+                setLeagueDraft((current) => ({ ...current, name: value }))
+              }
+            />
+            <EditableField
+              label="Short Name"
+              value={leagueDraft.short_name}
+              onChange={(value) =>
+                setLeagueDraft((current) => ({ ...current, short_name: value }))
+              }
+            />
+            <EditableField
+              label="League Logo URL"
+              value={leagueDraft.logo_url}
+              onChange={(value) =>
+                setLeagueDraft((current) => ({ ...current, logo_url: value }))
+              }
+            />
+            <EditableField
+              label="Organizer Name"
+              value={leagueDraft.organizer_name}
+              onChange={(value) =>
+                setLeagueDraft((current) => ({
+                  ...current,
+                  organizer_name: value,
+                }))
+              }
+            />
+            <EditableField
+              label="Country / Category"
+              value={leagueDraft.country}
+              onChange={(value) =>
+                setLeagueDraft((current) => ({ ...current, country: value }))
+              }
+            />
+            <EditableField
+              label="Description"
+              value={leagueDraft.description}
+              onChange={(value) =>
+                setLeagueDraft((current) => ({
+                  ...current,
+                  description: value,
+                }))
+              }
+              textarea
+            />
           </div>
         </Panel>
         <Panel title="Season Settings">
           <div className="grid gap-4 md:grid-cols-2">
             <label className="grid gap-2">
-              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Format</span>
-              <select value={seasonDraft.format} onChange={(event) => setSeasonDraft((current) => ({ ...current, format: event.target.value as SeasonFormat }))} className="rounded-xl border border-slate-200 px-4 py-3 font-bold">
-                {Object.values(SeasonFormat).map((format) => <option key={format} value={format}>{formatLabel(format)}</option>)}
+              <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                Format
+              </span>
+              <select
+                value={seasonDraft.format}
+                onChange={(event) =>
+                  setSeasonDraft((current) => ({
+                    ...current,
+                    format: event.target.value as SeasonFormat,
+                  }))
+                }
+                className="rounded-xl border border-slate-200 px-4 py-3 font-bold"
+              >
+                {Object.values(SeasonFormat).map((format) => (
+                  <option key={format} value={format}>
+                    {formatLabel(format)}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="grid gap-2">
-              <span className="text-xs font-black uppercase tracking-wide text-slate-500">Phase</span>
-              <select value={seasonDraft.phase} onChange={(event) => setSeasonDraft((current) => ({ ...current, phase: event.target.value as SeasonPhase }))} className="rounded-xl border border-slate-200 px-4 py-3 font-bold">
-                {Object.values(SeasonPhase).map((phase) => <option key={phase} value={phase}>{formatPhase(phase)}</option>)}
+              <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                Phase
+              </span>
+              <select
+                value={seasonDraft.phase}
+                onChange={(event) =>
+                  setSeasonDraft((current) => ({
+                    ...current,
+                    phase: event.target.value as SeasonPhase,
+                  }))
+                }
+                className="rounded-xl border border-slate-200 px-4 py-3 font-bold"
+              >
+                {Object.values(SeasonPhase).map((phase) => (
+                  <option key={phase} value={phase}>
+                    {formatPhase(phase)}
+                  </option>
+                ))}
               </select>
             </label>
-            <EditableField label="Total Teams" value={seasonDraft.total_teams} type="number" onChange={(value) => setSeasonDraft((current) => ({ ...current, total_teams: value }))} />
-            <EditableField label="Lineup Size" value={seasonDraft.lineup_size} type="number" onChange={(value) => setSeasonDraft((current) => ({ ...current, lineup_size: value }))} />
-            <EditableField label="Substitute Limit" value={seasonDraft.substitute_limit} type="number" onChange={(value) => setSeasonDraft((current) => ({ ...current, substitute_limit: value }))} />
-            <EditableField label="Registration Start" value={seasonDraft.registration_start_date} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, registration_start_date: value }))} />
-            <EditableField label="Registration Deadline" value={seasonDraft.registration_deadline} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, registration_deadline: value }))} />
-            <EditableField label="Season Start" value={seasonDraft.start_date} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, start_date: value }))} />
-            <EditableField label="Season End" value={seasonDraft.end_date} type="date" onChange={(value) => setSeasonDraft((current) => ({ ...current, end_date: value }))} />
+            <EditableField
+              label="Total Teams"
+              value={seasonDraft.total_teams}
+              type="number"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({
+                  ...current,
+                  total_teams: value,
+                }))
+              }
+            />
+            <EditableField
+              label="Lineup Size"
+              value={seasonDraft.lineup_size}
+              type="number"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({
+                  ...current,
+                  lineup_size: value,
+                }))
+              }
+            />
+            <EditableField
+              label="Substitute Limit"
+              value={seasonDraft.substitute_limit}
+              type="number"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({
+                  ...current,
+                  substitute_limit: value,
+                }))
+              }
+            />
+            <EditableField
+              label="Registration Start"
+              value={seasonDraft.registration_start_date}
+              type="date"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({
+                  ...current,
+                  registration_start_date: value,
+                }))
+              }
+            />
+            <EditableField
+              label="Registration Deadline"
+              value={seasonDraft.registration_deadline}
+              type="date"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({
+                  ...current,
+                  registration_deadline: value,
+                }))
+              }
+            />
+            <EditableField
+              label="Season Start"
+              value={seasonDraft.start_date}
+              type="date"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({ ...current, start_date: value }))
+              }
+            />
+            <EditableField
+              label="Season End"
+              value={seasonDraft.end_date}
+              type="date"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({ ...current, end_date: value }))
+              }
+            />
           </div>
         </Panel>
       </div>
@@ -3861,7 +6583,7 @@ function EditableField({
   value,
   onChange,
   type = "text",
-  textarea = false
+  textarea = false,
 }: {
   label: string;
   value: string;
@@ -3871,11 +6593,23 @@ function EditableField({
 }) {
   return (
     <label className="grid gap-2">
-      <span className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</span>
+      <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
       {textarea ? (
-        <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={4} className="rounded-xl border border-slate-200 px-4 py-3 font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          rows={4}
+          className="rounded-xl border border-slate-200 px-4 py-3 font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+        />
       ) : (
-        <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="rounded-xl border border-slate-200 px-4 py-3 font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100" />
+        <input
+          type={type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="rounded-xl border border-slate-200 px-4 py-3 font-semibold outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-100"
+        />
       )}
     </label>
   );
@@ -3884,7 +6618,9 @@ function EditableField({
 function PageTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="mb-7">
-      <h1 className="text-3xl font-black tracking-tight text-slate-950">{title}</h1>
+      <h1 className="text-3xl font-black tracking-tight text-slate-950">
+        {title}
+      </h1>
       <p className="mt-2 text-base text-slate-600">{subtitle}</p>
     </div>
   );
@@ -3896,7 +6632,7 @@ function SummaryCard({
   value,
   color,
   action,
-  onAction
+  onAction,
 }: {
   icon?: React.ReactNode;
   label: string;
@@ -3911,28 +6647,45 @@ function SummaryCard({
     green: "bg-green-100 text-green-700",
     orange: "bg-orange-100 text-orange-700",
     purple: "bg-violet-100 text-violet-700",
-    cyan: "bg-cyan-100 text-cyan-700"
+    cyan: "bg-cyan-100 text-cyan-700",
   };
   const text = {
     blue: "text-blue-700",
     green: "text-green-700",
     orange: "text-orange-600",
     purple: "text-violet-700",
-    cyan: "text-cyan-700"
+    cyan: "text-cyan-700",
   };
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex gap-4">
-        {icon ? <div className={`grid h-[70px] w-[70px] place-items-center rounded-xl ${tones[cardColor]}`}>{icon}</div> : null}
+        {icon ? (
+          <div
+            className={`grid h-[70px] w-[70px] place-items-center rounded-xl ${tones[cardColor]}`}
+          >
+            {icon}
+          </div>
+        ) : null}
         <div className="min-w-0">
-          <p className={`${icon ? "min-h-[48px]" : ""} text-base font-black leading-snug`}>{label}</p>
-          <p className={`mt-2 ${icon ? "text-4xl" : "text-2xl"} font-black ${text[cardColor]}`}>{value}</p>
+          <p
+            className={`${icon ? "min-h-[48px]" : ""} text-base font-black leading-snug`}
+          >
+            {label}
+          </p>
+          <p
+            className={`mt-2 ${icon ? "text-4xl" : "text-2xl"} font-black ${text[cardColor]}`}
+          >
+            {value}
+          </p>
         </div>
       </div>
       {action ? (
         <>
           <div className="my-4 h-px bg-slate-200" />
-          <button className="w-full rounded-lg py-2 text-center text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 hover:text-indigo-900 active:translate-y-0 active:scale-[0.98]" onClick={onAction}>
+          <button
+            className="w-full rounded-lg py-2 text-center text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 hover:text-indigo-900 active:translate-y-0 active:scale-[0.98]"
+            onClick={onAction}
+          >
             {action} →
           </button>
         </>
@@ -3941,12 +6694,33 @@ function SummaryCard({
   );
 }
 
-function FeatureCard({ title, icon, children, className = "", iconTone = "yellow" }: { title: string; icon: React.ReactNode; children: React.ReactNode; className?: string; iconTone?: "yellow" | "green" | "purple" }) {
-  const tone = iconTone === "green" ? "bg-green-100 text-green-700" : iconTone === "purple" ? "bg-violet-100 text-violet-700" : "bg-yellow-100 text-yellow-700";
+function FeatureCard({
+  title,
+  icon,
+  children,
+  className = "",
+  iconTone = "yellow",
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+  iconTone?: "yellow" | "green" | "purple";
+}) {
+  const tone =
+    iconTone === "green"
+      ? "bg-green-100 text-green-700"
+      : iconTone === "purple"
+        ? "bg-violet-100 text-violet-700"
+        : "bg-yellow-100 text-yellow-700";
   return (
-    <div className={`rounded-xl border border-slate-200 bg-white p-6 shadow-sm ${className}`}>
+    <div
+      className={`rounded-xl border border-slate-200 bg-white p-6 shadow-sm ${className}`}
+    >
       <div className="mb-5 flex items-center gap-4">
-        <span className={`grid h-9 w-9 place-items-center rounded-lg ${tone}`}>{icon}</span>
+        <span className={`grid h-9 w-9 place-items-center rounded-lg ${tone}`}>
+          {icon}
+        </span>
         <h2 className="font-black">{title}</h2>
       </div>
       {children}
@@ -3954,13 +6728,26 @@ function FeatureCard({ title, icon, children, className = "", iconTone = "yellow
   );
 }
 
-function Panel({ title, action, onAction, children }: { title: string; action?: string | undefined; onAction?: (() => void) | undefined; children: React.ReactNode }) {
+function Panel({
+  title,
+  action,
+  onAction,
+  children,
+}: {
+  title: string;
+  action?: string | undefined;
+  onAction?: (() => void) | undefined;
+  children: React.ReactNode;
+}) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-black">{title}</h2>
         {action ? (
-          <button className="rounded-md px-2 py-1 text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 hover:text-indigo-900 active:translate-y-0 active:scale-[0.97]" onClick={onAction}>
+          <button
+            className="rounded-md px-2 py-1 text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 hover:text-indigo-900 active:translate-y-0 active:scale-[0.97]"
+            onClick={onAction}
+          >
             {action} →
           </button>
         ) : null}
@@ -3970,7 +6757,17 @@ function Panel({ title, action, onAction, children }: { title: string; action?: 
   );
 }
 
-function CrudPage({ title, subtitle, columns, rows }: { title: string; subtitle: string; columns: string[]; rows: React.ReactNode[][] }) {
+function CrudPage({
+  title,
+  subtitle,
+  columns,
+  rows,
+}: {
+  title: string;
+  subtitle: string;
+  columns: string[];
+  rows: React.ReactNode[][];
+}) {
   return (
     <div>
       <PageTitle title={title} subtitle={subtitle} />
@@ -3979,24 +6776,36 @@ function CrudPage({ title, subtitle, columns, rows }: { title: string; subtitle:
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
               {columns.map((column) => (
-                <th key={column} className="px-5 py-4 font-black">{column}</th>
+                <th key={column} className="px-5 py-4 font-black">
+                  {column}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-5 py-8 text-center text-sm font-semibold text-slate-500">
+                <td
+                  colSpan={columns.length}
+                  className="px-5 py-8 text-center text-sm font-semibold text-slate-500"
+                >
                   No records yet.
                 </td>
               </tr>
-            ) : rows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="hover:bg-slate-50">
-                {row.map((cell, cellIndex) => (
-                  <td key={cellIndex} className="px-5 py-4 align-middle font-medium text-slate-700">{cell}</td>
-                ))}
-              </tr>
-            ))}
+            ) : (
+              rows.map((row, rowIndex) => (
+                <tr key={rowIndex} className="hover:bg-slate-50">
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={cellIndex}
+                      className="px-5 py-4 align-middle font-medium text-slate-700"
+                    >
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -4023,23 +6832,47 @@ function ReadyMatchCard({ match }: { match: ReadyMatchRow }) {
       <p className="mt-7 text-sm text-slate-600">{match.kickoff}</p>
       <p className="mt-3 text-sm text-slate-600">{match.stage}</p>
       <button className="group mt-6 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98]">
-        <PlayCircle className="transition-transform duration-200 group-hover:scale-110" size={17} />
+        <PlayCircle
+          className="transition-transform duration-200 group-hover:scale-110"
+          size={17}
+        />
         Simulate Match
       </button>
     </div>
   );
 }
 
-function StandingTable({ title, teams: tableTeams }: { title: string; teams: StandingTeam[] }) {
+function StandingTable({
+  title,
+  teams: tableTeams,
+}: {
+  title: string;
+  teams: StandingTeam[];
+}) {
   return (
     <Panel title={title} action="Recalculate Standings">
       <div className="overflow-x-auto">
-        {tableTeams.length === 0 ? <EmptyState label="No standings yet." /> : (
+        {tableTeams.length === 0 ? (
+          <EmptyState label="No standings yet." />
+        ) : (
           <table className="w-full text-sm">
             <thead className="text-xs uppercase text-slate-500">
               <tr>
-                {["Rank", "Team", "P", "W", "D", "L", "GF", "GA", "GD", "Pts"].map((header) => (
-                  <th key={header} className="px-3 py-3 text-left">{header}</th>
+                {[
+                  "Rank",
+                  "Team",
+                  "P",
+                  "W",
+                  "D",
+                  "L",
+                  "GF",
+                  "GA",
+                  "GD",
+                  "Pts",
+                ].map((header) => (
+                  <th key={header} className="px-3 py-3 text-left">
+                    {header}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -4047,7 +6880,9 @@ function StandingTable({ title, teams: tableTeams }: { title: string; teams: Sta
               {tableTeams.map((team, index) => (
                 <tr key={team.name}>
                   <td className="px-3 py-3 font-black">{index + 1}</td>
-                  <td className="px-3 py-3"><TeamCompact name={team.name} /></td>
+                  <td className="px-3 py-3">
+                    <TeamCompact name={team.name} />
+                  </td>
                   <td className="px-3 py-3">{team.played}</td>
                   <td className="px-3 py-3">{team.won}</td>
                   <td className="px-3 py-3">{team.draw}</td>
@@ -4055,7 +6890,9 @@ function StandingTable({ title, teams: tableTeams }: { title: string; teams: Sta
                   <td className="px-3 py-3">{team.gf}</td>
                   <td className="px-3 py-3">{team.ga}</td>
                   <td className="px-3 py-3">{team.gf - team.ga}</td>
-                  <td className="px-3 py-3 font-black text-indigo-700">{team.points}</td>
+                  <td className="px-3 py-3 font-black text-indigo-700">
+                    {team.points}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -4066,24 +6903,55 @@ function StandingTable({ title, teams: tableTeams }: { title: string; teams: Sta
   );
 }
 
-function SidebarButton({ item, active, onClick }: { item: { id: string; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }; active: boolean; onClick: () => void }) {
+function SidebarButton({
+  item,
+  active,
+  onClick,
+}: {
+  item: {
+    id: string;
+    label: string;
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+  };
+  active: boolean;
+  onClick: () => void;
+}) {
   const Icon = item.icon;
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group flex w-full items-center gap-4 rounded-md px-4 py-3 text-left text-base transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] ${active ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/20" : "text-slate-100 hover:bg-white/10 hover:shadow-[0_10px_24px_rgba(0,0,0,0.16)]"
-        }`}
+      className={`group flex w-full items-center gap-4 rounded-md px-4 py-3 text-left text-base transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99] ${
+        active
+          ? "bg-indigo-600 text-white shadow-lg shadow-indigo-950/20"
+          : "text-slate-100 hover:bg-white/10 hover:shadow-[0_10px_24px_rgba(0,0,0,0.16)]"
+      }`}
     >
-      <Icon className="transition-transform duration-200 group-hover:scale-110" size={22} />
+      <Icon
+        className="transition-transform duration-200 group-hover:scale-110"
+        size={22}
+      />
       <span>{item.label}</span>
     </button>
   );
 }
 
-function TeamBadge({ name, logoUrl, size = "md" }: { name: string; logoUrl?: string | null | undefined; size?: "md" | "lg" | "xl" }) {
+function TeamBadge({
+  name,
+  logoUrl,
+  size = "md",
+}: {
+  name: string;
+  logoUrl?: string | null | undefined;
+  size?: "md" | "lg" | "xl";
+}) {
   const [imageFailed, setImageFailed] = useState(false);
-  const dimensions = size === "xl" ? "h-28 w-28 text-xl" : size === "lg" ? "h-20 w-20 text-sm" : "h-12 w-12 text-xs";
+  const dimensions =
+    size === "xl"
+      ? "h-28 w-28 text-xl"
+      : size === "lg"
+        ? "h-20 w-20 text-sm"
+        : "h-12 w-12 text-xs";
   if (logoUrl && !imageFailed) {
     return (
       <img
@@ -4095,13 +6963,25 @@ function TeamBadge({ name, logoUrl, size = "md" }: { name: string; logoUrl?: str
     );
   }
   return (
-    <div className={`${dimensions} grid shrink-0 place-items-center rounded-full border-4 border-white bg-gradient-to-br from-blue-700 to-sky-400 text-center font-black text-white shadow`}>
-      {name.split(" ").map((part) => part[0]).join("").slice(0, 3)}
+    <div
+      className={`${dimensions} grid shrink-0 place-items-center rounded-full border-4 border-white bg-gradient-to-br from-blue-700 to-sky-400 text-center font-black text-white shadow`}
+    >
+      {name
+        .split(" ")
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 3)}
     </div>
   );
 }
 
-function TeamCompact({ name, logoUrl }: { name: string; logoUrl?: string | null | undefined }) {
+function TeamCompact({
+  name,
+  logoUrl,
+}: {
+  name: string;
+  logoUrl?: string | null | undefined;
+}) {
   return (
     <div className="flex items-center gap-3">
       <TeamBadge name={name} logoUrl={logoUrl} />
@@ -4110,11 +6990,25 @@ function TeamCompact({ name, logoUrl }: { name: string; logoUrl?: string | null 
   );
 }
 
-function PlayerHero({ name, team, shirt, color }: { name: string; team: string; shirt: string; color: "blue" | "black" }) {
+function PlayerHero({
+  name,
+  team,
+  shirt,
+  color,
+}: {
+  name: string;
+  team: string;
+  shirt: string;
+  color: "blue" | "black";
+}) {
   return (
     <div className="flex items-center gap-6">
-      <div className={`grid h-24 w-24 place-items-center rounded-full ${color === "blue" ? "bg-blue-100" : "bg-slate-100"}`}>
-        <div className={`grid h-16 w-14 place-items-center rounded-t-2xl text-2xl font-black text-white ${color === "blue" ? "bg-blue-800" : "bg-slate-900"}`}>
+      <div
+        className={`grid h-24 w-24 place-items-center rounded-full ${color === "blue" ? "bg-blue-100" : "bg-slate-100"}`}
+      >
+        <div
+          className={`grid h-16 w-14 place-items-center rounded-t-2xl text-2xl font-black text-white ${color === "blue" ? "bg-blue-800" : "bg-slate-900"}`}
+        >
           {shirt}
         </div>
       </div>
@@ -4139,16 +7033,36 @@ function StatStrip({ stats }: { stats: [string, string][] }) {
   );
 }
 
-function StatusPill({ tone, children }: { tone: "blue" | "green" | "orange"; children: React.ReactNode }) {
+function StatusPill({
+  tone,
+  children,
+}: {
+  tone: "blue" | "green" | "orange";
+  children: React.ReactNode;
+}) {
   const styles = {
     blue: "bg-blue-50 text-blue-700",
     green: "bg-green-50 text-green-700",
-    orange: "bg-orange-50 text-orange-700"
+    orange: "bg-orange-50 text-orange-700",
   };
-  return <span className={`rounded-full px-3 py-1 text-xs font-black ${styles[tone]}`}>{children}</span>;
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-xs font-black ${styles[tone]}`}
+    >
+      {children}
+    </span>
+  );
 }
 
-type ActionItem = string | { label: string; onClick?: () => void; disabled?: boolean; danger?: boolean; selected?: boolean };
+type ActionItem =
+  | string
+  | {
+      label: string;
+      onClick?: () => void;
+      disabled?: boolean;
+      danger?: boolean;
+      selected?: boolean;
+    };
 
 function ActionGroup({ actions }: { actions: ActionItem[] }) {
   return (
@@ -4161,13 +7075,18 @@ function ActionGroup({ actions }: { actions: ActionItem[] }) {
             type="button"
             onClick={item.onClick}
             disabled={item.disabled}
-            title={item.disabled ? "Approve the team before rating or approving players." : undefined}
-            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-bold transition-all duration-200 active:translate-y-0 active:scale-[0.96] ${item.selected
+            title={
+              item.disabled
+                ? "Approve the team before rating or approving players."
+                : undefined
+            }
+            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-bold transition-all duration-200 active:translate-y-0 active:scale-[0.96] ${
+              item.selected
                 ? "border-green-300 bg-green-100 text-green-800 ring-2 ring-green-200"
                 : item.danger
                   ? "border-red-200 text-red-700 hover:-translate-y-0.5 hover:bg-red-50 hover:shadow-sm"
                   : "border-slate-200 text-indigo-700 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm"
-              } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:shadow-none`}
+            } disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:shadow-none`}
           >
             {item.selected ? <CheckCircle2 size={13} /> : null}
             {item.label}
@@ -4187,23 +7106,42 @@ function StatusBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-function InfoBox({ label, value, children }: { label: string; value: string; children?: React.ReactNode }) {
+function InfoBox({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value: string;
+  children?: React.ReactNode;
+}) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-black uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
       <p className="mt-2 text-lg font-black">{value}</p>
       {children}
     </div>
   );
 }
 
-function BracketColumn({ title, matches }: { title: string; matches: string[] }) {
+function BracketColumn({
+  title,
+  matches,
+}: {
+  title: string;
+  matches: string[];
+}) {
   return (
     <div>
       <h3 className="mb-4 font-black text-slate-700">{title}</h3>
       <div className="space-y-4">
         {matches.map((match) => (
-          <div key={match} className="rounded-lg border border-slate-200 bg-slate-50 p-4 font-bold">
+          <div
+            key={match}
+            className="rounded-lg border border-slate-200 bg-slate-50 p-4 font-bold"
+          >
             {match}
           </div>
         ))}
@@ -4213,10 +7151,14 @@ function BracketColumn({ title, matches }: { title: string; matches: string[] })
 }
 
 function formatLabel(format: string) {
-  return format.replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+  return format
+    .replaceAll("_", " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function formatPhase(phase: SeasonDto["phase"] | null | undefined) {
-  if (!phase || phase === SeasonPhase.REGISTRATION_OPEN) return "Registration Open";
+  if (!phase || phase === SeasonPhase.REGISTRATION_OPEN)
+    return "Registration Open";
   return formatLabel(phase);
 }
