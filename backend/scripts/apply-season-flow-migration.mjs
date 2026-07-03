@@ -13,17 +13,42 @@ if (!connectionString) {
 }
 
 const sql = [
-  readFileSync(resolve(process.cwd(), "../supabase/update-season-flow.sql"), "utf8"),
-  readFileSync(resolve(process.cwd(), "../supabase/admin-dashboard-flow.sql"), "utf8"),
-  readFileSync(resolve(process.cwd(), "../supabase/team-player-dashboard-flow.sql"), "utf8"),
-  readFileSync(resolve(process.cwd(), "../supabase/advanced-simulation-flow.sql"), "utf8"),
-  readFileSync(resolve(process.cwd(), "../supabase/manager-squad-flow.sql"), "utf8"),
-  readFileSync(resolve(process.cwd(), "../supabase/fixture-generation-flow.sql"), "utf8"),
-  readFileSync(resolve(process.cwd(), "../supabase/manager-lineup-builder-flow.sql"), "utf8")
+  readFileSync(
+    resolve(process.cwd(), "../supabase/update-season-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/admin-dashboard-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/team-player-dashboard-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/advanced-simulation-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/manager-squad-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/fixture-generation-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/manager-lineup-builder-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/matchday-team-stats-flow.sql"),
+    "utf8",
+  ),
 ].join("\n\n");
 const client = new Client({
   connectionString,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
 });
 
 try {
@@ -63,7 +88,7 @@ try {
         (table_name = 'player_season_stats' and column_name in (
           'starts', 'minutes_played', 'shots', 'shots_on_target', 'chances_created', 'big_chances_created',
           'total_passes', 'accurate_passes', 'dribbles_attempted', 'successful_dribbles',
-          'dispossessed', 'tackles', 'interceptions', 'best_match_rating',
+          'dribbled_past', 'dispossessed', 'tackles', 'interceptions', 'best_match_rating',
           'lowest_match_rating', 'player_of_match_count'
         ))
         or
@@ -92,10 +117,17 @@ try {
         or
         (table_name = 'team_match_stats' and column_name in ('offsides', 'rating'))
         or
+        (table_name = 'team_match_stats' and column_name in (
+          'expected_goals', 'shots_off_target', 'hit_woodwork', 'tackles', 'interceptions', 'blocks', 'clearances', 'keeper_saves'
+        ))
+        or
+        (table_name = 'seasons' and column_name in ('active_matchday_number', 'active_matchday_started_at'))
+        or
         (table_name = 'player_match_stats' and column_name in (
           'position_played', 'shots_on_target', 'chances_created', 'big_chances_created', 'big_chances_missed',
           'dispossessed', 'interceptions', 'clearances', 'blocks', 'fouls_committed',
-          'goals_conceded', 'accurate_long_balls', 'diving_saves', 'saves_inside_box'
+          'goals_conceded', 'accurate_long_balls', 'diving_saves', 'saves_inside_box', 'dribbled_past',
+          'clean_sheet', 'penalty_scored', 'penalty_missed', 'penalty_saved_for_gk'
         ))
       )
     order by table_name, column_name;
@@ -111,8 +143,10 @@ try {
         'knockout_brackets',
         'knockout_matches',
         'player_abilities',
+        'match_injuries',
         'match_substitutions',
-        'manager_team_preferences'
+        'manager_team_preferences',
+        'player_suspensions'
       )
     order by table_name;
   `);

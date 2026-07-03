@@ -2042,7 +2042,7 @@ managerRouter.get(
     const { data, error } = await supabaseAdmin
       .from("fixtures")
       .select(
-        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url,primary_color)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url,primary_color))",
       )
       .or(clauses.join(","))
       .eq("status", FixtureStatus.FINAL)
@@ -2437,7 +2437,10 @@ managerRouter.get(
     if (substitutionsError) throw substitutionsError;
     res.json({
       fixture,
-      lineups: lineups ?? [],
+      lineups: (lineups ?? []).map((lineup) => ({
+        ...lineup,
+        formation_slots: getFormationSlots(lineup.formation ?? "4-3-3"),
+      })),
       team_stats: teamStats ?? [],
       player_stats: playerStats ?? [],
       events: events ?? [],

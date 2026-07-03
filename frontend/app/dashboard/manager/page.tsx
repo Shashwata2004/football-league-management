@@ -22,6 +22,7 @@ import {
   Plus,
   RefreshCcw,
   ShieldAlert,
+  Star,
   Trophy,
   User,
   Users,
@@ -257,6 +258,117 @@ interface FixtureRecord {
     playing_style?: string | null;
   }>;
 }
+
+type MatchDetailLineupPlayer = {
+  id: string;
+  player_registration_id: string;
+  is_starter?: boolean | null;
+  shirt_number?: number | null;
+  football_position?: string | null;
+  player_natural_position?: string | null;
+  display_role?: string | null;
+  slot_key?: string | null;
+  is_captain?: boolean | null;
+  player_season_registrations?: {
+    id: string;
+    shirt_number?: number | null;
+    football_position?: string | null;
+    position?: string | null;
+    players?: { full_name?: string | null; avatar_url?: string | null } | null;
+  } | null;
+};
+
+type MatchDetailLineup = {
+  id: string;
+  team_registration_id: string;
+  side: string;
+  formation?: string | null;
+  playing_style?: string | null;
+  status?: string | null;
+  formation_slots?: Array<{
+    slotKey: string;
+    displayRole: string;
+    line: "GK" | "DEF" | "MID" | "ATT";
+    x: number;
+    y: number;
+  }> | null;
+  lineup_players?: MatchDetailLineupPlayer[] | null;
+};
+
+type MatchDetailTeamStat = {
+  id: string;
+  team_registration_id: string;
+  rating?: number | string | null;
+  possession: number;
+  expected_goals?: number | string | null;
+  shots: number;
+  shots_off_target?: number | null;
+  shots_on_target: number;
+  hit_woodwork?: number | null;
+  big_chances: number;
+  big_chances_missed: number;
+  passes: number;
+  accurate_passes: number;
+  offsides?: number | null;
+  tackles?: number | null;
+  interceptions?: number | null;
+  blocks?: number | null;
+  clearances?: number | null;
+  keeper_saves?: number | null;
+  fouls: number;
+  yellow_cards: number;
+  red_cards: number;
+  corners: number;
+};
+
+type MatchDetailPlayerStat = {
+  id: string;
+  player_registration_id: string;
+  minutes: number;
+  position_played?: string | null;
+  goals: number;
+  assists: number;
+  shots: number;
+  shots_on_target?: number | null;
+  chances_created?: number | null;
+  big_chances_created?: number | null;
+  big_chances_missed?: number | null;
+  passes: number;
+  accurate_passes: number;
+  tackles: number;
+  interceptions?: number | null;
+  clearances?: number | null;
+  blocks?: number | null;
+  fouls_committed?: number | null;
+  saves: number;
+  goals_conceded?: number | null;
+  accurate_long_balls?: number | null;
+  diving_saves?: number | null;
+  saves_inside_box?: number | null;
+  dribbles_attempted: number;
+  successful_dribbles: number;
+  dribbled_past?: number | null;
+  dispossessed?: number | null;
+  yellow_cards: number;
+  red_cards: number;
+  rating: number | string;
+  player_season_registrations?: {
+    id: string;
+    shirt_number?: number | null;
+    football_position?: string | null;
+    position?: string | null;
+    players?: { full_name?: string | null; avatar_url?: string | null } | null;
+  } | null;
+};
+
+type MatchDetailPayload = {
+  fixture: FixtureRecord;
+  lineups: MatchDetailLineup[];
+  team_stats: MatchDetailTeamStat[];
+  player_stats: MatchDetailPlayerStat[];
+  events: Record<string, unknown>[];
+  substitutions: Record<string, unknown>[];
+};
 
 interface SeasonGroupRecord {
   id: string;
@@ -4671,6 +4783,99 @@ function percentage(numerator: unknown, denominator: unknown) {
   return `${Math.round((top / bottom) * 100)}%`;
 }
 
+function managerFormatNumber(value: unknown) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric)) return "0";
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+}
+
+function managerRatingBadgeClass(value: number) {
+  if (value >= 7.9) return "bg-sky-500";
+  if (value >= 7) return "bg-emerald-500";
+  return "bg-orange-500";
+}
+
+function managerSafeColor(value: string | null | undefined, fallback: string) {
+  const color = value?.trim();
+  if (!color || !/^#[0-9a-f]{6}$/i.test(color)) return fallback;
+  return color;
+}
+
+type ManagerPlayerEventMeta = {
+  goals: number;
+  assists: number;
+  yellow: boolean;
+  red: boolean;
+  penaltyMiss: boolean;
+  penaltySaved: boolean;
+  injured: boolean;
+  subInMinute?: number;
+  subOutMinute?: number;
+};
+
+function managerBlankEventMeta(): ManagerPlayerEventMeta {
+  return {
+    goals: 0,
+    assists: 0,
+    yellow: false,
+    red: false,
+    penaltyMiss: false,
+    penaltySaved: false,
+    injured: false,
+  };
+}
+
+function managerEnsureEventMeta(
+  map: Map<string, ManagerPlayerEventMeta>,
+  playerId: string,
+) {
+  const existing = map.get(playerId);
+  if (existing) return existing;
+  const next = managerBlankEventMeta();
+  map.set(playerId, next);
+  return next;
+}
+
+function managerBuildEventMeta(
+  events: Record<string, unknown>[],
+  substitutions: Record<string, unknown>[],
+) {
+  const map = new Map<string, ManagerPlayerEventMeta>();
+  for (const event of events) {
+    const playerId = String(event.player_registration_id ?? "");
+    if (!playerId) continue;
+    const meta = managerEnsureEventMeta(map, playerId);
+    const type = String(event.type ?? "");
+    if (type === "GOAL" || type === "PENALTY_GOAL") meta.goals += 1;
+    if (event.related_player_registration_id) {
+      managerEnsureEventMeta(
+        map,
+        String(event.related_player_registration_id),
+      ).assists += 1;
+    }
+    if (type === "YELLOW_CARD") meta.yellow = true;
+    if (type === "RED_CARD") meta.red = true;
+    if (type === "PENALTY_MISS") meta.penaltyMiss = true;
+    if (type === "PENALTY_SAVED") meta.penaltySaved = true;
+    if (type === "INJURY") meta.injured = true;
+  }
+  for (const sub of substitutions) {
+    const minute = Number(sub.minute ?? 0);
+    const outId = String(sub.player_out_registration_id ?? "");
+    const inId = String(sub.player_in_registration_id ?? "");
+    if (outId) managerEnsureEventMeta(map, outId).subOutMinute = minute;
+    if (inId) managerEnsureEventMeta(map, inId).subInMinute = minute;
+  }
+  return map;
+}
+
+function managerBestRatedPlayer(stats: MatchDetailPlayerStat[]) {
+  return (
+    [...stats].sort((a, b) => Number(b.rating) - Number(a.rating))[0]
+      ?.player_registration_id ?? null
+  );
+}
+
 function FixtureTable({
   fixtures,
   activeTeamId,
@@ -5101,19 +5306,38 @@ function MatchDetailModal({
   onClose: () => void;
   onTeamClick?: ((teamId: string) => void) | undefined;
 }) {
-  const payload = detail as {
-    lineups?: unknown[];
-    team_stats?: unknown[];
-    player_stats?: unknown[];
-    events?: unknown[];
-  } | null;
+  const [activeTab, setActiveTab] = useState<"lineup" | "stats">("lineup");
+  const [selectedStat, setSelectedStat] =
+    useState<MatchDetailPlayerStat | null>(null);
+  const payload = detail as MatchDetailPayload | null;
+  const statsByPlayer = new Map(
+    (payload?.player_stats ?? []).map((stat) => [
+      stat.player_registration_id,
+      stat,
+    ]),
+  );
+  const metaByPlayer = managerBuildEventMeta(
+    payload?.events ?? [],
+    payload?.substitutions ?? [],
+  );
+  const bestRatedPlayerId = managerBestRatedPlayer(payload?.player_stats ?? []);
+  const homeLineup =
+    payload?.lineups.find((lineup) => lineup.side === "HOME") ??
+    payload?.lineups[0] ??
+    null;
+  const awayLineup =
+    payload?.lineups.find((lineup) => lineup.side === "AWAY") ??
+    payload?.lineups[1] ??
+    null;
+  const homeTeam = fixture.home_team?.teams;
+  const awayTeam = fixture.away_team?.teams;
   return (
     <div
       className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 backdrop-blur"
       onClick={onClose}
     >
       <div
-        className="mx-auto my-6 max-h-[calc(100vh-3rem)] w-full max-w-3xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl"
+        className="mx-auto my-6 max-h-[calc(100vh-3rem)] w-full max-w-7xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4">
@@ -5133,65 +5357,615 @@ function MatchDetailModal({
             Close
           </button>
         </div>
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <div className="rounded-3xl bg-slate-50 p-4">
-            <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-              Home
-            </p>
-            <TeamLogoName
-              team={fixture.home_team?.teams}
-              teamId={fixture.home_team_registration_id}
-              onTeamClick={onTeamClick}
-            />
-          </div>
-          <div className="rounded-3xl bg-slate-50 p-4">
-            <p className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-              Away
-            </p>
-            <TeamLogoName
-              team={fixture.away_team?.teams}
-              teamId={fixture.away_team_registration_id}
-              onTeamClick={onTeamClick}
-            />
-          </div>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-slate-50 p-4">
+          <TeamLogoName
+            team={homeTeam}
+            teamId={fixture.home_team_registration_id}
+            onTeamClick={onTeamClick}
+          />
+          <span className="rounded-full bg-white px-5 py-2 text-sm font-black shadow-sm">
+            {fixture.home_score === null
+              ? "VS"
+              : `${fixture.home_score} - ${fixture.away_score}`}
+          </span>
+          <TeamLogoName
+            team={awayTeam}
+            teamId={fixture.away_team_registration_id}
+            onTeamClick={onTeamClick}
+          />
         </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-4">
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <Detail label="Status" value={fixture.status} />
           <Detail
-            label="Side"
+            label="Selected team"
             value={
               fixture.home_team_registration_id === activeTeamId
-                ? "Home"
+                ? homeTeam?.name
                 : fixture.away_team_registration_id === activeTeamId
-                  ? "Away"
+                  ? awayTeam?.name
                   : "Other"
             }
           />
-          <Detail
-            label="Score"
-            value={
-              fixture.home_score === null
-                ? "-"
-                : `${fixture.home_score} - ${fixture.away_score}`
-            }
-          />
-          <Detail label="Venue" value={fixture.venue ?? "TBA"} />
+          <Detail label="Kickoff" value={formatDate(fixture.kickoff_at)} />
         </div>
         {loading ? <LoadingState label="Loading match detail..." /> : null}
         {!loading && payload ? (
-          <div className="mt-5 grid gap-3 sm:grid-cols-4">
-            <MiniStat label="Lineups" value={payload.lineups?.length ?? 0} />
-            <MiniStat
-              label="Team Stats"
-              value={payload.team_stats?.length ?? 0}
-            />
-            <MiniStat
-              label="Player Stats"
-              value={payload.player_stats?.length ?? 0}
-            />
-            <MiniStat label="Events" value={payload.events?.length ?? 0} />
+          <div className="mt-6 space-y-6">
+            <div className="flex gap-3 border-b border-slate-200">
+              {(["lineup", "stats"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-3 text-sm font-black capitalize transition ${
+                    activeTab === tab
+                      ? "border-b-2 border-slate-950 text-slate-950"
+                      : "text-slate-500 hover:text-slate-900"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+            {activeTab === "lineup" ? (
+              <div className="grid gap-6 xl:grid-cols-2">
+                <ManagerMatchLineupPitch
+                  title={homeTeam?.name ?? "Home"}
+                  logoUrl={homeTeam?.logo_url}
+                  lineup={homeLineup}
+                  statsByPlayer={statsByPlayer}
+                  metaByPlayer={metaByPlayer}
+                  bestRatedPlayerId={bestRatedPlayerId}
+                  onPlayerStat={setSelectedStat}
+                />
+                <ManagerMatchLineupPitch
+                  title={awayTeam?.name ?? "Away"}
+                  logoUrl={awayTeam?.logo_url}
+                  lineup={awayLineup}
+                  statsByPlayer={statsByPlayer}
+                  metaByPlayer={metaByPlayer}
+                  bestRatedPlayerId={bestRatedPlayerId}
+                  onPlayerStat={setSelectedStat}
+                />
+              </div>
+            ) : payload.team_stats.length ? (
+              <ManagerMatchTeamStatsPanel
+                home={homeTeam?.name ?? "Home"}
+                away={awayTeam?.name ?? "Away"}
+                homeColor={homeTeam?.primary_color}
+                awayColor={awayTeam?.primary_color}
+                stats={payload.team_stats}
+              />
+            ) : (
+              <EmptyState label="No match stats yet." />
+            )}
           </div>
         ) : null}
+        {selectedStat ? (
+          <ManagerPlayerMatchStatModal
+            stat={selectedStat}
+            onClose={() => setSelectedStat(null)}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ManagerMatchLineupPitch({
+  title,
+  logoUrl,
+  lineup,
+  statsByPlayer,
+  metaByPlayer,
+  bestRatedPlayerId,
+  onPlayerStat,
+}: {
+  title: string;
+  logoUrl?: string | null | undefined;
+  lineup: MatchDetailLineup | null;
+  statsByPlayer: Map<string, MatchDetailPlayerStat>;
+  metaByPlayer: Map<string, ManagerPlayerEventMeta>;
+  bestRatedPlayerId: string | null;
+  onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+}) {
+  const slots = lineup?.formation_slots ?? [];
+  const players = lineup?.lineup_players ?? [];
+  const playerBySlot = new Map(
+    players
+      .filter((player) => player.is_starter && player.slot_key)
+      .map((player) => [player.slot_key as string, player]),
+  );
+  const bench = players.filter((player) => !player.is_starter);
+  return (
+    <Panel title={title}>
+      <div className="mb-4 flex items-center gap-3">
+        <Avatar name={title} src={logoUrl} small />
+        <div>
+          <h3 className="text-xl font-black">{title}</h3>
+          <p className="text-sm font-semibold text-slate-500">
+            {lineup?.formation ?? "Formation N/A"} ·{" "}
+            {lineup?.playing_style?.replaceAll("_", " ") ?? "Style N/A"}
+          </p>
+        </div>
+      </div>
+      {!lineup ? <EmptyState label="No submitted lineup." /> : null}
+      {lineup ? (
+        <>
+          <div className="relative h-[720px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
+            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
+            <div className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
+            <div className="absolute left-1/2 top-0 h-20 w-40 -translate-x-1/2 rounded-b-3xl border-x-[5px] border-b-[5px] border-white/10" />
+            <div className="absolute bottom-0 left-1/2 h-20 w-40 -translate-x-1/2 rounded-t-3xl border-x-[5px] border-t-[5px] border-white/10" />
+            <div className="absolute inset-y-0 left-[35%] w-1 bg-white/5" />
+            <div className="absolute inset-y-0 right-[35%] w-1 bg-white/5" />
+            {slots.map((slot) => {
+              const player = playerBySlot.get(slot.slotKey);
+              const registration = player?.player_season_registrations;
+              const name = registration?.players?.full_name ?? "Player";
+              const stat = player
+                ? statsByPlayer.get(player.player_registration_id)
+                : null;
+              const meta = player
+                ? metaByPlayer.get(player.player_registration_id)
+                : null;
+              return (
+                <div
+                  key={slot.slotKey}
+                  className="absolute z-10 w-[116px] -translate-x-1/2 -translate-y-1/2 text-center"
+                  style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                >
+                  {player ? (
+                    <button
+                      type="button"
+                      className="inline-flex flex-col items-center outline-none transition hover:-translate-y-0.5"
+                      onClick={() => (stat ? onPlayerStat(stat) : undefined)}
+                    >
+                      <div className="relative h-14 w-14">
+                        <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
+                          {registration?.players?.avatar_url ? (
+                            <img
+                              src={registration.players.avatar_url}
+                              alt={name}
+                              className="h-[118%] w-full rounded-full object-cover object-top"
+                            />
+                          ) : (
+                            <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
+                              {initials(name)}
+                            </span>
+                          )}
+                        </div>
+                        {stat ? (
+                          <span
+                            className={`absolute -right-1 -top-2 rounded-full px-2 py-0.5 text-[11px] font-black text-white shadow ${managerRatingBadgeClass(Number(stat.rating))}`}
+                          >
+                            {managerFormatNumber(stat.rating)}
+                            {player.player_registration_id ===
+                            bestRatedPlayerId ? (
+                              <Star
+                                size={10}
+                                className="ml-0.5 inline fill-current"
+                              />
+                            ) : null}
+                          </span>
+                        ) : null}
+                        {meta?.injured ? (
+                          <span className="absolute -right-1 bottom-1 grid h-4 w-4 place-items-center rounded-full bg-white text-[12px] font-black text-red-600 shadow">
+                            +
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 flex max-w-[8rem] items-center justify-center gap-1">
+                        {player.is_captain ? (
+                          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-black lowercase text-slate-700 shadow">
+                            c
+                          </span>
+                        ) : null}
+                        <span className="truncate text-[13px] font-black text-white drop-shadow">
+                          #
+                          {registration?.shirt_number ??
+                            player.shirt_number ??
+                            "-"}{" "}
+                          {name}
+                        </span>
+                      </div>
+                      {meta ? <ManagerLineupEventIcons meta={meta} /> : null}
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-white/70">
+                        {player.display_role ?? slot.displayRole}
+                      </p>
+                    </button>
+                  ) : (
+                    <span className="inline-block h-14 w-14 rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <h4 className="font-black">Substitutes · {bench.length}</h4>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {bench.map((player) => {
+                const registration = player.player_season_registrations;
+                const name = registration?.players?.full_name ?? "Player";
+                const stat = statsByPlayer.get(player.player_registration_id);
+                const meta = metaByPlayer.get(player.player_registration_id);
+                return (
+                  <button
+                    key={player.id}
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-xl bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:bg-purple-50"
+                    onClick={() => (stat ? onPlayerStat(stat) : undefined)}
+                  >
+                    <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-2xl bg-[var(--team-primary)] text-xs font-black text-[var(--team-primary-text)] ring-2 ring-white">
+                      {registration?.players?.avatar_url ? (
+                        <img
+                          src={registration.players.avatar_url}
+                          alt={name}
+                          className="h-full w-full object-cover object-top"
+                        />
+                      ) : (
+                        initials(name)
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        {stat ? (
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-black text-white ${managerRatingBadgeClass(Number(stat.rating))}`}
+                          >
+                            {managerFormatNumber(stat.rating)}
+                          </span>
+                        ) : null}
+                        <p className="truncate font-black">
+                          #
+                          {registration?.shirt_number ??
+                            player.shirt_number ??
+                            "-"}{" "}
+                          {name}
+                        </p>
+                      </div>
+                      <p className="text-xs font-bold text-slate-500">
+                        {registration?.football_position ??
+                          player.football_position ??
+                          player.player_natural_position ??
+                          "POS"}
+                        {meta?.subInMinute ? ` · ${meta.subInMinute}'` : ""}
+                      </p>
+                      {meta ? (
+                        <ManagerLineupEventIcons meta={meta} dark />
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      ) : null}
+    </Panel>
+  );
+}
+
+function ManagerLineupEventIcons({
+  meta,
+  dark = false,
+}: {
+  meta: ManagerPlayerEventMeta;
+  dark?: boolean;
+}) {
+  return (
+    <div
+      className={`mt-0.5 flex min-h-4 items-center justify-center gap-1 text-[10px] font-black ${dark ? "text-slate-700" : "text-white"}`}
+    >
+      {meta.subOutMinute ? <span>{meta.subOutMinute}' ↩</span> : null}
+      {meta.subInMinute ? <span>{meta.subInMinute}' ↪</span> : null}
+      {meta.goals ? (
+        <span title="Goal">⚽{meta.goals > 1 ? meta.goals : ""}</span>
+      ) : null}
+      {meta.assists ? (
+        <span title="Assist">🥾{meta.assists > 1 ? meta.assists : ""}</span>
+      ) : null}
+      {meta.penaltyMiss || meta.penaltySaved ? (
+        <span title="Penalty missed or saved">⊗</span>
+      ) : null}
+      {meta.yellow ? (
+        <span className="h-3 w-2 rounded-[2px] bg-yellow-300" />
+      ) : null}
+      {meta.red ? <span className="h-3 w-2 rounded-[2px] bg-red-500" /> : null}
+    </div>
+  );
+}
+
+function ManagerMatchTeamStatsPanel({
+  home,
+  away,
+  homeColor,
+  awayColor,
+  stats,
+}: {
+  home: string;
+  away: string;
+  homeColor?: string | null | undefined;
+  awayColor?: string | null | undefined;
+  stats: MatchDetailTeamStat[];
+}) {
+  const [first, second] = stats;
+  if (!first || !second) return null;
+  const leftColor = managerSafeColor(homeColor, "#C4003A");
+  const rightColor = managerSafeColor(awayColor, "#0F172A");
+  const rows: Array<{
+    title: string;
+    items: Array<
+      [
+        string,
+        keyof MatchDetailTeamStat,
+        "number" | "passes" | "decimal" | "rating",
+      ]
+    >;
+  }> = [
+    {
+      title: "Top stats",
+      items: [
+        ["Expected goals (xG)", "expected_goals", "decimal"],
+        ["Total shots", "shots", "number"],
+        ["Shots on target", "shots_on_target", "number"],
+        ["Hit woodwork", "hit_woodwork", "number"],
+        ["Big chances", "big_chances", "number"],
+        ["Big chances missed", "big_chances_missed", "number"],
+        ["Accurate passes", "accurate_passes", "passes"],
+        ["Yellow cards", "yellow_cards", "number"],
+        ["Corners", "corners", "number"],
+      ],
+    },
+    {
+      title: "Shots",
+      items: [
+        ["Total shots", "shots", "number"],
+        ["Shots off target", "shots_off_target", "number"],
+        ["Shots on target", "shots_on_target", "number"],
+        ["Hit woodwork", "hit_woodwork", "number"],
+      ],
+    },
+    {
+      title: "Defense",
+      items: [
+        ["Tackles", "tackles", "number"],
+        ["Interceptions", "interceptions", "number"],
+        ["Blocks", "blocks", "number"],
+        ["Clearances", "clearances", "number"],
+        ["Keeper saves", "keeper_saves", "number"],
+      ],
+    },
+    {
+      title: "General",
+      items: [
+        ["Team rating", "rating", "rating"],
+        ["Offsides", "offsides", "number"],
+        ["Fouls", "fouls", "number"],
+        ["Red cards", "red_cards", "number"],
+      ],
+    },
+  ];
+  const firstPossession = Math.max(
+    0,
+    Math.min(100, Number(first.possession ?? 0)),
+  );
+  const secondPossession = Math.max(
+    0,
+    Math.min(100, Number(second.possession ?? 0)),
+  );
+  return (
+    <div className="overflow-hidden rounded-3xl bg-[#1f1f1f] text-white shadow-2xl">
+      <div className="grid gap-3 border-b border-white/10 px-6 py-5 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+        <p className="font-black" style={{ color: leftColor }}>
+          {home}
+        </p>
+        <h3 className="text-center text-lg font-black">Match stats</h3>
+        <p className="text-right font-black" style={{ color: rightColor }}>
+          {away}
+        </p>
+      </div>
+      <div className="px-6 py-5">
+        <p className="text-center text-sm font-semibold">Ball possession</p>
+        <div className="mt-5 flex h-10 overflow-hidden rounded-full bg-white text-sm font-black">
+          <div
+            className="grid place-items-center text-white"
+            style={{
+              width: `${firstPossession}%`,
+              minWidth: firstPossession ? 56 : 0,
+              background: leftColor,
+            }}
+          >
+            {firstPossession}%
+          </div>
+          <div
+            className="grid place-items-center"
+            style={{
+              width: `${secondPossession}%`,
+              minWidth: secondPossession ? 56 : 0,
+              background: rightColor === "#0F172A" ? "#FFFFFF" : rightColor,
+              color: rightColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+            }}
+          >
+            {secondPossession}%
+          </div>
+        </div>
+      </div>
+      {rows.map((section) => (
+        <div key={section.title} className="border-t border-white/10 px-6 py-6">
+          <h4 className="mb-5 text-center text-base font-black">
+            {section.title}
+          </h4>
+          <div className="space-y-5">
+            {section.items.map(([label, field, format]) => (
+              <ManagerStatComparisonRow
+                key={`${section.title}-${label}`}
+                label={label}
+                homeValue={managerFormatTeamStat(first, field, format)}
+                awayValue={managerFormatTeamStat(second, field, format)}
+                homeWins={
+                  Number(first[field] ?? 0) > Number(second[field] ?? 0)
+                }
+                awayWins={
+                  Number(second[field] ?? 0) > Number(first[field] ?? 0)
+                }
+                homeColor={leftColor}
+                awayColor={rightColor}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ManagerStatComparisonRow({
+  label,
+  homeValue,
+  awayValue,
+  homeWins,
+  awayWins,
+  homeColor,
+  awayColor,
+}: {
+  label: string;
+  homeValue: string;
+  awayValue: string;
+  homeWins: boolean;
+  awayWins: boolean;
+  homeColor: string;
+  awayColor: string;
+}) {
+  return (
+    <div className="grid grid-cols-[86px_1fr_86px] items-center gap-3 text-sm">
+      <div className="justify-self-start">
+        <span
+          className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black text-white"
+          style={{ background: homeWins ? homeColor : "transparent" }}
+        >
+          {homeValue}
+        </span>
+      </div>
+      <p className="text-center font-medium text-white/90">{label}</p>
+      <div className="justify-self-end">
+        <span
+          className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black"
+          style={{
+            background: awayWins
+              ? awayColor === "#0F172A"
+                ? "#FFFFFF"
+                : awayColor
+              : "transparent",
+            color: awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+          }}
+        >
+          {awayValue}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function managerFormatTeamStat(
+  stat: MatchDetailTeamStat,
+  field: keyof MatchDetailTeamStat,
+  format: "number" | "passes" | "decimal" | "rating",
+) {
+  if (format === "passes")
+    return `${managerFormatNumber(stat.accurate_passes)}/${managerFormatNumber(stat.passes)} (${percentage(stat.accurate_passes, stat.passes)})`;
+  if (format === "decimal")
+    return Number(stat[field] ?? 0)
+      .toFixed(2)
+      .replace(/\.00$/, "");
+  return managerFormatNumber(stat[field]);
+}
+
+function ManagerPlayerMatchStatModal({
+  stat,
+  onClose,
+}: {
+  stat: MatchDetailPlayerStat;
+  onClose: () => void;
+}) {
+  const player = stat.player_season_registrations;
+  const name = player?.players?.full_name ?? "Player";
+  const isGoalkeeper =
+    (stat.position_played ?? player?.football_position) === "GK";
+  const items: Array<[string, unknown]> = isGoalkeeper
+    ? [
+        ["Minutes Played", stat.minutes],
+        ["Saves", stat.saves],
+        ["Goals Conceded", stat.goals_conceded],
+        ["Accurate Passes", stat.accurate_passes],
+        ["Accurate Long Balls", stat.accurate_long_balls],
+        ["Diving Saves", stat.diving_saves],
+        ["Saves Inside Box", stat.saves_inside_box],
+        ["Clearances", stat.clearances],
+        ["Yellow Cards", stat.yellow_cards],
+        ["Red Cards", stat.red_cards],
+        ["Rating", stat.rating],
+      ]
+    : [
+        ["Minutes Played", stat.minutes],
+        ["Position Played", stat.position_played],
+        ["Goals", stat.goals],
+        ["Assists", stat.assists],
+        ["Shots", stat.shots],
+        ["Shots on Target", stat.shots_on_target],
+        ["Shot Accuracy", percentage(stat.shots_on_target, stat.shots)],
+        ["Chances Created", stat.chances_created],
+        ["Big Chances Created", stat.big_chances_created],
+        ["Big Chances Missed", stat.big_chances_missed],
+        [
+          "Accurate Passes",
+          `${managerFormatNumber(stat.accurate_passes)}/${managerFormatNumber(stat.passes)} (${percentage(stat.accurate_passes, stat.passes)})`,
+        ],
+        [
+          "Successful Dribbles",
+          `${managerFormatNumber(stat.successful_dribbles)}/${managerFormatNumber(stat.dribbles_attempted)} (${percentage(stat.successful_dribbles, stat.dribbles_attempted)})`,
+        ],
+        ["Dribbled Past", stat.dribbled_past],
+        ["Dispossessed", stat.dispossessed],
+        ["Tackles", stat.tackles],
+        ["Interceptions", stat.interceptions],
+        ["Clearances", stat.clearances],
+        ["Blocks", stat.blocks],
+        ["Fouls Committed", stat.fouls_committed],
+        ["Yellow Cards", stat.yellow_cards],
+        ["Red Cards", stat.red_cards],
+        ["Rating", stat.rating],
+      ];
+  return (
+    <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <Avatar name={name} src={player?.players?.avatar_url} />
+            <div>
+              <h3 className="text-2xl font-black">{name}</h3>
+              <p className="font-semibold text-slate-500">
+                #{player?.shirt_number ?? "-"} ·{" "}
+                {stat.position_played ??
+                  player?.football_position ??
+                  player?.position ??
+                  "POS"}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+          >
+            Close
+          </button>
+        </div>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map(([label, value]) => (
+            <Detail key={label} label={label} value={statValue(value)} />
+          ))}
+        </div>
       </div>
     </div>
   );

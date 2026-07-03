@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "db:update-season-flow": "node scripts/apply-season-flow-migration.mjs",
+    "db:fix-runtime-schema": "node scripts/apply-runtime-schema-hotfix.mjs",
     "db:rebalance-abilities": "tsx scripts/rebalance-existing-player-abilities.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

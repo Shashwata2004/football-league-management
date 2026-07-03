@@ -96,8 +96,15 @@ create type public.id_type as enum ('NID', 'BIRTH_ID');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
-  create type public.match_event_type as enum ('GOAL', 'ASSIST', 'YELLOW_CARD', 'RED_CARD', 'SUBSTITUTION');
+  create type public.match_event_type as enum ('GOAL', 'ASSIST', 'YELLOW_CARD', 'RED_CARD', 'SUBSTITUTION', 'PENALTY_GOAL', 'PENALTY_SAVED', 'PENALTY_MISS', 'INJURY', 'OWN_GOAL', 'HIT_WOODWORK');
 exception when duplicate_object then null; end $$;
+
+alter type public.match_event_type add value if not exists 'PENALTY_GOAL';
+alter type public.match_event_type add value if not exists 'PENALTY_SAVED';
+alter type public.match_event_type add value if not exists 'PENALTY_MISS';
+alter type public.match_event_type add value if not exists 'INJURY';
+alter type public.match_event_type add value if not exists 'OWN_GOAL';
+alter type public.match_event_type add value if not exists 'HIT_WOODWORK';
 
 create schema if not exists app_private;
 
@@ -191,6 +198,8 @@ create table if not exists public.seasons (
   best_third_place_teams integer,
   total_knockout_teams integer,
   champion_team_registration_id uuid,
+  active_matchday_number integer,
+  active_matchday_started_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint valid_total_teams check (total_teams is null or total_teams >= 2),
@@ -233,6 +242,8 @@ alter table public.seasons add column if not exists registration_deadline date;
 alter table public.seasons add column if not exists phase public.season_phase not null default 'REGISTRATION_OPEN';
 alter table public.seasons add column if not exists round_format public.season_format not null default 'SINGLE_ROUND_ROBIN';
 alter table public.seasons add column if not exists fixture_status text not null default 'NOT_GENERATED';
+alter table public.seasons add column if not exists active_matchday_number integer;
+alter table public.seasons add column if not exists active_matchday_started_at timestamptz;
 alter table public.seasons add column if not exists total_teams integer;
 alter table public.seasons add column if not exists min_players_per_team integer;
 alter table public.seasons add column if not exists max_players_per_team integer;
@@ -609,13 +620,21 @@ create table if not exists public.team_match_stats (
   team_registration_id uuid not null references public.team_registrations(id),
   rating numeric(3,1) check (rating is null or rating between 4.8 and 9.8),
   possession integer not null check (possession between 0 and 100),
+  expected_goals numeric(4,2) not null default 0 check (expected_goals >= 0),
   shots integer not null check (shots >= 0),
+  shots_off_target integer not null default 0 check (shots_off_target >= 0),
   shots_on_target integer not null check (shots_on_target between 0 and shots),
+  hit_woodwork integer not null default 0 check (hit_woodwork >= 0),
   big_chances integer not null check (big_chances between 0 and shots),
   big_chances_missed integer not null check (big_chances_missed between 0 and big_chances),
   passes integer not null check (passes >= 0),
   accurate_passes integer not null check (accurate_passes between 0 and passes),
   offsides integer not null default 0 check (offsides >= 0),
+  tackles integer not null default 0 check (tackles >= 0),
+  interceptions integer not null default 0 check (interceptions >= 0),
+  blocks integer not null default 0 check (blocks >= 0),
+  clearances integer not null default 0 check (clearances >= 0),
+  keeper_saves integer not null default 0 check (keeper_saves >= 0),
   fouls integer not null check (fouls >= 0),
   yellow_cards integer not null check (yellow_cards >= 0),
   red_cards integer not null check (red_cards between 0 and 3),
@@ -623,6 +642,15 @@ create table if not exists public.team_match_stats (
   created_at timestamptz not null default now(),
   unique (fixture_id, team_registration_id)
 );
+
+alter table public.team_match_stats add column if not exists expected_goals numeric(4,2) not null default 0 check (expected_goals >= 0);
+alter table public.team_match_stats add column if not exists shots_off_target integer not null default 0 check (shots_off_target >= 0);
+alter table public.team_match_stats add column if not exists hit_woodwork integer not null default 0 check (hit_woodwork >= 0);
+alter table public.team_match_stats add column if not exists tackles integer not null default 0 check (tackles >= 0);
+alter table public.team_match_stats add column if not exists interceptions integer not null default 0 check (interceptions >= 0);
+alter table public.team_match_stats add column if not exists blocks integer not null default 0 check (blocks >= 0);
+alter table public.team_match_stats add column if not exists clearances integer not null default 0 check (clearances >= 0);
+alter table public.team_match_stats add column if not exists keeper_saves integer not null default 0 check (keeper_saves >= 0);
 
 create table if not exists public.player_match_stats (
   id uuid primary key default gen_random_uuid(),
@@ -646,18 +674,28 @@ create table if not exists public.player_match_stats (
   saves integer not null check (saves >= 0),
   dribbles_attempted integer not null check (dribbles_attempted >= 0),
   successful_dribbles integer not null check (successful_dribbles between 0 and dribbles_attempted),
+  dribbled_past integer not null default 0 check (dribbled_past >= 0),
   dispossessed integer not null default 0 check (dispossessed >= 0),
   position_played public.football_position,
   goals_conceded integer check (goals_conceded is null or goals_conceded >= 0),
   accurate_long_balls integer check (accurate_long_balls is null or accurate_long_balls >= 0),
   diving_saves integer check (diving_saves is null or diving_saves between 0 and saves),
   saves_inside_box integer check (saves_inside_box is null or saves_inside_box between 0 and saves),
+  clean_sheet boolean not null default false,
+  penalty_scored integer not null default 0 check (penalty_scored >= 0),
+  penalty_missed integer not null default 0 check (penalty_missed >= 0),
+  penalty_saved_for_gk integer not null default 0 check (penalty_saved_for_gk >= 0),
   yellow_cards integer not null check (yellow_cards between 0 and 2),
   red_cards integer not null check (red_cards between 0 and 1),
-  rating numeric(3,1) not null check (rating between 5.5 and 9.5),
+  rating numeric(3,1) not null check (rating between 4.5 and 10),
   created_at timestamptz not null default now(),
   unique (fixture_id, player_registration_id)
 );
+
+alter table public.player_match_stats add column if not exists clean_sheet boolean not null default false;
+alter table public.player_match_stats add column if not exists penalty_scored integer not null default 0 check (penalty_scored >= 0);
+alter table public.player_match_stats add column if not exists penalty_missed integer not null default 0 check (penalty_missed >= 0);
+alter table public.player_match_stats add column if not exists penalty_saved_for_gk integer not null default 0 check (penalty_saved_for_gk >= 0);
 
 create table if not exists public.match_events (
   id uuid primary key default gen_random_uuid(),
@@ -677,9 +715,35 @@ create table if not exists public.match_substitutions (
   minute integer not null check (minute between 1 and 130),
   player_out_registration_id uuid not null references public.player_season_registrations(id),
   player_in_registration_id uuid not null references public.player_season_registrations(id),
-  reason text not null check (reason in ('LOW_RATING', 'FATIGUE', 'TACTICAL_CHANGE', 'YELLOW_CARD_RISK', 'INJURY_PLACEHOLDER')),
+  reason text not null check (reason in ('LOW_RATING', 'FATIGUE', 'TACTICAL_CHANGE', 'YELLOW_CARD_RISK', 'INJURY_PLACEHOLDER', 'INJURY')),
   created_at timestamptz not null default now(),
   constraint match_substitutions_distinct_players check (player_out_registration_id <> player_in_registration_id)
+);
+
+create table if not exists public.match_injuries (
+  id uuid primary key default gen_random_uuid(),
+  fixture_id uuid not null references public.fixtures(id) on delete cascade,
+  player_registration_id uuid not null references public.player_season_registrations(id) on delete cascade,
+  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  injury_type text not null default 'MINOR_KNOCK',
+  severity text not null default 'MINOR',
+  minute integer not null check (minute between 1 and 130),
+  forced_substitution boolean not null default false,
+  expected_matches_out integer not null default 0 check (expected_matches_out >= 0),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.player_suspensions (
+  id uuid primary key default gen_random_uuid(),
+  player_registration_id uuid not null references public.player_season_registrations(id) on delete cascade,
+  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  season_id uuid not null references public.seasons(id) on delete cascade,
+  reason text not null,
+  source_fixture_id uuid references public.fixtures(id) on delete set null,
+  matches_remaining integer not null default 1 check (matches_remaining >= 0),
+  status text not null default 'ACTIVE' check (status in ('ACTIVE', 'SERVED', 'CANCELLED')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists public.standings (
@@ -717,6 +781,7 @@ create table if not exists public.player_season_stats (
   accurate_passes integer not null default 0,
   dribbles_attempted integer not null default 0,
   successful_dribbles integer not null default 0,
+  dribbled_past integer not null default 0,
   dispossessed integer not null default 0,
   tackles integer not null default 0,
   interceptions integer not null default 0,
@@ -740,6 +805,7 @@ alter table public.player_season_stats add column if not exists total_passes int
 alter table public.player_season_stats add column if not exists accurate_passes integer not null default 0;
 alter table public.player_season_stats add column if not exists dribbles_attempted integer not null default 0;
 alter table public.player_season_stats add column if not exists successful_dribbles integer not null default 0;
+alter table public.player_season_stats add column if not exists dribbled_past integer not null default 0;
 alter table public.player_season_stats add column if not exists dispossessed integer not null default 0;
 alter table public.player_season_stats add column if not exists tackles integer not null default 0;
 alter table public.player_season_stats add column if not exists interceptions integer not null default 0;
@@ -766,6 +832,7 @@ alter table public.player_season_stats
     and dribbles_attempted >= 0
     and successful_dribbles >= 0
     and successful_dribbles <= dribbles_attempted
+    and dribbled_past >= 0
     and dispossessed >= 0
     and tackles >= 0
     and interceptions >= 0

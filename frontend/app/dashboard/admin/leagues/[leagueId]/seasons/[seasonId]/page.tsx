@@ -225,6 +225,8 @@ interface ReadyMatchRow {
   away: string;
   homeLogoUrl?: string | null;
   awayLogoUrl?: string | null;
+  homePrimaryColor?: string | null;
+  awayPrimaryColor?: string | null;
   stage: string;
   kickoff: string;
   status: string;
@@ -587,13 +589,21 @@ type MatchDetailTeamStat = {
   team_registration_id: string;
   rating?: number | string | null;
   possession: number;
+  expected_goals?: number | string | null;
   shots: number;
+  shots_off_target?: number | null;
   shots_on_target: number;
+  hit_woodwork?: number | null;
   big_chances: number;
   big_chances_missed: number;
   passes: number;
   accurate_passes: number;
   offsides?: number | null;
+  tackles?: number | null;
+  interceptions?: number | null;
+  blocks?: number | null;
+  clearances?: number | null;
+  keeper_saves?: number | null;
   fouls: number;
   yellow_cards: number;
   red_cards: number;
@@ -626,6 +636,7 @@ type MatchDetailPlayerStat = {
   saves_inside_box?: number | null;
   dribbles_attempted: number;
   successful_dribbles: number;
+  dribbled_past?: number | null;
   dispossessed?: number | null;
   yellow_cards: number;
   red_cards: number;
@@ -724,7 +735,51 @@ function calculateAge(dateOfBirth?: string | null) {
 
 function statusLabel(status?: string | null) {
   if (!status) return "Pending";
-  return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+  return status
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function normalizedStatus(status?: string | null) {
+  return String(status ?? "")
+    .trim()
+    .replace(/[\s-]+/g, "_")
+    .toUpperCase();
+}
+
+function isSimulatedOrDoneStatus(status?: string | null) {
+  const statuses: string[] = [
+    FixtureStatus.SIMULATED,
+    FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION,
+    FixtureStatus.COMPLETED,
+    "RESULT_CONFIRMED",
+    "CONFIRMED",
+  ];
+  return statuses.includes(normalizedStatus(status));
+}
+
+function isSimulatableStatus(status?: string | null) {
+  const statuses: string[] = [
+    FixtureStatus.LINEUPS_CONFIRMED,
+    FixtureStatus.READY_TO_SIMULATE,
+    FixtureStatus.SIMULATED,
+    FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION,
+  ];
+  return statuses.includes(normalizedStatus(status));
+}
+
+function compactStatusLabel(status?: string | null) {
+  const normalized = normalizedStatus(status);
+  if (normalized === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION)
+    return "Pending Confirmation";
+  if (normalized === FixtureStatus.SIMULATED) return "Simulated";
+  if (normalized === FixtureStatus.READY_TO_SIMULATE) return "Ready";
+  if (normalized === FixtureStatus.LINEUPS_CONFIRMED) return "Lineups Confirmed";
+  if (normalized === FixtureStatus.LINEUPS_SUBMITTED) return "Submitted";
+  if (normalized === FixtureStatus.LINEUP_PENDING) return "Lineup Pending";
+  return statusLabel(status);
 }
 
 function abilityLabel(value?: string | null): AdminPlayer["abilityRating"] {
@@ -1079,6 +1134,7 @@ function buildAdminSeasonData(input: {
       (fixture) =>
         fixture.status === FixtureStatus.LINEUPS_CONFIRMED ||
         fixture.status === FixtureStatus.READY_TO_SIMULATE ||
+        fixture.status === FixtureStatus.SIMULATED ||
         fixture.status === FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION,
     )
     .map((fixture) => ({
@@ -1098,6 +1154,14 @@ function buildAdminSeasonData(input: {
       awayLogoUrl: fixture.away_team_registration_id
         ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
             ?.logo_url ?? null)
+        : null,
+      homePrimaryColor: fixture.home_team_registration_id
+        ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+            ?.primary_color ?? null)
+        : null,
+      awayPrimaryColor: fixture.away_team_registration_id
+        ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+            ?.primary_color ?? null)
         : null,
       stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
       kickoff: fixture.kickoff_at
@@ -1207,19 +1271,168 @@ function percent(part: unknown, total: unknown) {
 }
 
 function ratingTone(value: number) {
-  if (value >= 7.9) return "bg-emerald-500";
-  if (value >= 7) return "bg-lime-500";
+  if (value >= 7.9) return "bg-sky-500";
+  if (value >= 7) return "bg-emerald-500";
   return "bg-orange-500";
+}
+
+function ratingBadgeClass(value: number) {
+  return ratingTone(value);
+}
+
+type PlayerEventMeta = {
+  goals: number;
+  assists: number;
+  yellow: boolean;
+  red: boolean;
+  penaltyMiss: boolean;
+  penaltySaved: boolean;
+  injured: boolean;
+  subInMinute?: number;
+  subOutMinute?: number;
+};
+
+function blankPlayerEventMeta(): PlayerEventMeta {
+  return {
+    goals: 0,
+    assists: 0,
+    yellow: false,
+    red: false,
+    penaltyMiss: false,
+    penaltySaved: false,
+    injured: false,
+  };
+}
+
+function ensurePlayerEventMeta(
+  map: Map<string, PlayerEventMeta>,
+  playerId: string,
+) {
+  const existing = map.get(playerId);
+  if (existing) return existing;
+  const next = blankPlayerEventMeta();
+  map.set(playerId, next);
+  return next;
+}
+
+function buildPlayerEventMeta(
+  events: Record<string, unknown>[],
+  substitutions: Record<string, unknown>[],
+) {
+  const map = new Map<string, PlayerEventMeta>();
+  for (const event of events) {
+    const playerId = String(event.player_registration_id ?? "");
+    if (!playerId) continue;
+    const meta = ensurePlayerEventMeta(map, playerId);
+    const type = String(event.type ?? "");
+    if (type === "GOAL" || type === "PENALTY_GOAL") meta.goals += 1;
+    if (event.related_player_registration_id) {
+      ensurePlayerEventMeta(
+        map,
+        String(event.related_player_registration_id),
+      ).assists += 1;
+    }
+    if (type === "YELLOW_CARD") meta.yellow = true;
+    if (type === "RED_CARD") meta.red = true;
+    if (type === "PENALTY_MISS") meta.penaltyMiss = true;
+    if (type === "PENALTY_SAVED") meta.penaltySaved = true;
+    if (type === "INJURY") meta.injured = true;
+  }
+  for (const sub of substitutions) {
+    const minute = Number(sub.minute ?? 0);
+    const outId = String(sub.player_out_registration_id ?? "");
+    const inId = String(sub.player_in_registration_id ?? "");
+    if (outId) ensurePlayerEventMeta(map, outId).subOutMinute = minute;
+    if (inId) ensurePlayerEventMeta(map, inId).subInMinute = minute;
+  }
+  return map;
+}
+
+function bestRatedPlayer(stats: MatchDetailPlayerStat[]) {
+  return (
+    [...stats].sort((a, b) => Number(b.rating) - Number(a.rating))[0]
+      ?.player_registration_id ?? null
+  );
+}
+
+function LineupEventIcons({
+  meta,
+  dark = false,
+}: {
+  meta: PlayerEventMeta;
+  dark?: boolean;
+}) {
+  const textClass = dark ? "text-slate-700" : "text-white";
+  const badgeBase =
+    "inline-grid h-4 min-w-4 place-items-center rounded-full px-1 text-[9px] font-black shadow";
+  return (
+    <div
+      className={`mt-0.5 flex min-h-4 items-center justify-center gap-1 text-[10px] font-black ${textClass}`}
+    >
+      {meta.subOutMinute ? (
+        <span className="inline-flex items-center gap-0.5 text-[10px] font-black">
+          {meta.subOutMinute}'
+          <span className={`${badgeBase} bg-red-500 text-white`}>↩</span>
+        </span>
+      ) : null}
+      {meta.subInMinute ? (
+        <span className="inline-flex items-center gap-0.5 text-[10px] font-black">
+          {meta.subInMinute}'
+          <span className={`${badgeBase} bg-emerald-500 text-white`}>↪</span>
+        </span>
+      ) : null}
+      {meta.goals ? (
+        <span
+          className={`${badgeBase} bg-white text-slate-950`}
+          title="Goal"
+        >
+          ⚽{meta.goals > 1 ? meta.goals : ""}
+        </span>
+      ) : null}
+      {meta.assists ? (
+        <span
+          className={`${badgeBase} bg-slate-100 text-slate-700`}
+          title="Assist"
+        >
+          ◢{meta.assists > 1 ? meta.assists : ""}
+        </span>
+      ) : null}
+      {meta.penaltyMiss || meta.penaltySaved ? (
+        <span
+          className={`${badgeBase} bg-white text-slate-950`}
+          title="Penalty missed or saved"
+        >
+          ⊗
+        </span>
+      ) : null}
+      {meta.yellow ? (
+        <span
+          className="h-4 w-3 rounded-[3px] border border-white/70 bg-yellow-300 shadow"
+          title="Yellow card"
+        />
+      ) : null}
+      {meta.red ? (
+        <span
+          className="h-4 w-3 rounded-[3px] border border-white/70 bg-red-500 shadow"
+          title="Red card"
+        />
+      ) : null}
+    </div>
+  );
 }
 
 function formatTeamStat(
   stat: MatchDetailTeamStat,
   field: keyof MatchDetailTeamStat,
-  format: "number" | "percent" | "passes" | "rating",
+  format: "number" | "percent" | "passes" | "rating" | "decimal",
 ) {
   if (format === "percent") return `${formatNumber(stat[field])}%`;
   if (format === "passes")
     return `${formatNumber(stat.accurate_passes)}/${formatNumber(stat.passes)} (${percent(stat.accurate_passes, stat.passes)})`;
+  if (format === "decimal") {
+    const value = Number(stat[field] ?? 0);
+    return value.toFixed(2).replace(/\.00$/, "");
+  }
   if (format === "rating") return formatNumber(stat[field]);
   return formatNumber(stat[field]);
 }
@@ -1432,6 +1645,13 @@ export default function AdminLeagueSeasonDashboard() {
     await api("/admin/matches/simulate", {
       method: "POST",
       body: JSON.stringify({ fixture_id: fixtureId }),
+    });
+    await loadDashboardData();
+  }
+
+  async function confirmMatchResult(fixtureId: string) {
+    await api(`/admin/matches/${fixtureId}/final-confirmation`, {
+      method: "POST",
     });
     await loadDashboardData();
   }
@@ -1874,9 +2094,9 @@ export default function AdminLeagueSeasonDashboard() {
             <MatchesReadyView
               matches={adminData.readyMatches}
               onSimulate={simulateReadyMatch}
+              onConfirm={confirmMatchResult}
               onJumpToMatchday={jumpToMatchday}
               onLoadMatchday={loadCurrentMatchday}
-              onLineupPlayerClick={openLineupPlayer}
             />
           ) : null}
           {activeTab === "standings" && !isGroupKnockout ? (
@@ -4949,6 +5169,9 @@ function AdminLineupPitch({
   submittingId,
   onPlayerClick,
   showActions = true,
+  statsByPlayer,
+  eventMetaByPlayer,
+  bestRatedPlayerId,
 }: {
   title: string;
   logoUrl?: string | null;
@@ -4960,6 +5183,9 @@ function AdminLineupPitch({
   submittingId: string | null;
   onPlayerClick?: (player: MatchDetailLineupPlayer) => void;
   showActions?: boolean;
+  statsByPlayer?: Map<string, MatchDetailPlayerStat>;
+  eventMetaByPlayer?: Map<string, PlayerEventMeta>;
+  bestRatedPlayerId?: string | null;
 }) {
   const players = lineup?.lineup_players ?? [];
   const slots = lineup?.formation_slots ?? [];
@@ -5005,6 +5231,12 @@ function AdminLineupPitch({
               const player = playerBySlot.get(slot.slotKey);
               const registration = player?.player_season_registrations;
               const name = registration?.players?.full_name ?? "Player";
+              const stat = player
+                ? statsByPlayer?.get(player.player_registration_id)
+                : null;
+              const meta = player
+                ? eventMetaByPlayer?.get(player.player_registration_id)
+                : null;
               return (
                 <div
                   key={slot.slotKey}
@@ -5017,18 +5249,39 @@ function AdminLineupPitch({
                       className="inline-flex flex-col items-center outline-none transition hover:-translate-y-0.5"
                       onClick={() => onPlayerClick?.(player)}
                     >
-                      <div className="relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
-                        {registration?.players?.avatar_url ? (
-                          <img
-                            src={registration.players.avatar_url}
-                            alt={name}
-                            className="h-[118%] w-full rounded-full object-cover object-top"
-                          />
-                        ) : (
-                          <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
-                            {initials(name)}
+                      <div className="relative h-14 w-14 shrink-0">
+                        <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
+                          {registration?.players?.avatar_url ? (
+                            <img
+                              src={registration.players.avatar_url}
+                              alt={name}
+                              className="h-[118%] w-full rounded-full object-cover object-top"
+                            />
+                          ) : (
+                            <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
+                              {initials(name)}
+                            </span>
+                          )}
+                        </div>
+                        {stat ? (
+                          <span
+                            className={`absolute -right-1 -top-2 rounded-full px-2 py-0.5 text-[11px] font-black text-white shadow ${ratingBadgeClass(Number(stat.rating))}`}
+                          >
+                            {formatNumber(stat.rating)}
+                            {player.player_registration_id ===
+                            bestRatedPlayerId ? (
+                              <Star
+                                size={10}
+                                className="ml-0.5 inline fill-current"
+                              />
+                            ) : null}
                           </span>
-                        )}
+                        ) : null}
+                        {meta?.injured ? (
+                          <span className="absolute -right-1 bottom-1 grid h-4 w-4 place-items-center rounded-full bg-white text-[12px] font-black text-red-600 shadow">
+                            +
+                          </span>
+                        ) : null}
                       </div>
                       <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
                         {player.is_captain ? (
@@ -5044,6 +5297,7 @@ function AdminLineupPitch({
                           {name}
                         </span>
                       </div>
+                      {meta ? <LineupEventIcons meta={meta} /> : null}
                       <p className="text-[10px] font-bold uppercase tracking-wide text-white/70">
                         {player.display_role ?? slot.displayRole}
                       </p>
@@ -5061,6 +5315,10 @@ function AdminLineupPitch({
               {bench.map((player) => {
                 const registration = player.player_season_registrations;
                 const name = registration?.players?.full_name ?? "Player";
+                const stat = statsByPlayer?.get(player.player_registration_id);
+                const meta = eventMetaByPlayer?.get(
+                  player.player_registration_id,
+                );
                 return (
                   <button
                     key={player.id}
@@ -5080,19 +5338,30 @@ function AdminLineupPitch({
                       )}
                     </div>
                     <div className="min-w-0">
-                      <p className="truncate font-black">
-                        #
-                        {registration?.shirt_number ??
-                          player.shirt_number ??
-                          "-"}{" "}
-                        {name}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        {stat ? (
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-black text-white ${ratingBadgeClass(Number(stat.rating))}`}
+                          >
+                            {formatNumber(stat.rating)}
+                          </span>
+                        ) : null}
+                        <p className="truncate font-black">
+                          #
+                          {registration?.shirt_number ??
+                            player.shirt_number ??
+                            "-"}{" "}
+                          {name}
+                        </p>
+                      </div>
                       <p className="text-xs font-bold text-slate-500">
                         {registration?.football_position ??
                           player.football_position ??
                           player.player_natural_position ??
                           "POS"}
+                        {meta?.subInMinute ? ` · ${meta.subInMinute}'` : ""}
                       </p>
+                      {meta ? <LineupEventIcons meta={meta} dark /> : null}
                     </div>
                   </button>
                 );
@@ -5128,18 +5397,18 @@ function AdminLineupPitch({
 function MatchesReadyView({
   matches,
   onSimulate,
+  onConfirm,
   onJumpToMatchday,
   onLoadMatchday,
-  onLineupPlayerClick,
 }: {
   matches: ReadyMatchRow[];
   onSimulate: (fixtureId: string) => Promise<void>;
+  onConfirm: (fixtureId: string) => Promise<void>;
   onJumpToMatchday: () => Promise<{
     updated_count: number;
     matches?: ReadyMatchRow[];
   }>;
   onLoadMatchday: () => Promise<{ matches?: ReadyMatchRow[] }>;
-  onLineupPlayerClick: (player: MatchDetailLineupPlayer) => void;
 }) {
   const [selectedMatch, setSelectedMatch] = useState<ReadyMatchRow | null>(
     null,
@@ -5153,6 +5422,12 @@ function MatchesReadyView({
   const [jumpMatches, setJumpMatches] = useState<ReadyMatchRow[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const visibleMatches = jumpMatches.length ? jumpMatches : matches;
+  const hasUnsimulatedVisibleMatch = visibleMatches.some(
+    (match) => !isSimulatedOrDoneStatus(match.status),
+  );
+  const jumpLocked = visibleMatches.length > 0 && hasUnsimulatedVisibleMatch;
 
   useEffect(() => {
     let cancelled = false;
@@ -5209,6 +5484,56 @@ function MatchesReadyView({
     }
   }
 
+  async function confirmSelectedMatch() {
+    if (!selectedMatch) return;
+    setConfirming(true);
+    setError("");
+    try {
+      await onConfirm(selectedMatch.id);
+      const data = await api<MatchDetailResponse>(
+        `/admin/matches/${selectedMatch.id}/detail`,
+      );
+      setDetail(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not confirm match");
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  if (selectedMatch) {
+    return (
+      <div>
+        {error ? (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
+        ) : null}
+        <MatchDetailPage
+          match={selectedMatch}
+          detail={detail}
+          loading={detailLoading}
+          simulating={simulatingId === selectedMatch.id}
+          confirming={confirming}
+          onBack={() => {
+            setSelectedMatch(null);
+            setDetail(null);
+            setSelectedStat(null);
+          }}
+          onSimulate={() => void simulate(selectedMatch)}
+          onConfirm={() => void confirmSelectedMatch()}
+          onPlayerStat={setSelectedStat}
+        />
+        {selectedStat ? (
+          <PlayerMatchStatModal
+            stat={selectedStat}
+            onClose={() => setSelectedStat(null)}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
@@ -5246,12 +5571,22 @@ function MatchesReadyView({
               setJumping(false);
             }
           }}
-          disabled={jumping}
+          disabled={jumping || jumpLocked}
+          title={
+            jumpLocked
+              ? "Simulate all current matchday matches before moving to the next matchday."
+              : undefined
+          }
           className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
         >
-          {jumping ? "Jumping..." : "Jump to Matchday"}
+          {jumping ? "Loading..." : "Next Matchday"}
         </button>
       </div>
+      {jumpLocked ? (
+        <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-800">
+          Simulate all current matchday matches before opening the next matchday.
+        </div>
+      ) : null}
       {error ? (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
           {error}
@@ -5263,15 +5598,12 @@ function MatchesReadyView({
         </div>
       ) : null}
       <div className="grid gap-5 xl:grid-cols-2">
-        {(jumpMatches.length ? jumpMatches : matches).length === 0 ? (
+        {visibleMatches.length === 0 ? (
           <EmptyState label="No matches are ready for simulation. Confirm both team lineups first." />
         ) : null}
-        {(jumpMatches.length ? jumpMatches : matches).map((match, index) => {
+        {visibleMatches.map((match, index) => {
           const canSimulate =
-            match.can_simulate ??
-            !["Scheduled", "Lineup Pending", "Lineups Submitted"].includes(
-              match.status,
-            );
+            match.can_simulate ?? isSimulatableStatus(match.status);
           return (
             <Panel
               key={match.id}
@@ -5328,51 +5660,32 @@ function MatchesReadyView({
           );
         })}
       </div>
-      {selectedMatch ? (
-        <MatchDetailModal
-          match={selectedMatch}
-          detail={detail}
-          loading={detailLoading}
-          simulating={simulatingId === selectedMatch.id}
-          onClose={() => {
-            setSelectedMatch(null);
-            setDetail(null);
-            setSelectedStat(null);
-          }}
-          onSimulate={() => void simulate(selectedMatch)}
-          onPlayerStat={setSelectedStat}
-          onLineupPlayerClick={onLineupPlayerClick}
-        />
-      ) : null}
-      {selectedStat ? (
-        <PlayerMatchStatModal
-          stat={selectedStat}
-          onClose={() => setSelectedStat(null)}
-        />
-      ) : null}
     </div>
   );
 }
 
-function MatchDetailModal({
+function MatchDetailPage({
   match,
   detail,
   loading,
   simulating,
-  onClose,
+  confirming,
+  onBack,
   onSimulate,
+  onConfirm,
   onPlayerStat,
-  onLineupPlayerClick,
 }: {
   match: ReadyMatchRow;
   detail: MatchDetailResponse | null;
   loading: boolean;
   simulating: boolean;
-  onClose: () => void;
+  confirming: boolean;
+  onBack: () => void;
   onSimulate: () => void;
+  onConfirm: () => void;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
-  onLineupPlayerClick: (player: MatchDetailLineupPlayer) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"lineup" | "stats">("lineup");
   const statsByPlayer = new Map(
     (detail?.player_stats ?? []).map((stat) => [
       stat.player_registration_id,
@@ -5390,9 +5703,26 @@ function MatchDetailModal({
   const hasSimulation =
     (detail?.player_stats?.length ?? 0) > 0 ||
     (detail?.team_stats?.length ?? 0) > 0;
+  const eventMetaByPlayer = buildPlayerEventMeta(
+    detail?.events ?? [],
+    detail?.substitutions ?? [],
+  );
+  const bestRatedPlayerId = bestRatedPlayer(detail?.player_stats ?? []);
+  const canConfirm =
+    detail?.fixture?.status ===
+    FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION;
+  const canSimulateDetail =
+    !detail?.fixture?.status || isSimulatableStatus(detail.fixture.status);
   return (
-    <div className="fixed inset-0 z-[70] overflow-y-auto bg-slate-950/55 p-4 backdrop-blur-sm">
-      <div className="mx-auto my-8 max-w-7xl rounded-3xl bg-white p-6 shadow-2xl">
+    <div className="space-y-5">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
+      >
+        <ArrowLeft size={16} /> Back to matches
+      </button>
+      <Panel title="">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.35em] text-indigo-600">
@@ -5409,8 +5739,13 @@ function MatchDetailModal({
             <button
               type="button"
               onClick={onSimulate}
-              disabled={simulating}
-              className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:opacity-50"
+              disabled={simulating || !canSimulateDetail}
+              title={
+                !canSimulateDetail
+                  ? "This match is finalized or not in a simulatable status."
+                  : undefined
+              }
+              className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {simulating
                 ? "Simulating..."
@@ -5418,43 +5753,55 @@ function MatchDetailModal({
                   ? "Simulate Again"
                   : "Simulate Match"}
             </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
-            >
-              Close
-            </button>
+            {hasSimulation ? (
+              <button
+                type="button"
+                onClick={onConfirm}
+                disabled={!canConfirm || confirming}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {confirming ? "Confirming..." : "Confirm Result"}
+              </button>
+            ) : null}
           </div>
         </div>
 
         {loading ? <EmptyState label="Loading match detail..." /> : null}
         {!loading ? (
           <div className="mt-6 space-y-6">
-            <div className="grid gap-6 xl:grid-cols-2">
-              <AdminLineupPitch
-                title={match.home}
-                logoUrl={match.homeLogoUrl ?? null}
-                lineup={homeLineup}
-                onDecision={async () => undefined}
-                submittingId={null}
-                onPlayerClick={onLineupPlayerClick}
-                showActions={false}
-              />
-              <AdminLineupPitch
-                title={match.away}
-                logoUrl={match.awayLogoUrl ?? null}
-                lineup={awayLineup}
-                onDecision={async () => undefined}
-                submittingId={null}
-                onPlayerClick={onLineupPlayerClick}
-                showActions={false}
-              />
+            <MatchScorelineHeader match={match} detail={detail} />
+            <div className="flex gap-3 border-b border-slate-200">
+              {(["lineup", "stats"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-3 text-sm font-black capitalize transition ${
+                    activeTab === tab
+                      ? "border-b-2 border-slate-950 text-slate-950"
+                      : "text-slate-500 hover:text-slate-900"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
             </div>
-            {detail?.team_stats?.length ? (
+            {activeTab === "lineup" ? (
+              <AdminCombinedMatchPitch
+                match={match}
+                homeLineup={homeLineup}
+                awayLineup={awayLineup}
+                statsByPlayer={statsByPlayer}
+                eventMetaByPlayer={eventMetaByPlayer}
+                bestRatedPlayerId={bestRatedPlayerId}
+                onPlayerStat={onPlayerStat}
+              />
+            ) : detail?.team_stats?.length ? (
               <MatchTeamStatsPanel
                 home={match.home}
                 away={match.away}
+                homeColor={match.homePrimaryColor}
+                awayColor={match.awayPrimaryColor}
                 stats={detail.team_stats}
               />
             ) : (
@@ -5462,9 +5809,405 @@ function MatchDetailModal({
             )}
           </div>
         ) : null}
+      </Panel>
+    </div>
+  );
+}
+
+function MatchScorelineHeader({
+  match,
+  detail,
+}: {
+  match: ReadyMatchRow;
+  detail: MatchDetailResponse | null;
+}) {
+  const playerNames = new Map<string, string>();
+  for (const lineup of detail?.lineups ?? []) {
+    for (const player of lineup.lineup_players ?? []) {
+      playerNames.set(
+        player.player_registration_id,
+        player.player_season_registrations?.players?.full_name ?? "Player",
+      );
+    }
+  }
+  const scorerLines = (side: "HOME" | "AWAY") =>
+    (detail?.events ?? [])
+      .filter((event) => {
+        const type = String(event.type ?? "");
+        return (
+          event.side === side &&
+          (type === "GOAL" || type === "PENALTY_GOAL" || type === "OWN_GOAL")
+        );
+      })
+      .map((event) => {
+        const name =
+          playerNames.get(String(event.player_registration_id ?? "")) ??
+          "Scorer";
+        const type = String(event.type ?? "");
+        const suffix =
+          type === "PENALTY_GOAL"
+            ? " (Pen)"
+            : type === "OWN_GOAL"
+              ? " (OG)"
+              : "";
+        return `${name} ${formatNumber(event.minute)}'${suffix}`;
+      });
+  const homeScorers = scorerLines("HOME");
+  const awayScorers = scorerLines("AWAY");
+  const homeScore = detail?.fixture?.home_score ?? "-";
+  const awayScore = detail?.fixture?.away_score ?? "-";
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+      <div className="grid items-start gap-5 md:grid-cols-[1fr_auto_1fr]">
+        <div className="flex flex-col items-center gap-2 md:items-end">
+          <TeamBadge name={match.home} logoUrl={match.homeLogoUrl} size="lg" />
+          <p className="text-xl font-black">{match.home}</p>
+          <div className="space-y-1 text-xs font-semibold text-slate-500">
+            {homeScorers.length ? (
+              homeScorers.map((line) => <p key={line}>{line}</p>)
+            ) : (
+              <p>No scorers</p>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="text-4xl font-black tracking-tight">
+            {homeScore} - {awayScore}
+          </p>
+          <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+            {detail?.fixture?.status
+              ? statusLabel(String(detail.fixture.status))
+              : "Not simulated"}
+          </p>
+        </div>
+        <div className="flex flex-col items-center gap-2 md:items-start">
+          <TeamBadge name={match.away} logoUrl={match.awayLogoUrl} size="lg" />
+          <p className="text-xl font-black">{match.away}</p>
+          <div className="space-y-1 text-xs font-semibold text-slate-500">
+            {awayScorers.length ? (
+              awayScorers.map((line) => <p key={line}>{line}</p>)
+            ) : (
+              <p>No scorers</p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
+}
+
+function AdminCombinedMatchPitch({
+  match,
+  homeLineup,
+  awayLineup,
+  statsByPlayer,
+  eventMetaByPlayer,
+  bestRatedPlayerId,
+  onPlayerStat,
+}: {
+  match: ReadyMatchRow;
+  homeLineup: MatchDetailLineup | null;
+  awayLineup: MatchDetailLineup | null;
+  statsByPlayer: Map<string, MatchDetailPlayerStat>;
+  eventMetaByPlayer: Map<string, PlayerEventMeta>;
+  bestRatedPlayerId: string | null;
+  onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+}) {
+  const homeRating = averageLineupRating(homeLineup, statsByPlayer);
+  const awayRating = averageLineupRating(awayLineup, statsByPlayer);
+  const homeBench = (homeLineup?.lineup_players ?? []).filter(
+    (player) => !player.is_starter,
+  );
+  const awayBench = (awayLineup?.lineup_players ?? []).filter(
+    (player) => !player.is_starter,
+  );
+  return (
+    <div className="overflow-hidden rounded-3xl bg-[#05a967] text-white shadow-xl">
+      <div className="flex items-center justify-between gap-4 bg-emerald-700/15 px-5 py-4 text-sm font-black">
+        <div className="flex items-center gap-3">
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs ${ratingBadgeClass(homeRating)}`}
+          >
+            {homeRating ? formatNumber(homeRating) : "-"}
+          </span>
+          <TeamBadge name={match.home} logoUrl={match.homeLogoUrl} />
+          <span>{match.home}</span>
+          <span>{homeLineup?.formation ?? "Formation N/A"}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span>{awayLineup?.formation ?? "Formation N/A"}</span>
+          <span>{match.away}</span>
+          <TeamBadge name={match.away} logoUrl={match.awayLogoUrl} />
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs ${ratingBadgeClass(awayRating)}`}
+          >
+            {awayRating ? formatNumber(awayRating) : "-"}
+          </span>
+        </div>
+      </div>
+      <div className="relative h-[620px] bg-[#06a766]">
+        <div className="absolute inset-y-0 left-1/2 w-1 -translate-x-1/2 bg-white/10" />
+        <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
+        <div className="absolute left-0 top-1/2 h-48 w-20 -translate-y-1/2 rounded-r-3xl border-y-[5px] border-r-[5px] border-white/10" />
+        <div className="absolute right-0 top-1/2 h-48 w-20 -translate-y-1/2 rounded-l-3xl border-y-[5px] border-l-[5px] border-white/10" />
+        <div className="absolute inset-y-0 left-1/4 w-1 bg-white/5" />
+        <div className="absolute inset-y-0 right-1/4 w-1 bg-white/5" />
+        <AdminLineupSideNodes
+          lineup={homeLineup}
+          side="HOME"
+          statsByPlayer={statsByPlayer}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onPlayerStat={onPlayerStat}
+        />
+        <AdminLineupSideNodes
+          lineup={awayLineup}
+          side="AWAY"
+          statsByPlayer={statsByPlayer}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onPlayerStat={onPlayerStat}
+        />
+      </div>
+      <div className="grid gap-5 bg-white p-5 text-slate-950 lg:grid-cols-2">
+        <MatchBenchColumn
+          title={`${match.home} substitutes`}
+          players={homeBench}
+          statsByPlayer={statsByPlayer}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onPlayerStat={onPlayerStat}
+        />
+        <MatchBenchColumn
+          title={`${match.away} substitutes`}
+          players={awayBench}
+          statsByPlayer={statsByPlayer}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onPlayerStat={onPlayerStat}
+        />
+      </div>
+    </div>
+  );
+}
+
+function AdminLineupSideNodes({
+  lineup,
+  side,
+  statsByPlayer,
+  eventMetaByPlayer,
+  bestRatedPlayerId,
+  onPlayerStat,
+}: {
+  lineup: MatchDetailLineup | null;
+  side: "HOME" | "AWAY";
+  statsByPlayer: Map<string, MatchDetailPlayerStat>;
+  eventMetaByPlayer: Map<string, PlayerEventMeta>;
+  bestRatedPlayerId: string | null;
+  onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+}) {
+  const slots = lineup?.formation_slots ?? [];
+  const playerBySlot = new Map(
+    (lineup?.lineup_players ?? [])
+      .filter((player) => player.is_starter && player.slot_key)
+      .map((player) => [player.slot_key as string, player]),
+  );
+  return (
+    <>
+      {slots.map((slot) => {
+        const player = playerBySlot.get(slot.slotKey);
+        if (!player) return null;
+        const x = side === "HOME" ? (100 - slot.y) * 0.5 : 50 + slot.y * 0.5;
+        const y = side === "HOME" ? slot.x : 100 - slot.x;
+        const stat = statsByPlayer.get(player.player_registration_id);
+        const meta = eventMetaByPlayer.get(player.player_registration_id);
+        return (
+          <AdminMatchPlayerNode
+            key={`${side}-${slot.slotKey}`}
+            player={player}
+            x={x}
+            y={y}
+            displayRole={slot.displayRole}
+            {...(stat ? { stat } : {})}
+            {...(meta ? { meta } : {})}
+            isBest={player.player_registration_id === bestRatedPlayerId}
+            onPlayerStat={onPlayerStat}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function AdminMatchPlayerNode({
+  player,
+  x,
+  y,
+  displayRole,
+  stat,
+  meta,
+  isBest,
+  onPlayerStat,
+}: {
+  player: MatchDetailLineupPlayer;
+  x: number;
+  y: number;
+  displayRole: string;
+  stat?: MatchDetailPlayerStat;
+  meta?: PlayerEventMeta;
+  isBest: boolean;
+  onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+}) {
+  const registration = player.player_season_registrations;
+  const name = registration?.players?.full_name ?? "Player";
+  return (
+    <button
+      type="button"
+      disabled={!stat}
+      onClick={() => (stat ? onPlayerStat(stat) : undefined)}
+      className="absolute z-10 w-[118px] -translate-x-1/2 -translate-y-1/2 text-center outline-none transition hover:-translate-y-[54%] disabled:cursor-default"
+      style={{ left: `${x}%`, top: `${y}%` }}
+      title={stat ? "View match stats" : "Match stats appear after simulation"}
+    >
+      <div className="relative mx-auto h-14 w-14">
+        <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
+          {registration?.players?.avatar_url ? (
+            <img
+              src={registration.players.avatar_url}
+              alt={name}
+              className="h-[118%] w-full rounded-full object-cover object-top"
+            />
+          ) : (
+            <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
+              {initials(name)}
+            </span>
+          )}
+        </div>
+        {stat ? (
+          <span
+            className={`absolute -right-2 -top-2 rounded-full px-2 py-0.5 text-[11px] font-black text-white shadow ${ratingBadgeClass(Number(stat.rating))}`}
+          >
+            {formatNumber(stat.rating)}
+            {isBest ? (
+              <Star size={10} className="ml-0.5 inline fill-current" />
+            ) : null}
+          </span>
+        ) : null}
+        {meta?.injured ? (
+          <span className="absolute -right-1 bottom-1 grid h-4 w-4 place-items-center rounded-full bg-white text-[12px] font-black text-red-600 shadow">
+            +
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-1 flex items-center justify-center gap-1">
+        {player.is_captain ? (
+          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[10px] font-black lowercase text-slate-700 shadow">
+            c
+          </span>
+        ) : null}
+        <span className="truncate text-[13px] font-black text-white drop-shadow">
+          {registration?.shirt_number ?? player.shirt_number ?? "-"} {name}
+        </span>
+      </div>
+      {meta ? <LineupEventIcons meta={meta} /> : null}
+      <p className="text-[10px] font-bold uppercase tracking-wide text-white/80">
+        {player.display_role ?? displayRole}
+      </p>
+    </button>
+  );
+}
+
+function MatchBenchColumn({
+  title,
+  players,
+  statsByPlayer,
+  eventMetaByPlayer,
+  bestRatedPlayerId,
+  onPlayerStat,
+}: {
+  title: string;
+  players: MatchDetailLineupPlayer[];
+  statsByPlayer: Map<string, MatchDetailPlayerStat>;
+  eventMetaByPlayer: Map<string, PlayerEventMeta>;
+  bestRatedPlayerId: string | null;
+  onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200">
+      <h4 className="border-b border-slate-100 py-3 text-center text-sm font-black">
+        {title}
+      </h4>
+      <div className="divide-y divide-slate-100">
+        {players.length ? (
+          players.map((player) => {
+            const registration = player.player_season_registrations;
+            const name = registration?.players?.full_name ?? "Player";
+            const stat = statsByPlayer.get(player.player_registration_id);
+            const meta = eventMetaByPlayer.get(player.player_registration_id);
+            return (
+              <button
+                key={player.id}
+                type="button"
+                disabled={!stat}
+                onClick={() => (stat ? onPlayerStat(stat) : undefined)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50 disabled:cursor-default"
+              >
+                <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-100 text-xs font-black text-indigo-700">
+                  {registration?.players?.avatar_url ? (
+                    <img
+                      src={registration.players.avatar_url}
+                      alt={name}
+                      className="h-[118%] w-full object-cover object-top"
+                    />
+                  ) : (
+                    initials(name)
+                  )}
+                </div>
+                {stat ? (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-black text-white ${ratingBadgeClass(Number(stat.rating))}`}
+                  >
+                    {formatNumber(stat.rating)}
+                    {player.player_registration_id === bestRatedPlayerId ? (
+                      <Star size={10} className="ml-0.5 inline fill-current" />
+                    ) : null}
+                  </span>
+                ) : null}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-black">{name}</p>
+                  <p className="text-xs font-semibold text-slate-500">
+                    #{registration?.shirt_number ?? player.shirt_number ?? "-"} ·{" "}
+                    {registration?.football_position ??
+                      player.football_position ??
+                      player.player_natural_position ??
+                      "POS"}
+                  </p>
+                </div>
+                {meta ? <LineupEventIcons meta={meta} dark /> : null}
+              </button>
+            );
+          })
+        ) : (
+          <p className="p-4 text-center text-sm font-semibold text-slate-500">
+            No substitutes listed.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function averageLineupRating(
+  lineup: MatchDetailLineup | null,
+  statsByPlayer: Map<string, MatchDetailPlayerStat>,
+) {
+  const ratings = (lineup?.lineup_players ?? [])
+    .map((player) =>
+      Number(statsByPlayer.get(player.player_registration_id)?.rating),
+    )
+    .filter((rating) => Number.isFinite(rating) && rating > 0);
+  if (!ratings.length) return 0;
+  return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
 }
 
 function LineupSide({
@@ -5545,61 +6288,202 @@ function LineupSide({
 function MatchTeamStatsPanel({
   home,
   away,
+  homeColor,
+  awayColor,
   stats,
 }: {
   home: string;
   away: string;
+  homeColor?: string | null | undefined;
+  awayColor?: string | null | undefined;
   stats: MatchDetailTeamStat[];
 }) {
   const [first, second] = stats;
   if (!first || !second) return null;
-  const rows: Array<
-    [
-      string,
-      keyof MatchDetailTeamStat,
-      "number" | "percent" | "passes" | "rating",
-    ]
-  > = [
-    ["Team Rating", "rating", "rating"],
-    ["Possession", "possession", "percent"],
-    ["Total Shots", "shots", "number"],
-    ["Shots on Target", "shots_on_target", "number"],
-    ["Big Chances Created", "big_chances", "number"],
-    ["Big Chances Missed", "big_chances_missed", "number"],
-    ["Accurate Passes", "accurate_passes", "passes"],
-    ["Corners", "corners", "number"],
-    ["Offsides", "offsides", "number"],
-    ["Fouls", "fouls", "number"],
-    ["Yellow Cards", "yellow_cards", "number"],
-    ["Red Cards", "red_cards", "number"],
+  const leftColor = safeStatColor(homeColor, "#C4003A");
+  const rightColor = safeStatColor(awayColor, "#0F172A");
+  const sections: Array<{
+    title: string;
+    rows: Array<
+      [
+        string,
+        keyof MatchDetailTeamStat,
+        "number" | "percent" | "passes" | "rating" | "decimal",
+      ]
+    >;
+  }> = [
+    {
+      title: "Top stats",
+      rows: [
+        ["Expected goals (xG)", "expected_goals", "decimal"],
+        ["Total shots", "shots", "number"],
+        ["Shots on target", "shots_on_target", "number"],
+        ["Hit woodwork", "hit_woodwork", "number"],
+        ["Big chances", "big_chances", "number"],
+        ["Big chances missed", "big_chances_missed", "number"],
+        ["Accurate passes", "accurate_passes", "passes"],
+        ["Yellow cards", "yellow_cards", "number"],
+        ["Corners", "corners", "number"],
+      ],
+    },
+    {
+      title: "Shots",
+      rows: [
+        ["Total shots", "shots", "number"],
+        ["Shots off target", "shots_off_target", "number"],
+        ["Shots on target", "shots_on_target", "number"],
+        ["Hit woodwork", "hit_woodwork", "number"],
+      ],
+    },
+    {
+      title: "Defense",
+      rows: [
+        ["Tackles", "tackles", "number"],
+        ["Interceptions", "interceptions", "number"],
+        ["Blocks", "blocks", "number"],
+        ["Clearances", "clearances", "number"],
+        ["Keeper saves", "keeper_saves", "number"],
+      ],
+    },
+    {
+      title: "General",
+      rows: [
+        ["Team rating", "rating", "rating"],
+        ["Offsides", "offsides", "number"],
+        ["Fouls", "fouls", "number"],
+        ["Red cards", "red_cards", "number"],
+      ],
+    },
   ];
+  const firstPossession = Math.max(
+    0,
+    Math.min(100, Number(first.possession ?? 0)),
+  );
+  const secondPossession = Math.max(
+    0,
+    Math.min(100, Number(second.possession ?? 0)),
+  );
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5">
-      <h3 className="text-xl font-black">Match Stats</h3>
-      <div className="mt-5 space-y-3">
-        {rows.map(([label, field, format]) => (
-          <div
-            key={label}
-            className="grid grid-cols-[1fr_180px_1fr] items-center gap-4 text-sm"
-          >
-            <div className="font-black">
-              {formatTeamStat(first, field, format)}
-            </div>
-            <div className="text-center font-semibold text-slate-500">
-              {label}
-            </div>
-            <div className="text-right font-black">
-              {formatTeamStat(second, field, format)}
-            </div>
-          </div>
-        ))}
+    <div className="overflow-hidden rounded-3xl bg-[#1f1f1f] text-white shadow-2xl">
+      <div className="grid gap-3 border-b border-white/10 px-6 py-5 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+        <p className="font-black" style={{ color: leftColor }}>
+          {home}
+        </p>
+        <h3 className="text-center text-lg font-black">Match stats</h3>
+        <p className="text-right font-black" style={{ color: rightColor }}>
+          {away}
+        </p>
       </div>
-      <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-full text-sm font-black text-white">
-        <div className="bg-indigo-600 px-4 py-3">{home}</div>
-        <div className="bg-slate-950 px-4 py-3 text-right">{away}</div>
+
+      <div className="px-6 py-5">
+        <p className="text-center text-sm font-semibold">Ball possession</p>
+        <div className="mt-5 flex h-10 overflow-hidden rounded-full bg-white text-sm font-black shadow-inner">
+          <div
+            className="grid place-items-center text-white"
+            style={{
+              width: `${firstPossession}%`,
+              minWidth: firstPossession ? 56 : 0,
+              background: leftColor,
+            }}
+          >
+            {firstPossession}%
+          </div>
+          <div
+            className="grid place-items-center text-slate-950"
+            style={{
+              width: `${secondPossession}%`,
+              minWidth: secondPossession ? 56 : 0,
+              background: rightColor === "#0F172A" ? "#FFFFFF" : rightColor,
+              color: rightColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+            }}
+          >
+            {secondPossession}%
+          </div>
+        </div>
+      </div>
+
+      {sections.map((section) => (
+        <div key={section.title} className="border-t border-white/10 px-6 py-6">
+          <h4 className="mb-5 text-center text-base font-black">
+            {section.title}
+          </h4>
+          <div className="space-y-5">
+            {section.rows.map(([label, field, format]) => (
+              <StatComparisonRow
+                key={`${section.title}-${label}`}
+                label={label}
+                homeValue={formatTeamStat(first, field, format)}
+                awayValue={formatTeamStat(second, field, format)}
+                homeWins={
+                  Number(first[field] ?? 0) > Number(second[field] ?? 0)
+                }
+                awayWins={
+                  Number(second[field] ?? 0) > Number(first[field] ?? 0)
+                }
+                homeColor={leftColor}
+                awayColor={rightColor}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StatComparisonRow({
+  label,
+  homeValue,
+  awayValue,
+  homeWins,
+  awayWins,
+  homeColor,
+  awayColor,
+}: {
+  label: string;
+  homeValue: string;
+  awayValue: string;
+  homeWins: boolean;
+  awayWins: boolean;
+  homeColor: string;
+  awayColor: string;
+}) {
+  return (
+    <div className="grid grid-cols-[86px_1fr_86px] items-center gap-3 text-sm">
+      <div className="justify-self-start">
+        <span
+          className={`inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black ${
+            homeWins ? "text-white" : "text-white"
+          }`}
+          style={{ background: homeWins ? homeColor : "transparent" }}
+        >
+          {homeValue}
+        </span>
+      </div>
+      <p className="text-center font-medium text-white/90">{label}</p>
+      <div className="justify-self-end">
+        <span
+          className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black"
+          style={{
+            background: awayWins
+              ? awayColor === "#0F172A"
+                ? "#FFFFFF"
+                : awayColor
+              : "transparent",
+            color: awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+          }}
+        >
+          {awayValue}
+        </span>
       </div>
     </div>
   );
+}
+
+function safeStatColor(value: string | null | undefined, fallback: string) {
+  const color = value?.trim();
+  if (!color || !/^#[0-9a-f]{6}$/i.test(color)) return fallback;
+  return color;
 }
 
 function PlayerMatchStatModal({
@@ -5613,86 +6497,186 @@ function PlayerMatchStatModal({
   const isGoalkeeper =
     (stat.position_played ?? player?.football_position) === "GK";
   const name = player?.players?.full_name ?? "Player";
-  const items: Array<[string, unknown]> = isGoalkeeper
+  const position =
+    stat.position_played ?? player?.football_position ?? player?.position ?? "POS";
+  const defensiveContribution =
+    Number(stat.tackles ?? 0) +
+    Number(stat.interceptions ?? 0) +
+    Number(stat.clearances ?? 0) +
+    Number(stat.blocks ?? 0);
+  const sectionGroups: Array<{ title: string; items: Array<[string, unknown]> }> = isGoalkeeper
     ? [
-        ["Minutes Played", stat.minutes],
-        ["Saves", stat.saves],
-        ["Goals Conceded", stat.goals_conceded],
-        ["Accurate Passes", stat.accurate_passes],
-        ["Accurate Long Balls", stat.accurate_long_balls],
-        ["Diving Saves", stat.diving_saves],
-        ["Saves Inside Box", stat.saves_inside_box],
-        ["Clearances", stat.clearances],
-        ["Yellow Cards", stat.yellow_cards],
-        ["Red Cards", stat.red_cards],
-        ["Rating", stat.rating],
+        {
+          title: "Top stats",
+          items: [
+            ["Minutes played", stat.minutes],
+            ["Rating", stat.rating],
+            ["Saves", stat.saves],
+            ["Goals conceded", stat.goals_conceded],
+          ],
+        },
+        {
+          title: "Distribution",
+          items: [
+            ["Accurate passes", stat.accurate_passes],
+            ["Accurate long balls", stat.accurate_long_balls],
+          ],
+        },
+        {
+          title: "Goalkeeping",
+          items: [
+            ["Diving saves", stat.diving_saves],
+            ["Saves inside box", stat.saves_inside_box],
+            ["Clearances", stat.clearances],
+          ],
+        },
+        {
+          title: "Discipline",
+          items: [
+            ["Yellow cards", stat.yellow_cards],
+            ["Red cards", stat.red_cards],
+          ],
+        },
       ]
     : [
-        ["Minutes Played", stat.minutes],
-        ["Position Played", stat.position_played],
-        ["Goals", stat.goals],
-        ["Assists", stat.assists],
-        ["Shots", stat.shots],
-        ["Shots on Target", stat.shots_on_target],
-        ["Shot Accuracy", percent(stat.shots_on_target, stat.shots)],
-        ["Chances Created", stat.chances_created],
-        ["Big Chances Created", stat.big_chances_created],
-        ["Big Chances Missed", stat.big_chances_missed],
-        ["Total Passes", stat.passes],
-        ["Accurate Passes", stat.accurate_passes],
-        ["Pass Accuracy", percent(stat.accurate_passes, stat.passes)],
-        ["Dribbles Attempted", stat.dribbles_attempted],
-        ["Successful Dribbles", stat.successful_dribbles],
-        [
-          "Dribble Success Rate",
-          percent(stat.successful_dribbles, stat.dribbles_attempted),
-        ],
-        ["Dispossessed", stat.dispossessed],
-        ["Tackles", stat.tackles],
-        ["Interceptions", stat.interceptions],
-        ["Clearances", stat.clearances],
-        ["Blocks", stat.blocks],
-        ["Fouls Committed", stat.fouls_committed],
-        ["Yellow Cards", stat.yellow_cards],
-        ["Red Cards", stat.red_cards],
-        ["Rating", stat.rating],
+        {
+          title: "Top stats",
+          items: [
+            ["Minutes played", stat.minutes],
+            ["Position played", position],
+            ["Rating", stat.rating],
+            ["Goals", stat.goals],
+            ["Assists", stat.assists],
+          ],
+        },
+        {
+          title: "Attack",
+          items: [
+            ["Shots", stat.shots],
+            ["Shots on target", stat.shots_on_target],
+            ["Shot accuracy", percent(stat.shots_on_target, stat.shots)],
+            ["Chances created", stat.chances_created],
+            ["Big chances created", stat.big_chances_created],
+            ["Big chances missed", stat.big_chances_missed],
+          ],
+        },
+        {
+          title: "Passing + dribbling",
+          items: [
+            ["Total passes", stat.passes],
+            [
+              "Accurate passes",
+              `${formatNumber(stat.accurate_passes)}/${formatNumber(stat.passes)} (${percent(stat.accurate_passes, stat.passes)})`,
+            ],
+            ["Dribbles attempted", stat.dribbles_attempted],
+            [
+              "Successful dribbles",
+              `${formatNumber(stat.successful_dribbles)}/${formatNumber(stat.dribbles_attempted)} (${percent(stat.successful_dribbles, stat.dribbles_attempted)})`,
+            ],
+            ["Dispossessed", stat.dispossessed],
+          ],
+        },
+        {
+          title: "Defense",
+          items: [
+            ["Defensive contribution", defensiveContribution],
+            ["Tackles", stat.tackles],
+            ["Interceptions", stat.interceptions],
+            ["Clearances", stat.clearances],
+            ["Blocks", stat.blocks],
+            ["Dribbled past", stat.dribbled_past],
+          ],
+        },
+        {
+          title: "Discipline",
+          items: [
+            ["Fouls committed", stat.fouls_committed],
+            ["Yellow cards", stat.yellow_cards],
+            ["Red cards", stat.red_cards],
+          ],
+        },
       ];
   return (
     <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
-      <div className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="grid h-16 w-16 place-items-center rounded-2xl bg-indigo-100 text-xl font-black text-indigo-700">
-              {initials(name)}
+      <div className="max-h-[88vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white shadow-2xl">
+        <div className="bg-gradient-to-b from-emerald-200 to-white p-6">
+          <div className="flex items-start justify-between gap-4">
+            <button
+              type="button"
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow"
+              aria-label="Previous player"
+            >
+              ‹
+            </button>
+            <div className="text-center">
+              <div className="relative mx-auto grid h-20 w-20 place-items-center overflow-hidden rounded-full border-4 border-white bg-white text-xl font-black text-indigo-700 shadow">
+                {player?.players?.avatar_url ? (
+                  <img
+                    src={player.players.avatar_url}
+                    alt={name}
+                    className="h-[120%] w-full object-cover object-top"
+                  />
+                ) : (
+                  initials(name)
+                )}
+                <span
+                  className={`absolute -right-1 -top-1 rounded-full px-2 py-0.5 text-xs font-black text-white ${ratingBadgeClass(Number(stat.rating))}`}
+                >
+                  {formatNumber(stat.rating)}
+                </span>
+              </div>
+              <h3 className="mt-3 text-lg font-black">{name}</h3>
+              <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <p className="font-black">{position}</p>
+                  <p className="text-slate-500">Position</p>
+                </div>
+                <div>
+                  <p className="font-black">{player?.shirt_number ? `#${player.shirt_number}` : "-"}</p>
+                  <p className="text-slate-500">Number</p>
+                </div>
+                <div>
+                  <p className="font-black">{formatNumber(stat.minutes)}</p>
+                  <p className="text-slate-500">Minutes</p>
+                </div>
+              </div>
             </div>
-            <div>
-              <h3 className="text-2xl font-black">{name}</h3>
-              <p className="font-semibold text-slate-500">
-                #{player?.shirt_number ?? "-"} ·{" "}
-                {stat.position_played ??
-                  player?.football_position ??
-                  player?.position ??
-                  "POS"}
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow"
+              aria-label="Close"
+            >
+              ×
+            </button>
           </div>
+        </div>
+        <div className="space-y-6 p-6">
+          {sectionGroups.map((section) => (
+            <section key={section.title}>
+              <h4 className="mb-3 text-lg font-black">{section.title}</h4>
+              <div className="divide-y divide-slate-100">
+                {section.items.map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="flex items-center justify-between gap-4 py-2.5 text-sm"
+                  >
+                    <span className="font-medium text-slate-700">{label}</span>
+                    <span className="text-right font-black">
+                      {formatValue(value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+            className="sticky bottom-0 w-full rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:bg-emerald-700"
           >
-            Close
+            Done
           </button>
-        </div>
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map(([label, value]) => (
-            <div key={label} className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                {label}
-              </p>
-              <p className="mt-2 text-xl font-black">{formatValue(value)}</p>
-            </div>
-          ))}
         </div>
       </div>
     </div>
@@ -7099,9 +8083,11 @@ function ActionGroup({ actions }: { actions: ActionItem[] }) {
 
 function StatusBox({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 p-3">
+    <div className="min-w-0 rounded-lg bg-slate-50 p-3">
       <p className="text-xs text-slate-500">{label}</p>
-      <p className="mt-1 font-black text-green-700">{value}</p>
+      <p className="mt-1 break-words text-sm font-black leading-tight text-green-700">
+        {compactStatusLabel(value)}
+      </p>
     </div>
   );
 }
