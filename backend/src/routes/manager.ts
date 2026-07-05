@@ -628,16 +628,66 @@ function statusCounts(
   };
 }
 
-async function loadTeamPlayers(teamRegistrationId: string) {
+async function loadTeamPlayers(teamRegistrationId: string): Promise<any[]> {
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*)",
+      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*)",
     )
     .eq("team_registration_id", teamRegistrationId)
     .order("shirt_number", { ascending: true, nullsFirst: false });
   if (error) throw error;
-  return data ?? [];
+  return attachAvailabilityFlags(data ?? []);
+}
+
+async function loadActiveInjuries(playerRegistrationIds: string[]) {
+  if (playerRegistrationIds.length === 0) return new Map<string, any>();
+  const { data, error } = await supabaseAdmin
+    .from("match_injuries")
+    .select("*")
+    .in("player_registration_id", playerRegistrationIds)
+    .gt("expected_matches_out", 0)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  const injuries = new Map<string, any>();
+  for (const injury of data ?? []) {
+    if (!injuries.has(injury.player_registration_id)) {
+      injuries.set(injury.player_registration_id, injury);
+    }
+  }
+  return injuries;
+}
+
+async function attachAvailabilityFlags(players: any[]): Promise<any[]> {
+  const injuries = await loadActiveInjuries(players.map((player) => player.id));
+  const today = new Date().toISOString().slice(0, 10);
+  return players.map((player) => {
+    const injury = injuries.get(player.id) ?? null;
+    const suspendedByMatches =
+      player.suspension_type === "NEXT_MATCHES" &&
+      Number(player.suspension_matches_remaining ?? 0) > 0;
+    const suspendedByDate =
+      player.suspension_type === "UNTIL_DATE" &&
+      player.suspension_until &&
+      String(player.suspension_until) >= today;
+    const suspendedIndefinitely =
+      player.suspension_type === "UNTIL_ADMIN_UNSUSPENDS";
+    const activeSuspension =
+      player.player_status === PlayerLifecycleStatus.SUSPENDED &&
+      (suspendedByMatches || suspendedByDate || suspendedIndefinitely);
+    return {
+      ...player,
+      active_injury: injury,
+      active_suspension: activeSuspension
+        ? {
+            reason: player.suspension_reason,
+            suspension_type: player.suspension_type,
+            suspension_until: player.suspension_until,
+            suspension_matches_remaining: player.suspension_matches_remaining,
+          }
+        : null,
+    };
+  });
 }
 
 async function loadManagerTeams(userId: string) {
@@ -747,13 +797,87 @@ async function loadLeagueRatings(playerRegistrationIds: string[]) {
   return ratings;
 }
 
+function buildPlayerSeasonStatsFromMatchRows(
+  matchStats: Array<Record<string, any>>,
+) {
+  const playedRows = matchStats.filter((row) => Number(row.minutes ?? 0) > 0);
+  const sum = (field: string) =>
+    playedRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+  const ratings = playedRows
+    .map((row) => Number(row.rating ?? 0))
+    .filter((rating) => Number.isFinite(rating) && rating > 0);
+  const gkRows = playedRows.filter(
+    (row) => row.position_played === FootballPosition.GK,
+  );
+  const appearances = playedRows.length;
+  const shots = sum("shots");
+  const shotsOnTarget = sum("shots_on_target");
+  const passes = sum("passes");
+  const accuratePasses = sum("accurate_passes");
+  const dribblesAttempted = sum("dribbles_attempted");
+  const successfulDribbles = sum("successful_dribbles");
+
+  return {
+    matches_played: appearances,
+    appearances,
+    starts: playedRows.filter((row) => Number(row.minutes ?? 0) >= 45).length,
+    minutes_played: sum("minutes"),
+    goals: sum("goals"),
+    assists: sum("assists"),
+    shots,
+    shots_on_target: shotsOnTarget,
+    chances_created: sum("chances_created"),
+    big_chances_created: sum("big_chances_created"),
+    big_chances_missed: sum("big_chances_missed"),
+    total_passes: passes,
+    accurate_passes: accuratePasses,
+    dribbles_attempted: dribblesAttempted,
+    successful_dribbles: successfulDribbles,
+    dribbled_past: sum("dribbled_past"),
+    dispossessed: sum("dispossessed"),
+    tackles: sum("tackles"),
+    interceptions: sum("interceptions"),
+    clearances: sum("clearances"),
+    blocks: sum("blocks"),
+    fouls_committed: sum("fouls_committed"),
+    yellow_cards: sum("yellow_cards"),
+    red_cards: sum("red_cards"),
+    saves: sum("saves"),
+    goals_conceded: sum("goals_conceded"),
+    accurate_long_balls: sum("accurate_long_balls"),
+    diving_saves: sum("diving_saves"),
+    saves_inside_box: sum("saves_inside_box"),
+    clean_sheets: gkRows.filter(
+      (row) =>
+        Number(row.goals_conceded ?? 0) === 0 && Number(row.minutes ?? 0) >= 45,
+    ).length,
+    shot_accuracy: shots ? Math.round((shotsOnTarget / shots) * 100) : 0,
+    pass_accuracy: passes ? Math.round((accuratePasses / passes) * 100) : 0,
+    dribble_success_rate: dribblesAttempted
+      ? Math.round((successfulDribbles / dribblesAttempted) * 100)
+      : 0,
+    average_rating: ratings.length
+      ? Number(
+          (
+            ratings.reduce((total, rating) => total + rating, 0) /
+            ratings.length
+          ).toFixed(2),
+        )
+      : null,
+    best_match_rating: ratings.length ? Math.max(...ratings) : null,
+    lowest_match_rating: ratings.length ? Math.min(...ratings) : null,
+  };
+}
+
 async function loadAvailableLineupPlayers(teamRegistrationId: string) {
   const players = await loadTeamPlayers(teamRegistrationId);
   const approved = players.filter(
     (player) =>
       player.status === RegistrationStatus.APPROVED &&
       player.player_status !== PlayerLifecycleStatus.REMOVED &&
-      player.player_status !== PlayerLifecycleStatus.SUSPENDED,
+      player.player_status !== PlayerLifecycleStatus.SUSPENDED &&
+      !player.active_injury &&
+      !player.active_suspension,
   ) as LineupCandidate[];
   const ratings = await loadLeagueRatings(approved.map((player) => player.id));
   return approved.map((player) => ({
@@ -1042,7 +1166,9 @@ managerRouter.get(
         .eq("season_id", activeTeam.season_id),
       supabaseAdmin
         .from("manager_messages")
-        .select("*")
+        .select(
+          "*,player_season_registrations(id,players(full_name,avatar_url)),fixtures(id,kickoff_at)",
+        )
         .eq("manager_id", req.auth!.userId)
         .order("created_at", { ascending: false })
         .limit(8),
@@ -1935,14 +2061,18 @@ managerRouter.get(
       supabaseAdmin
         .from("player_match_stats")
         .select(
-          "*,fixtures(id,kickoff_at,home_score,away_score,home_team_registration_id,away_team_registration_id)",
+          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
         )
         .eq("player_registration_id", player.id)
         .order("created_at", { ascending: false }),
     ]);
     if (seasonError) throw seasonError;
     if (matchError) throw matchError;
-    res.json({ season_stats: seasonStats, match_stats: matchStats ?? [] });
+    res.json({
+      season_stats: buildPlayerSeasonStatsFromMatchRows(matchStats ?? []),
+      stored_season_stats: seasonStats,
+      match_stats: matchStats ?? [],
+    });
   }),
 );
 
@@ -1965,7 +2095,7 @@ managerRouter.get(
       supabaseAdmin
         .from("player_match_stats")
         .select(
-          "*,fixtures(id,kickoff_at,home_score,away_score,home_team_registration_id,away_team_registration_id)",
+          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
         )
         .eq("player_registration_id", player.id)
         .order("created_at", { ascending: false }),
@@ -1977,7 +2107,8 @@ managerRouter.get(
       player,
       ability: relatedOne(player.player_abilities),
       league_rating: leagueRatings.get(player.id) ?? null,
-      season_stats: seasonStats,
+      season_stats: buildPlayerSeasonStatsFromMatchRows(matchStats ?? []),
+      stored_season_stats: seasonStats,
       match_stats: matchStats ?? [],
     });
   }),
@@ -2484,6 +2615,15 @@ managerRouter.get(
       teamRegistrationId,
       fixture.season_id,
     );
+    const allTeamPlayers = await loadTeamPlayers(teamRegistrationId);
+    const unavailablePlayers = allTeamPlayers.filter(
+      (player) =>
+        player.status === RegistrationStatus.APPROVED &&
+        player.player_status !== PlayerLifecycleStatus.REMOVED &&
+        (player.active_injury ||
+          player.active_suspension ||
+          player.player_status === PlayerLifecycleStatus.SUSPENDED),
+    );
     const approvedPlayers =
       await loadAvailableLineupPlayers(teamRegistrationId);
     const benchSize = Number(season?.substitute_limit ?? 7);
@@ -2628,6 +2768,7 @@ managerRouter.get(
       availablePlayingStyles: PLAYING_STYLE_LABELS,
       formationSlots: getFormationSlots(formation),
       approvedPlayers,
+      unavailablePlayers,
       benchSize,
       initialLineupMode,
       warnings,
@@ -2794,6 +2935,16 @@ managerRouter.post(
       .eq("team_registration_id", input.team_registration_id);
     if (playersError) throw playersError;
     validateLineupSubmission(input, players ?? [], fixture.season_id);
+    const selectedPlayerIds = input.players.map(
+      (player) => player.player_registration_id,
+    );
+    const activeInjuries = await loadActiveInjuries(selectedPlayerIds);
+    if (activeInjuries.size > 0) {
+      throw new AppError(
+        400,
+        "Injured players cannot be selected in a lineup.",
+      );
+    }
     const captainId =
       input.captain_id ??
       input.players.find((player) => player.is_captain)
@@ -3042,6 +3193,16 @@ managerRouter.post(
       .eq("team_registration_id", input.team_registration_id);
     if (playersError) throw playersError;
     validateLineupSubmission(input, players ?? [], fixture.season_id);
+    const selectedPlayerIds = input.players.map(
+      (player) => player.player_registration_id,
+    );
+    const activeInjuries = await loadActiveInjuries(selectedPlayerIds);
+    if (activeInjuries.size > 0) {
+      throw new AppError(
+        400,
+        "Injured players cannot be selected in a lineup.",
+      );
+    }
     const captainId =
       input.captain_id ??
       input.players.find((player) => player.is_captain)

@@ -556,12 +556,241 @@ function pick<T>(items: T[], random: () => number) {
   ]!;
 }
 
+function pickWeighted<T>(
+  items: T[],
+  weightForItem: (item: T) => number,
+  random: () => number,
+) {
+  if (items.length === 0) {
+    throw new AppError(400, "Cannot pick from an empty weighted pool");
+  }
+  const weighted = items.map((item) => ({
+    item,
+    weight: Math.max(0.01, weightForItem(item)),
+  }));
+  const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let cursor = random() * Math.max(total, 0.01);
+  for (const item of weighted) {
+    cursor -= item.weight;
+    if (cursor <= 0) return item.item;
+  }
+  return weighted[weighted.length - 1]!.item;
+}
+
 function detailedPosition(player: SimPlayer): FootballPosition {
   if (player.football_position) return player.football_position;
   if (player.position === PlayerPosition.GK) return FootballPosition.GK;
   if (player.position === PlayerPosition.DEF) return FootballPosition.CB;
   if (player.position === PlayerPosition.MID) return FootballPosition.CM;
   return FootballPosition.ST;
+}
+
+function isPositionIn(position: FootballPosition, positions: FootballPosition[]) {
+  return positions.includes(position);
+}
+
+function playerOverall(player: SimPlayer) {
+  if (detailedPosition(player) === FootballPosition.GK) {
+    return (
+      (player.shot_stopping ?? player.goalkeeping) * 0.18 +
+      (player.reflexes ?? player.goalkeeping) * 0.18 +
+      (player.positioning ?? player.goalkeeping) * 0.16 +
+      (player.handling ?? player.goalkeeping) * 0.14 +
+      (player.diving ?? player.goalkeeping) * 0.14 +
+      (player.distribution ?? player.passing) * 0.08 +
+      player.physical * 0.07 +
+      (player.communication ?? player.physical) * 0.05
+    );
+  }
+  return (
+    player.shooting * 0.14 +
+    player.passing * 0.16 +
+    player.dribbling * 0.15 +
+    player.defending * 0.14 +
+    player.physical * 0.14 +
+    player.pace * 0.14 +
+    (player.stamina ?? player.physical) * 0.13
+  );
+}
+
+function roleAbilityScoreForPosition(role: FootballPosition, player: SimPlayer) {
+  if (role === FootballPosition.GK) return gkStrength(player);
+  if (role === FootballPosition.CB) {
+    return (
+      player.defending * 0.38 +
+      player.physical * 0.22 +
+      (player.stamina ?? player.physical) * 0.14 +
+      player.passing * 0.12 +
+      player.pace * 0.1 +
+      player.dribbling * 0.04
+    );
+  }
+  if (role === FootballPosition.LB || role === FootballPosition.RB) {
+    return (
+      player.defending * 0.25 +
+      player.pace * 0.22 +
+      (player.stamina ?? player.physical) * 0.18 +
+      player.passing * 0.14 +
+      player.dribbling * 0.12 +
+      player.physical * 0.09
+    );
+  }
+  if (role === FootballPosition.DM) {
+    return (
+      player.defending * 0.27 +
+      player.passing * 0.23 +
+      (player.stamina ?? player.physical) * 0.17 +
+      player.physical * 0.15 +
+      player.dribbling * 0.09 +
+      player.pace * 0.09
+    );
+  }
+  if (role === FootballPosition.CM) {
+    return (
+      player.passing * 0.29 +
+      (player.stamina ?? player.physical) * 0.2 +
+      player.dribbling * 0.15 +
+      player.defending * 0.14 +
+      player.physical * 0.11 +
+      player.shooting * 0.11
+    );
+  }
+  if (role === FootballPosition.AM) {
+    return (
+      player.passing * 0.27 +
+      player.dribbling * 0.22 +
+      player.shooting * 0.19 +
+      player.pace * 0.15 +
+      (player.stamina ?? player.physical) * 0.09 +
+      player.physical * 0.08
+    );
+  }
+  if (role === FootballPosition.LW || role === FootballPosition.RW) {
+    return (
+      player.pace * 0.28 +
+      player.dribbling * 0.25 +
+      player.shooting * 0.17 +
+      player.passing * 0.15 +
+      (player.stamina ?? player.physical) * 0.09 +
+      player.physical * 0.06
+    );
+  }
+  return (
+    player.shooting * 0.36 +
+    player.pace * 0.2 +
+    player.physical * 0.14 +
+    player.dribbling * 0.14 +
+    player.passing * 0.09 +
+    (player.stamina ?? player.physical) * 0.07
+  );
+}
+
+function substitutionCompatibilityScore(
+  targetRole: FootballPosition,
+  incoming: SimPlayer,
+) {
+  const incomingPosition = detailedPosition(incoming);
+  if (targetRole === FootballPosition.GK) {
+    return incomingPosition === FootballPosition.GK ? 95 : -999;
+  }
+  if (incomingPosition === FootballPosition.GK) return -999;
+  if (incomingPosition === targetRole) return 95;
+
+  if (
+    targetRole === FootballPosition.ST &&
+    isPositionIn(incomingPosition, [
+      FootballPosition.LW,
+      FootballPosition.RW,
+      FootballPosition.AM,
+    ])
+  ) {
+    return 70;
+  }
+  if (
+    targetRole === FootballPosition.AM &&
+    isPositionIn(incomingPosition, [
+      FootballPosition.CM,
+      FootballPosition.LW,
+      FootballPosition.RW,
+      FootballPosition.ST,
+    ]) &&
+    incoming.passing >= 58 &&
+    incoming.dribbling >= 58
+  ) {
+    return incomingPosition === FootballPosition.CM ? 68 : 72;
+  }
+  if (
+    (targetRole === FootballPosition.LW || targetRole === FootballPosition.RW) &&
+    isPositionIn(incomingPosition, [
+      FootballPosition.AM,
+      FootballPosition.ST,
+      FootballPosition.LW,
+      FootballPosition.RW,
+    ]) &&
+    incoming.pace >= 58 &&
+    incoming.dribbling >= 56
+  ) {
+    return 68;
+  }
+  if (
+    targetRole === FootballPosition.DM &&
+    isPositionIn(incomingPosition, [
+      FootballPosition.CM,
+      FootballPosition.CB,
+      FootballPosition.LB,
+      FootballPosition.RB,
+    ]) &&
+    incoming.defending >= 55 &&
+    incoming.passing >= 52
+  ) {
+    return incomingPosition === FootballPosition.CM ? 72 : 62;
+  }
+  if (
+    targetRole === FootballPosition.CM &&
+    isPositionIn(incomingPosition, [FootballPosition.DM, FootballPosition.AM])
+  ) {
+    return 70;
+  }
+  if (
+    targetRole === FootballPosition.CB &&
+    isPositionIn(incomingPosition, [
+      FootballPosition.DM,
+      FootballPosition.LB,
+      FootballPosition.RB,
+    ]) &&
+    incoming.defending >= 58 &&
+    incoming.physical >= 55
+  ) {
+    return incomingPosition === FootballPosition.DM ? 66 : 62;
+  }
+  if (
+    (targetRole === FootballPosition.LB || targetRole === FootballPosition.RB) &&
+    isPositionIn(incomingPosition, [
+      FootballPosition.CB,
+      FootballPosition.LB,
+      FootballPosition.RB,
+    ])
+  ) {
+    return 64;
+  }
+  return -999;
+}
+
+function substitutionFitScore(
+  targetRole: FootballPosition,
+  incoming: SimPlayer,
+  random: () => number,
+) {
+  const compatibility = substitutionCompatibilityScore(targetRole, incoming);
+  if (compatibility < 0) return -999;
+  const roleScore = roleAbilityScoreForPosition(targetRole, incoming);
+  return (
+    compatibility * 1.15 +
+    roleScore * 1.25 +
+    playerOverall(incoming) * 0.25 +
+    (incoming.stamina ?? incoming.physical) * 0.18 +
+    random() * 6
+  );
 }
 
 function dribbleCap(position: FootballPosition) {
@@ -707,6 +936,46 @@ function allocateCappedIntegerTotal<T>(
   return result;
 }
 
+function allocateWeightedRandomCappedTotal<T>(
+  total: number,
+  items: T[],
+  idForItem: (item: T) => string,
+  maxForItem: (item: T) => number,
+  weightForItem: (item: T) => number,
+  random: () => number,
+) {
+  const result = new Map<string, number>();
+  for (const item of items) result.set(idForItem(item), 0);
+  for (let i = 0; i < total; i += 1) {
+    const available = items.filter(
+      (item) => (result.get(idForItem(item)) ?? 0) < maxForItem(item),
+    );
+    if (!available.length) break;
+    const weighted = available.map((item) => {
+      const current = result.get(idForItem(item)) ?? 0;
+      const fatiguePenalty = Math.max(0.35, 1 - current * 0.11);
+      const matchNoise = 0.55 + random() * 0.9;
+      return {
+        item,
+        id: idForItem(item),
+        weight: Math.max(0.01, weightForItem(item) * fatiguePenalty * matchNoise),
+      };
+    });
+    const weightTotal = weighted.reduce((sum, item) => sum + item.weight, 0);
+    let cursor = random() * Math.max(weightTotal, 0.01);
+    let selected = weighted[weighted.length - 1]!;
+    for (const item of weighted) {
+      cursor -= item.weight;
+      if (cursor <= 0) {
+        selected = item;
+        break;
+      }
+    }
+    result.set(selected.id, (result.get(selected.id) ?? 0) + 1);
+  }
+  return result;
+}
+
 function gkStrength(player: SimPlayer) {
   return (
     (player.shot_stopping ?? player.goalkeeping) * 0.24 +
@@ -774,11 +1043,37 @@ function teamStrength(players: SimPlayer[]): Strength {
   };
 }
 
-function teamGoals(expected: number, random: () => number, mismatch: number) {
-  const surprise = (random() - 0.5) * 1.2;
-  const value = expected + surprise;
-  const cap = mismatch > 22 && random() > 0.88 ? 6 : 5;
-  return clamp(value, 0, cap);
+function poissonGoals(lambda: number, random: () => number) {
+  const limit = Math.exp(-lambda);
+  let product = 1;
+  let goals = 0;
+
+  while (goals < 9) {
+    product *= random();
+    if (product <= limit) break;
+    goals += 1;
+  }
+
+  return goals;
+}
+
+function teamGoals(
+  expected: number,
+  random: () => number,
+  mismatch: number,
+  matchTempo = 1,
+) {
+  const finishingSwing = 0.82 + random() * 0.42;
+  const upsetSpike = random() > 0.88 ? random() * 0.42 : 0;
+  const chaosSpike = random() > 0.965 ? random() * 0.65 : 0;
+  const lambda = clampDecimal(
+    expected * matchTempo * finishingSwing + upsetSpike + chaosSpike,
+    0.08,
+    mismatch > 22 ? 2.65 : 2.35,
+  );
+  const goals = poissonGoals(lambda, random);
+  const cap = mismatch > 22 && random() > 0.9 ? 6 : 5;
+  return clamp(goals, 0, cap);
 }
 
 function makeTeamStats(
@@ -788,16 +1083,24 @@ function makeTeamStats(
   goals: number,
   seed: string,
   side: VenueSide,
+  matchTempo = 1,
 ): SimTeamStats {
   const random = rng(`${seed}:team:${side}`);
   const chanceEdge = own.attack - opp.defense * 0.72 - opp.keeper * 0.28;
   const dominanceBonus = Math.max(0, chanceEdge) * 0.045;
   const lowTempo = random() < 0.18 ? -2 : 0;
   const highTempo = random() > 0.92 ? 3 : 0;
+  const tempoShotBoost = (matchTempo - 1) * 4.5;
   let shots = clamp(
-    6 + dominanceBonus + goals * 0.85 + random() * 5 + lowTempo + highTempo,
+    6 +
+      dominanceBonus +
+      goals * 1.05 +
+      random() * 5 +
+      lowTempo +
+      highTempo +
+      tempoShotBoost,
     2,
-    random() > 0.965 ? 24 : 20,
+    random() > 0.965 ? 25 : 21,
   );
   const shotsOnTarget = clamp(
     Math.max(goals, shots * (0.24 + own.attack / 760) + random() * 1.4),
@@ -877,34 +1180,60 @@ function calculateExpectedGoalsFromStats(input: {
   hitWoodwork: number;
 }) {
   const raw =
-    input.shots * 0.035 +
-    input.shotsOnTarget * 0.055 +
-    input.bigChances * 0.28 +
-    input.bigChancesMissed * 0.08 +
-    input.hitWoodwork * 0.08;
+    input.shots * 0.025 +
+    input.shotsOnTarget * 0.045 +
+    input.bigChances * 0.24 +
+    input.bigChancesMissed * 0.065 +
+    input.hitWoodwork * 0.06;
   const realisticLowScoreCap =
-    input.goals <= 1 && raw > 2.25 ? 2.25 + (raw - 2.25) * 0.18 : raw;
-  const minimumForGoals = input.goals > 0 ? input.goals + 0.01 : 0.05;
-  return clampDecimal(
-    Math.max(realisticLowScoreCap, minimumForGoals),
-    0.05,
-    Math.max(4.2, minimumForGoals),
+    input.goals <= 1 && raw > 1.85 ? 1.85 + (raw - 1.85) * 0.2 : raw;
+  const finishingFloor = input.goals > 0 ? Math.min(0.32 + input.goals * 0.28, 1.25) : 0.04;
+  return clampDecimal(Math.max(realisticLowScoreCap, finishingFloor), 0.04, 3.6);
+}
+
+function playerActiveWindow(
+  player: SimPlayer,
+  substitutions: SimSubstitution[],
+) {
+  const subIn = substitutions.find(
+    (sub) => sub.player_in_registration_id === player.player_registration_id,
   );
+  const subOut = substitutions.find(
+    (sub) => sub.player_out_registration_id === player.player_registration_id,
+  );
+  const start = player.is_starter ? 1 : subIn?.minute;
+  const end = subOut?.minute ?? 90;
+  return {
+    start: start ?? null,
+    end,
+    minutes:
+      start === undefined || start === null ? 0 : Math.max(0, end - start + 1),
+  };
+}
+
+function isPlayerActiveAtMinute(
+  player: SimPlayer,
+  substitutions: SimSubstitution[],
+  minute: number,
+) {
+  const window = playerActiveWindow(player, substitutions);
+  return window.start !== null && minute >= window.start && minute <= window.end;
 }
 
 function distributeGoals(
-  starters: SimPlayer[],
+  players: SimPlayer[],
+  substitutions: SimSubstitution[],
   goals: number,
   seed: string,
   side: VenueSide,
 ) {
   const random = rng(`${seed}:goals:${side}`);
-  const outfield = starters.filter(
+  const outfield = players.filter(
     (player) => detailedPosition(player) !== FootballPosition.GK,
   );
-  const scorerPool = outfield.flatMap((player) => {
+  const scoreWeight = (player: SimPlayer) => {
     const pos = detailedPosition(player);
-    const weight =
+    const roleWeight =
       pos === FootballPosition.ST
         ? 5
         : pos === FootballPosition.LW || pos === FootballPosition.RW
@@ -914,30 +1243,61 @@ function distributeGoals(
             : pos === FootballPosition.CM
               ? 2
               : 1;
-    return Array.from({ length: weight }, () => player);
-  });
-  const assistPool = outfield.filter(
-    (player) => detailedPosition(player) !== FootballPosition.CB,
-  );
+    return (
+      roleWeight *
+      (player.shooting * 0.42 +
+        player.pace * 0.22 +
+        player.dribbling * 0.2 +
+        player.passing * 0.1 +
+        playerOverall(player) * 0.06)
+    );
+  };
+  const assistWeight = (player: SimPlayer) => {
+    const pos = detailedPosition(player);
+    const roleWeight =
+      pos === FootballPosition.AM
+        ? 4
+        : pos === FootballPosition.CM ||
+            pos === FootballPosition.LW ||
+            pos === FootballPosition.RW
+          ? 3
+          : pos === FootballPosition.ST
+            ? 1.8
+            : pos === FootballPosition.LB || pos === FootballPosition.RB
+              ? 1.4
+              : 0.5;
+    return (
+      roleWeight *
+      (player.passing * 0.42 +
+        player.dribbling * 0.26 +
+        player.pace * 0.16 +
+        playerOverall(player) * 0.16)
+    );
+  };
   const scorers: string[] = [];
   const assists: string[] = [];
   const events: SimMatchEvent[] = [];
   for (let i = 0; i < goals; i += 1) {
-    const scorer = pick(scorerPool, random);
-    const assister = assistPool.filter(
+    const minute = clamp(
+      8 + ((i + 1) * 78) / (goals + 1) + (random() - 0.5) * 12,
+      1,
+      90,
+    );
+    const activeOutfield = outfield.filter((player) =>
+      isPlayerActiveAtMinute(player, substitutions, minute),
+    );
+    const scoringPool = activeOutfield.length ? activeOutfield : outfield;
+    const scorer = pickWeighted(scoringPool, scoreWeight, random);
+    const assister = scoringPool.filter(
       (player) =>
         player.player_registration_id !== scorer.player_registration_id,
     );
     scorers.push(scorer.player_registration_id);
     if (assister.length && random() > 0.22) {
-      const assistPlayer = pick(assister, random);
+      const assistPlayer = pickWeighted(assister, assistWeight, random);
       assists.push(assistPlayer.player_registration_id);
       events.push({
-        minute: clamp(
-          8 + ((i + 1) * 78) / (goals + 1) + (random() - 0.5) * 12,
-          1,
-          90,
-        ),
+        minute,
         side,
         type: MatchEventType.GOAL,
         player_registration_id: scorer.player_registration_id,
@@ -945,11 +1305,7 @@ function distributeGoals(
       });
     } else {
       events.push({
-        minute: clamp(
-          8 + ((i + 1) * 78) / (goals + 1) + (random() - 0.5) * 12,
-          1,
-          90,
-        ),
+        minute,
         side,
         type: MatchEventType.GOAL,
         player_registration_id: scorer.player_registration_id,
@@ -969,38 +1325,98 @@ function generateSubstitutions(
     (player) =>
       player.is_starter && detailedPosition(player) !== FootballPosition.GK,
   );
-  const bench = players.filter((player) => !player.is_starter);
-  const count = Math.min(bench.length, clamp(2 + random() * 3, 0, 5));
+  const bench = players.filter(
+    (player) =>
+      !player.is_starter && detailedPosition(player) !== FootballPosition.GK,
+  );
+  if (!starters.length || !bench.length) return [];
+  const count = Math.min(starters.length, bench.length, clamp(2 + random() * 3, 0, 5));
   const usedOut = new Set<string>();
   const usedIn = new Set<string>();
-  const reasons: SimSubstitution["reason"][] = [
-    "LOW_RATING",
-    "FATIGUE",
-    "TACTICAL_CHANGE",
-    "YELLOW_CARD_RISK",
-  ];
-  return Array.from({ length: count }, (_, index) => {
-    const outPool = starters.filter(
-      (player) => !usedOut.has(player.player_registration_id),
-    );
-    const inPool = bench.filter(
-      (player) => !usedIn.has(player.player_registration_id),
-    );
-    const out = pick(outPool, random);
-    const incoming = pick(inPool, random);
-    usedOut.add(out.player_registration_id);
+
+  const outgoingPriority = starters
+    .map((player) => {
+      const role = detailedPosition(player);
+      const roleScore = roleAbilityScoreForPosition(role, player);
+      const stamina = player.stamina ?? player.physical;
+      const lowRoleFitPressure = Math.max(0, 76 - roleScore) * 1.25;
+      const fatiguePressure = Math.max(0, 74 - stamina) * 0.75;
+      const tacticalPressure =
+        isPositionIn(role, [
+          FootballPosition.ST,
+          FootballPosition.LW,
+          FootballPosition.RW,
+          FootballPosition.AM,
+        ])
+          ? 7
+          : 3;
+      return {
+        player,
+        role,
+        roleScore,
+        stamina,
+        priority:
+          lowRoleFitPressure +
+          fatiguePressure +
+          tacticalPressure +
+          random() * 18,
+      };
+    })
+    .sort((a, b) => b.priority - a.priority);
+
+  const substitutions: SimSubstitution[] = [];
+  for (const target of outgoingPriority) {
+    if (substitutions.length >= count) break;
+    if (usedOut.has(target.player.player_registration_id)) continue;
+
+    const candidates = bench
+      .filter((player) => !usedIn.has(player.player_registration_id))
+      .map((player) => ({
+        player,
+        score: substitutionFitScore(target.role, player, random),
+      }))
+      .filter((candidate) => candidate.score >= 145)
+      .sort((a, b) => b.score - a.score);
+
+    if (!candidates.length) continue;
+
+    const incoming =
+      candidates.length > 1 && random() > 0.82
+        ? candidates[1]!.player
+        : candidates[0]!.player;
+
+    usedOut.add(target.player.player_registration_id);
     usedIn.add(incoming.player_registration_id);
-    return {
-      minute: clamp(45 + random() * 40 + index * 2, 45, 85),
+
+    const reason: SimSubstitution["reason"] =
+      random() > 0.94 && substitutions.length === 0
+        ? "INJURY_PLACEHOLDER"
+        : target.roleScore < 61
+          ? "LOW_RATING"
+          : target.stamina < 62
+            ? "FATIGUE"
+            : random() > 0.78
+              ? "YELLOW_CARD_RISK"
+              : "TACTICAL_CHANGE";
+
+    const earlyPoorPerformance =
+      reason === "LOW_RATING" || target.priority > 38;
+    const minute = earlyPoorPerformance
+      ? clamp(45 + random() * 17 + substitutions.length * 2, 45, 64)
+      : reason === "FATIGUE"
+        ? clamp(56 + random() * 18 + substitutions.length * 2, 56, 78)
+        : clamp(64 + random() * 20 + substitutions.length * 2, 64, 86);
+
+    substitutions.push({
+      minute,
       side,
-      player_out_registration_id: out.player_registration_id,
+      player_out_registration_id: target.player.player_registration_id,
       player_in_registration_id: incoming.player_registration_id,
-      reason:
-        random() > 0.93 && index === 0
-          ? "INJURY_PLACEHOLDER"
-          : pick(reasons, random),
-    };
-  }).sort((a, b) => a.minute - b.minute);
+      reason,
+    });
+  }
+
+  return substitutions.sort((a, b) => a.minute - b.minute);
 }
 
 function generateSpecialEvents(
@@ -1015,18 +1431,26 @@ function generateSpecialEvents(
   );
   const events: SimMatchEvent[] = [];
   if (outfield.length && random() > 0.86) {
+    const minute = clamp(18 + random() * 66, 1, 90);
+    const activeOutfield = outfield.filter((player) =>
+      isPlayerActiveAtMinute(player, substitutions, minute),
+    );
+    const pool = activeOutfield.length ? activeOutfield : outfield;
     const takerPool = outfield.filter((player) => {
       const position = detailedPosition(player);
       return (
         position === FootballPosition.ST ||
         position === FootballPosition.LW ||
         position === FootballPosition.RW ||
-        position === FootballPosition.AM
+          position === FootballPosition.AM
       );
     });
-    const taker = pick(takerPool.length ? takerPool : outfield, random);
+    const activeTakerPool = (takerPool.length ? takerPool : pool).filter(
+      (player) => isPlayerActiveAtMinute(player, substitutions, minute),
+    );
+    const taker = pick(activeTakerPool.length ? activeTakerPool : pool, random);
     events.push({
-      minute: clamp(18 + random() * 66, 1, 90),
+      minute,
       side,
       type:
         random() > 0.5
@@ -1036,9 +1460,13 @@ function generateSpecialEvents(
     });
   }
   if (outfield.length && random() > 0.8) {
-    const shooter = pick(outfield, random);
+    const minute = clamp(12 + random() * 78, 1, 90);
+    const activeOutfield = outfield.filter((player) =>
+      isPlayerActiveAtMinute(player, substitutions, minute),
+    );
+    const shooter = pick(activeOutfield.length ? activeOutfield : outfield, random);
     events.push({
-      minute: clamp(12 + random() * 78, 1, 90),
+      minute,
       side,
       type: MatchEventType.HIT_WOODWORK,
       player_registration_id: shooter.player_registration_id,
@@ -1056,6 +1484,25 @@ function generateSpecialEvents(
         player_registration_id: substitution.player_out_registration_id,
       });
     }
+  }
+  const subbedIn = players.filter((player) =>
+    substitutions.some(
+      (sub) => sub.player_in_registration_id === player.player_registration_id,
+    ),
+  );
+  if (subbedIn.length && random() > 0.9) {
+    const injuredSub = pick(subbedIn, random);
+    const subInMinute =
+      substitutions.find(
+        (sub) =>
+          sub.player_in_registration_id === injuredSub.player_registration_id,
+      )?.minute ?? 45;
+    events.push({
+      minute: clamp(subInMinute + 5 + random() * 28, subInMinute + 1, 90),
+      side,
+      type: MatchEventType.INJURY,
+      player_registration_id: injuredSub.player_registration_id,
+    });
   }
   return events;
 }
@@ -1080,7 +1527,8 @@ function allocateStats(
   );
   const active = [...starters, ...benchIn];
   const { scorers, assists, events } = distributeGoals(
-    starters,
+    players,
+    substitutions,
     ownGoals,
     seed,
     side,
@@ -1088,14 +1536,35 @@ function allocateStats(
   const goalsByPlayer = countById(scorers);
   const assistsByPlayer = countById(assists);
   const random = rng(`${seed}:players:${side}`);
+  const cardSelectionRandom = rng(`${seed}:card-selection:${side}`);
+  const cardRiskRank = [...active]
+    .map((player) => {
+      const position = detailedPosition(player);
+      const roleRisk =
+        position === FootballPosition.CB || position === FootballPosition.DM
+          ? 1.35
+          : position === FootballPosition.LB || position === FootballPosition.RB
+            ? 1.2
+            : position === FootballPosition.CM
+              ? 1
+              : 0.55;
+      return {
+        player,
+        risk:
+          (player.defending * 0.45 + player.physical * 0.35 + (player.stamina ?? player.physical) * 0.2) *
+            roleRisk +
+          cardSelectionRandom() * 28,
+      };
+    })
+    .sort((a, b) => b.risk - a.risk);
   const yellowSet = new Set(
-    active
+    cardRiskRank
       .slice(0, teamStats.yellow_cards)
-      .map((player) => player.player_registration_id),
+      .map((item) => item.player.player_registration_id),
   );
   const redSet = new Set(
     teamStats.red_cards
-      ? [active[active.length - 1]?.player_registration_id]
+      ? [cardRiskRank.find((item) => !yellowSet.has(item.player.player_registration_id))?.player.player_registration_id]
       : [],
   );
   const outfieldActive = active.filter(
@@ -1278,9 +1747,148 @@ function allocateStats(
       return shots * (0.35 + player.shooting / 240);
     },
   );
+  const defensiveRandom = rng(`${seed}:team-defense:${side}`);
+  const defensivePressure = Math.max(0, 50 - teamStats.possession) / 50;
+  const opponentPressure = Math.min(1, opponentShotsOnTarget / 9);
+  const rareDefensiveChaos = defensiveRandom() > 0.965;
+  const totalTackles = clamp(
+    12 + defensivePressure * 8 + opponentPressure * 4 + defensiveRandom() * 7,
+    9,
+    rareDefensiveChaos ? 34 : 27,
+  );
+  const totalInterceptions = clamp(
+    6 + defensivePressure * 5 + defensiveRandom() * 5,
+    4,
+    rareDefensiveChaos ? 21 : 17,
+  );
+  const totalBlocks = clamp(
+    1 + opponentPressure * 2 + defensiveRandom() * 2.5,
+    0,
+    rareDefensiveChaos ? 8 : 5,
+  );
+  const totalClearances = clamp(
+    9 + defensivePressure * 8 + opponentPressure * 6 + defensiveRandom() * 6,
+    5,
+    rareDefensiveChaos ? 34 : 25,
+  );
+  const tackleByPlayer = allocateWeightedRandomCappedTotal(
+    totalTackles,
+    outfieldActive,
+    playerId,
+    (player) => {
+      const position = detailedPosition(player);
+      return position === FootballPosition.DM
+        ? 7
+        : position === FootballPosition.LB || position === FootballPosition.RB
+          ? 6
+          : position === FootballPosition.CM || position === FootballPosition.CB
+            ? 5
+            : 2;
+    },
+    (player) => {
+      const position = detailedPosition(player);
+      const roleWeight =
+        position === FootballPosition.DM
+          ? 1.45
+          : position === FootballPosition.LB || position === FootballPosition.RB
+            ? 1.25
+            : position === FootballPosition.CM
+              ? 1.05
+              : position === FootballPosition.CB
+                ? 0.95
+          : position === FootballPosition.AM
+            ? 0.55
+            : 0.32;
+      return (player.defending * 0.7 + player.physical * 0.3) * roleWeight;
+    },
+    defensiveRandom,
+  );
+  const interceptionByPlayer = allocateWeightedRandomCappedTotal(
+    totalInterceptions,
+    outfieldActive,
+    playerId,
+    (player) => {
+      const position = detailedPosition(player);
+      return position === FootballPosition.CB || position === FootballPosition.DM
+        ? 5
+        : position === FootballPosition.CM ||
+            position === FootballPosition.LB ||
+            position === FootballPosition.RB
+          ? 4
+          : 2;
+    },
+    (player) => {
+      const position = detailedPosition(player);
+      const roleWeight =
+        position === FootballPosition.CB || position === FootballPosition.DM
+          ? 1.35
+          : position === FootballPosition.CM
+            ? 1.1
+            : position === FootballPosition.LB || position === FootballPosition.RB
+              ? 0.95
+              : 0.35;
+      return (player.defending * 0.75 + (player.stamina ?? player.physical) * 0.25) * roleWeight;
+    },
+    defensiveRandom,
+  );
+  const blockByPlayer = allocateWeightedRandomCappedTotal(
+    totalBlocks,
+    outfieldActive,
+    playerId,
+    (player) => {
+      const position = detailedPosition(player);
+      return position === FootballPosition.CB
+        ? 3
+        : position === FootballPosition.DM ||
+            position === FootballPosition.LB ||
+            position === FootballPosition.RB
+          ? 2
+          : 1;
+    },
+    (player) => {
+      const position = detailedPosition(player);
+      const roleWeight =
+        position === FootballPosition.CB
+          ? 1.8
+          : position === FootballPosition.DM
+            ? 1.1
+            : position === FootballPosition.LB || position === FootballPosition.RB
+              ? 0.8
+              : 0.18;
+      return (player.defending * 0.8 + player.physical * 0.2) * roleWeight;
+    },
+    defensiveRandom,
+  );
+  const clearanceByPlayer = allocateWeightedRandomCappedTotal(
+    totalClearances,
+    outfieldActive,
+    playerId,
+    (player) => {
+      const position = detailedPosition(player);
+      return position === FootballPosition.CB
+        ? 9
+        : position === FootballPosition.LB || position === FootballPosition.RB
+          ? 5
+          : position === FootballPosition.DM
+            ? 4
+            : 2;
+    },
+    (player) => {
+      const position = detailedPosition(player);
+      const roleWeight =
+        position === FootballPosition.CB
+          ? 2
+          : position === FootballPosition.LB || position === FootballPosition.RB
+            ? 1.1
+            : position === FootballPosition.DM
+              ? 0.8
+              : 0.22;
+      return (player.defending * 0.55 + player.physical * 0.45) * roleWeight;
+    },
+    defensiveRandom,
+  );
 
-  return {
-    stats: active.map((player) => {
+  const stats = active.map((player) => {
       const position = detailedPosition(player);
       const subOut = substitutions.find(
         (sub) =>
@@ -1372,8 +1980,16 @@ function allocateStats(
       const dribblesAttempted = clamp(
         Math.max(
           0,
-          (player.dribbling - 48) / 18 + random() * 2.15 - 0.9,
-        ) * (minutes / 90),
+          (player.dribbling - 48) / 18 + random() * 1.8 - 1.05,
+        ) *
+          (minutes / 90) *
+          (position === FootballPosition.CB
+            ? 0.45
+            : position === FootballPosition.DM
+              ? 0.65
+              : position === FootballPosition.LB || position === FootballPosition.RB
+                ? 0.85
+                : 1),
         0,
         attemptCap,
       );
@@ -1401,40 +2017,12 @@ function allocateStats(
         Math.max(playerAssists, bigChancesCreated),
         8,
       );
-      const tackles = clamp(
-        (position === FootballPosition.CB || position === FootballPosition.DM
-          ? 2
-          : 0) +
-          player.defending / 32 +
-          random() * 2,
-        0,
-        8,
-      );
-      const interceptions = clamp(
-        (position === FootballPosition.CB || position === FootballPosition.DM
-          ? 2
-          : 0) +
-          player.defending / 40 +
-          random() * 2,
-        0,
-        7,
-      );
-      const clearances = clamp(
-        position === FootballPosition.CB
-          ? 3 + random() * 5
-          : position === FootballPosition.LB || position === FootballPosition.RB
-            ? random() * 4
-            : random() * 2,
-        0,
-        10,
-      );
-      const blocks = clamp(
-        position === FootballPosition.CB || position === FootballPosition.DM
-          ? random() * 3
-          : random(),
-        0,
-        5,
-      );
+      const tackles = tackleByPlayer.get(player.player_registration_id) ?? 0;
+      const interceptions =
+        interceptionByPlayer.get(player.player_registration_id) ?? 0;
+      const clearances =
+        clearanceByPlayer.get(player.player_registration_id) ?? 0;
+      const blocks = blockByPlayer.get(player.player_registration_id) ?? 0;
       const dispossessed = clamp(
         random() *
           (position === FootballPosition.ST ||
@@ -1527,8 +2115,31 @@ function allocateStats(
         red_cards: red,
         rating,
       };
-    }),
-    events,
+    });
+  const cardEventRandom = rng(`${seed}:cards:${side}`);
+  const cardEvents = stats.flatMap((stat) => {
+    const playerEvents: SimMatchEvent[] = [];
+    if (stat.yellow_cards > 0) {
+      playerEvents.push({
+        minute: clamp(18 + cardEventRandom() * 66, 1, 90),
+        side,
+        type: MatchEventType.YELLOW_CARD,
+        player_registration_id: stat.player_registration_id,
+      });
+    }
+    if (stat.red_cards > 0) {
+      playerEvents.push({
+        minute: clamp(35 + cardEventRandom() * 50, 1, 90),
+        side,
+        type: MatchEventType.RED_CARD,
+        player_registration_id: stat.player_registration_id,
+      });
+    }
+    return playerEvents;
+  });
+  return {
+    stats,
+    events: [...events, ...cardEvents].sort((a, b) => a.minute - b.minute),
   };
 }
 
@@ -1857,8 +2468,13 @@ export function simulateMatch(
     0.15,
     1.08 + (awayQuality - home.defense * 0.82 - home.keeper * 0.18) / 42,
   );
-  const homeScore = teamGoals(homeExpected, random, mismatch);
-  const awayScore = teamGoals(awayExpected, random, mismatch);
+  const matchTempo = clampDecimal(
+    0.84 + random() * 0.34 + (random() > 0.86 ? random() * 0.28 : 0),
+    0.78,
+    1.45,
+  );
+  const homeScore = teamGoals(homeExpected, random, mismatch, matchTempo);
+  const awayScore = teamGoals(awayExpected, random, mismatch, matchTempo);
   const homePossession = clamp(
     50 + (home.midfield - away.midfield) * 0.42 + (random() - 0.5) * 9,
     35,
@@ -1872,6 +2488,7 @@ export function simulateMatch(
     homeScore,
     seed,
     VenueSide.HOME,
+    matchTempo,
   );
   const awayStats = makeTeamStats(
     away,
@@ -1880,6 +2497,7 @@ export function simulateMatch(
     awayScore,
     seed,
     VenueSide.AWAY,
+    matchTempo,
   );
   const homeSubs = generateSubstitutions(homePlayers, seed, VenueSide.HOME);
   const awaySubs = generateSubstitutions(awayPlayers, seed, VenueSide.AWAY);

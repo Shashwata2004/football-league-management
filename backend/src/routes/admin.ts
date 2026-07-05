@@ -179,7 +179,7 @@ async function notifyMatchdayManagers(
   const { data: fixtures, error } = await supabaseAdmin
     .from("fixtures")
     .select(
-      "id,kickoff_at,round_no,matchday_number,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,manager_id,teams(name)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,manager_id,teams(name))",
+      "id,kickoff_at,round_no,matchday_number,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,manager_id,teams(name)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,manager_id,teams(name)),lineups(id,team_registration_id,status)",
     )
     .eq("season_id", seasonId);
   if (error) throw error;
@@ -188,11 +188,33 @@ async function notifyMatchdayManagers(
     (fixture) =>
       Number(fixture.matchday_number ?? fixture.round_no) === matchdayNumber,
   );
+  const fixtureIds = rows.map((fixture) => fixture.id).filter(Boolean);
+  const { data: existingMessages, error: existingError } = fixtureIds.length
+    ? await supabaseAdmin
+        .from("manager_messages")
+        .select("fixture_id,team_registration_id,message")
+        .eq("season_id", seasonId)
+        .in("fixture_id", fixtureIds)
+        .ilike("message", "%Submit your lineup%")
+    : { data: [], error: null };
+  if (existingError) throw existingError;
+  const existingKeys = new Set(
+    (existingMessages ?? []).map(
+      (message) => `${message.fixture_id}:${message.team_registration_id}`,
+    ),
+  );
   const messages = rows.flatMap((fixture) => {
     const homeTeam = unwrapRelation(fixture.home_team);
     const awayTeam = unwrapRelation(fixture.away_team);
     const homeInfo = unwrapRelation(homeTeam?.teams);
     const awayInfo = unwrapRelation(awayTeam?.teams);
+    const submittedTeamIds = new Set(
+      (fixture.lineups ?? [])
+        .filter((lineup) =>
+          ["PENDING", "CONFIRMED"].includes(String(lineup.status)),
+        )
+        .map((lineup) => lineup.team_registration_id),
+    );
     const kickoffText = fixture.kickoff_at
       ? new Date(fixture.kickoff_at).toLocaleString("en-US", {
           dateStyle: "medium",
@@ -213,14 +235,20 @@ async function notifyMatchdayManagers(
       },
     ];
     return pairings
-      .filter((pairing) => pairing.managerId && pairing.teamId)
+      .filter(
+        (pairing) =>
+          pairing.managerId &&
+          pairing.teamId &&
+          !submittedTeamIds.has(pairing.teamId) &&
+          !existingKeys.has(`${fixture.id}:${pairing.teamId}`),
+      )
       .map((pairing) => ({
         season_id: seasonId,
         manager_id: pairing.managerId,
         team_registration_id: pairing.teamId,
         fixture_id: fixture.id,
         related_type: "GENERAL_NOTICE",
-        message: `Matchday ${matchdayNumber} is active. Your match against ${pairing.opponent} is scheduled for ${kickoffText}. Submit your lineup before the deadline.`,
+        message: `Today is your match against ${pairing.opponent} at ${kickoffText}. Submit your lineup before the deadline.`,
         created_by: adminId,
       }));
   });
@@ -2009,6 +2037,16 @@ adminRouter.get(
   "/seasons/:seasonId/matches/current-matchday",
   asyncHandler(async (req, res) => {
     const seasonId = routeParam(req.params.seasonId, "seasonId");
+    const season = await loadFixtureSeason(seasonId);
+    const activeMatchdayNumber =
+      Number(season.active_matchday_number ?? 0) || null;
+    if (activeMatchdayNumber) {
+      await notifyMatchdayManagers(
+        seasonId,
+        activeMatchdayNumber,
+        req.auth?.userId ?? null,
+      );
+    }
     const matches = await loadCurrentMatchdayMatches(seasonId);
     res.json({ matches });
   }),
@@ -2468,6 +2506,8 @@ async function recordPostMatchDisciplineAndInjuries(
   fixture: any,
   adminId: string,
 ) {
+  await decrementMatchAbsences(fixture);
+
   const { data: injuryEvents, error: injuryError } = await supabaseAdmin
     .from("match_events")
     .select("minute,side,player_registration_id")
@@ -2487,12 +2527,13 @@ async function recordPostMatchDisciplineAndInjuries(
       severity: "MINOR",
       minute: event.minute,
       forced_substitution: true,
-      expected_matches_out: 0,
+      expected_matches_out: Number(event.minute ?? 90) < 55 ? 2 : 1,
     }));
     const { error } = await supabaseAdmin
       .from("match_injuries")
       .insert(injuryRows);
     if (error) throw error;
+    await notifyInjuryAbsences(fixture, injuryRows, adminId);
   }
 
   const { data: redCardStats, error: redCardError } = await supabaseAdmin
@@ -2568,6 +2609,133 @@ async function recordPostMatchDisciplineAndInjuries(
       .from("manager_messages")
       .insert(messages);
     if (error) throw error;
+  }
+}
+
+async function decrementMatchAbsences(fixture: any) {
+  const teamIds = [
+    fixture.home_team_registration_id,
+    fixture.away_team_registration_id,
+  ].filter(Boolean);
+  if (teamIds.length === 0) return;
+
+  const { data: injuries, error: injuryError } = await supabaseAdmin
+    .from("match_injuries")
+    .select("id,player_registration_id,expected_matches_out")
+    .in("team_registration_id", teamIds)
+    .gt("expected_matches_out", 0)
+    .neq("fixture_id", fixture.id);
+  if (injuryError) throw injuryError;
+  for (const injury of injuries ?? []) {
+    const next = Math.max(0, Number(injury.expected_matches_out ?? 0) - 1);
+    const { error } = await supabaseAdmin
+      .from("match_injuries")
+      .update({ expected_matches_out: next })
+      .eq("id", injury.id);
+    if (error) throw error;
+  }
+
+  const { data: registrations, error: registrationError } = await supabaseAdmin
+    .from("player_season_registrations")
+    .select("id,suspension_matches_remaining")
+    .in("team_registration_id", teamIds)
+    .eq("player_status", PlayerLifecycleStatus.SUSPENDED)
+    .eq("suspension_type", "NEXT_MATCHES")
+    .gt("suspension_matches_remaining", 0);
+  if (registrationError) throw registrationError;
+  for (const registration of registrations ?? []) {
+    const next = Math.max(
+      0,
+      Number(registration.suspension_matches_remaining ?? 0) - 1,
+    );
+    const update =
+      next === 0
+        ? {
+            player_status: PlayerLifecycleStatus.ACTIVE,
+            suspension_reason: null,
+            suspension_type: null,
+            suspension_matches_remaining: null,
+            updated_at: new Date().toISOString(),
+          }
+        : {
+            suspension_matches_remaining: next,
+            updated_at: new Date().toISOString(),
+          };
+    const { error } = await supabaseAdmin
+      .from("player_season_registrations")
+      .update(update)
+      .eq("id", registration.id);
+    if (error) throw error;
+  }
+
+  const { data: suspensions, error: suspensionError } = await supabaseAdmin
+    .from("player_suspensions")
+    .select("id,matches_remaining")
+    .in("team_registration_id", teamIds)
+    .eq("status", "ACTIVE")
+    .gt("matches_remaining", 0);
+  if (suspensionError) throw suspensionError;
+  for (const suspension of suspensions ?? []) {
+    const next = Math.max(0, Number(suspension.matches_remaining ?? 0) - 1);
+    const { error } = await supabaseAdmin
+      .from("player_suspensions")
+      .update({
+        matches_remaining: next,
+        status: next === 0 ? "SERVED" : "ACTIVE",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", suspension.id);
+    if (error) throw error;
+  }
+}
+
+async function notifyInjuryAbsences(
+  fixture: any,
+  injuryRows: Array<Record<string, any>>,
+  adminId: string,
+) {
+  const playerIds = injuryRows.map((row) => String(row.player_registration_id));
+  if (playerIds.length === 0) return;
+  const { data, error } = await supabaseAdmin
+    .from("player_season_registrations")
+    .select(
+      "id,team_registration_id,season_id,players(full_name,avatar_url),team_registrations(manager_id)",
+    )
+    .in("id", playerIds);
+  if (error) throw error;
+  const byId = new Map((data ?? []).map((row: any) => [row.id, row]));
+  const messages = injuryRows
+    .map((row) => {
+      const registration = byId.get(row.player_registration_id);
+      const manager = Array.isArray(registration?.team_registrations)
+        ? registration.team_registrations[0]
+        : registration?.team_registrations;
+      const player = Array.isArray(registration?.players)
+        ? registration.players[0]
+        : registration?.players;
+      if (!manager?.manager_id || !registration) return null;
+      const matchesOut = Number(row.expected_matches_out ?? 1);
+      return {
+        season_id: fixture.season_id,
+        manager_id: manager.manager_id,
+        team_registration_id: registration.team_registration_id,
+        player_registration_id: registration.id,
+        fixture_id: fixture.id,
+        related_type: "GENERAL_NOTICE",
+        message: `${player?.full_name ?? "A player"} is injured (${String(
+          row.injury_type ?? "MINOR_KNOCK",
+        )
+          .replaceAll("_", " ")
+          .toLowerCase()}) and is out for ${matchesOut} match${matchesOut === 1 ? "" : "es"}.`,
+        created_by: adminId,
+      };
+    })
+    .filter(Boolean);
+  if (messages.length) {
+    const { error: messageError } = await supabaseAdmin
+      .from("manager_messages")
+      .insert(messages);
+    if (messageError) throw messageError;
   }
 }
 

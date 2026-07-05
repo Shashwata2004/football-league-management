@@ -479,6 +479,7 @@ type FixtureApiRow = {
       name?: string | null;
       short_name?: string | null;
       logo_url?: string | null;
+      primary_color?: string | null;
     } | null;
   } | null;
   away_team?: {
@@ -487,6 +488,7 @@ type FixtureApiRow = {
       name?: string | null;
       short_name?: string | null;
       logo_url?: string | null;
+      primary_color?: string | null;
     } | null;
   } | null;
   season_groups?: { id: string; name?: string | null } | null;
@@ -740,6 +742,11 @@ function statusLabel(status?: string | null) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
+}
+
+function isGroupKnockoutFormat(format?: string | null) {
+  const normalized = String(format ?? "").toUpperCase();
+  return normalized.includes("GROUP") && normalized.includes("KNOCKOUT");
 }
 
 function normalizedStatus(status?: string | null) {
@@ -1157,11 +1164,15 @@ function buildAdminSeasonData(input: {
         : null,
       homePrimaryColor: fixture.home_team_registration_id
         ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
-            ?.primary_color ?? null)
+            ?.primary_color ??
+          fixture.home_team?.teams?.primary_color ??
+          null)
         : null,
       awayPrimaryColor: fixture.away_team_registration_id
         ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
-            ?.primary_color ?? null)
+            ?.primary_color ??
+          fixture.away_team?.teams?.primary_color ??
+          null)
         : null,
       stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
       kickoff: fixture.kickoff_at
@@ -1358,13 +1369,86 @@ function bestRatedPlayer(stats: MatchDetailPlayerStat[]) {
 function LineupEventIcons({
   meta,
   dark = false,
+  overlay = false,
 }: {
   meta: PlayerEventMeta;
   dark?: boolean;
+  overlay?: boolean;
 }) {
   const textClass = dark ? "text-slate-700" : "text-white";
   const badgeBase =
     "inline-grid h-4 min-w-4 place-items-center rounded-full px-1 text-[9px] font-black shadow";
+  const assistIcon = (
+    <svg viewBox="0 0 20 20" className="h-3 w-3" aria-hidden="true">
+      <path
+        d="M4 12.8c2.8-.5 5.3-2.4 7.4-5.6l1.2-1.8 2.6 1.7-1.7 2.5 3.5 2.2c.8.5 1.1 1.4.8 2.2-.2.7-.8 1.1-1.6 1.1H4.7c-1.2 0-1.8-1.5-.7-2.3Z"
+        fill="currentColor"
+      />
+      <path
+        d="M6.5 11.7 8 14m1-4 2.1 3.2m1.7-5.8 1.5 2"
+        stroke="#fff"
+        strokeWidth="1.1"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+  if (overlay) {
+    return (
+      <div className="pointer-events-none absolute inset-0 z-20 text-[10px] font-black">
+        {meta.subOutMinute ? (
+          <span className="absolute -left-1 -top-3 inline-flex items-center gap-0.5 text-white drop-shadow">
+            {meta.subOutMinute}'
+            <span className={`${badgeBase} bg-red-500 text-white`}>↩</span>
+          </span>
+        ) : null}
+        {meta.subInMinute ? (
+          <span className="absolute -left-1 -top-3 inline-flex items-center gap-0.5 text-white drop-shadow">
+            {meta.subInMinute}'
+            <span className={`${badgeBase} bg-emerald-500 text-white`}>↪</span>
+          </span>
+        ) : null}
+        {meta.yellow ? (
+          <span
+            className="absolute -left-2 bottom-5 h-4 w-3 rounded-[3px] border border-white/70 bg-yellow-300 shadow"
+            title="Yellow card"
+          />
+        ) : null}
+        {meta.red ? (
+          <span
+            className="absolute -left-2 bottom-5 h-4 w-3 rounded-[3px] border border-white/70 bg-red-500 shadow"
+            title="Red card"
+          />
+        ) : null}
+        {meta.goals ? (
+          <span
+            className={`${badgeBase} absolute -right-1 bottom-0 bg-white text-slate-950`}
+            title="Goal"
+          >
+            ⚽{meta.goals > 1 ? meta.goals : ""}
+          </span>
+        ) : null}
+        {meta.assists ? (
+          <span
+            className="absolute -left-2 bottom-0 grid h-5 min-w-5 place-items-center rounded-full bg-white px-1 text-[10px] font-black text-slate-800 shadow"
+            title="Assist"
+          >
+            <span className="flex items-center gap-0.5">
+              {assistIcon}
+              {meta.assists > 1 ? meta.assists : ""}
+            </span>
+          </span>
+        ) : null}
+        {meta.penaltyMiss || meta.penaltySaved ? (
+          <span
+            className={`${badgeBase} absolute -right-1 bottom-5 bg-white text-slate-950`}
+            title="Penalty missed or saved"
+          >
+            ⊗
+          </span>
+        ) : null}
+      </div>
+    );
+  }
   return (
     <div
       className={`mt-0.5 flex min-h-4 items-center justify-center gap-1 text-[10px] font-black ${textClass}`}
@@ -1391,10 +1475,13 @@ function LineupEventIcons({
       ) : null}
       {meta.assists ? (
         <span
-          className={`${badgeBase} bg-slate-100 text-slate-700`}
+          className={`${badgeBase} bg-white text-slate-800`}
           title="Assist"
         >
-          ◢{meta.assists > 1 ? meta.assists : ""}
+          <span className="flex items-center gap-0.5">
+            {assistIcon}
+            {meta.assists > 1 ? meta.assists : ""}
+          </span>
         </span>
       ) : null}
       {meta.penaltyMiss || meta.penaltySaved ? (
@@ -1403,6 +1490,14 @@ function LineupEventIcons({
           title="Penalty missed or saved"
         >
           ⊗
+        </span>
+      ) : null}
+      {meta.injured ? (
+        <span
+          className={`${badgeBase} bg-white text-red-600 ring-1 ring-red-100`}
+          title="Injury"
+        >
+          +
         </span>
       ) : null}
       {meta.yellow ? (
@@ -1568,7 +1663,7 @@ export default function AdminLeagueSeasonDashboard() {
       ...nextAdminData,
       pendingLineups: pendingLineupData.lineups?.length ?? 0,
     });
-    if (selectedSeason.format === SeasonFormat.GROUP_STAGE_KNOCKOUT) {
+    if (isGroupKnockoutFormat(selectedSeason.format)) {
       const groupData = await api<AdminGroupsResponse>(
         `/admin/seasons/${selectedSeason.id}/groups`,
       );
@@ -1816,7 +1911,7 @@ export default function AdminLeagueSeasonDashboard() {
     window.location.href = "/login";
   }
 
-  const isGroupKnockout = season?.format === SeasonFormat.GROUP_STAGE_KNOCKOUT;
+  const isGroupKnockout = isGroupKnockoutFormat(season?.format);
   const navItems = useMemo(
     () =>
       [
@@ -3727,8 +3822,11 @@ function SimpleRows({ rows }: { rows: Array<Array<string>> }) {
           key={`${row.join("-")}-${index}`}
           className="grid gap-2 py-3 text-sm md:grid-cols-4"
         >
-          {row.map((cell) => (
-            <span key={cell} className="font-medium text-slate-700">
+          {row.map((cell, cellIndex) => (
+            <span
+              key={`${cell}-${cellIndex}`}
+              className="font-medium text-slate-700"
+            >
               {cell}
             </span>
           ))}
@@ -4144,7 +4242,7 @@ function FixturesView({ season }: { season: SeasonDto }) {
   const [tab, setTab] = useState<"group" | "knockout" | "all">("all");
   const [teamFilter, setTeamFilter] = useState("ALL");
   const [message, setMessage] = useState("");
-  const isGroupKnockout = season.format === SeasonFormat.GROUP_STAGE_KNOCKOUT;
+  const isGroupKnockout = isGroupKnockoutFormat(season.format);
 
   async function loadFixtures() {
     const result = await api<AdminFixturesResponse>(
@@ -5013,7 +5111,7 @@ function LineupConfirmationsView({
   const selectedFixture = selectedLineups[0]?.fixtures ?? null;
   const homeName = selectedFixture?.home_team?.teams?.name ?? "Home team";
   const awayName = selectedFixture?.away_team?.teams?.name ?? "Away team";
-  const showSide = season.format !== SeasonFormat.GROUP_STAGE_KNOCKOUT;
+  const showSide = !isGroupKnockoutFormat(season.format);
 
   if (selectedFixtureId) {
     const homeLineup =
@@ -5277,13 +5375,13 @@ function AdminLineupPitch({
                             ) : null}
                           </span>
                         ) : null}
+                      </div>
+                      <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
                         {meta?.injured ? (
-                          <span className="absolute -right-1 bottom-1 grid h-4 w-4 place-items-center rounded-full bg-white text-[12px] font-black text-red-600 shadow">
+                          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[12px] font-black leading-none text-red-600 shadow ring-1 ring-red-100">
                             +
                           </span>
                         ) : null}
-                      </div>
-                      <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
                         {player.is_captain ? (
                           <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-black lowercase text-slate-700 shadow">
                             c
@@ -6093,13 +6191,14 @@ function AdminMatchPlayerNode({
             ) : null}
           </span>
         ) : null}
+        {meta ? <LineupEventIcons meta={meta} overlay /> : null}
+      </div>
+      <div className="mt-1 flex items-center justify-center gap-1">
         {meta?.injured ? (
-          <span className="absolute -right-1 bottom-1 grid h-4 w-4 place-items-center rounded-full bg-white text-[12px] font-black text-red-600 shadow">
+          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[12px] font-black leading-none text-red-600 shadow ring-1 ring-red-100">
             +
           </span>
         ) : null}
-      </div>
-      <div className="mt-1 flex items-center justify-center gap-1">
         {player.is_captain ? (
           <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[10px] font-black lowercase text-slate-700 shadow">
             c
@@ -6109,7 +6208,6 @@ function AdminMatchPlayerNode({
           {registration?.shirt_number ?? player.shirt_number ?? "-"} {name}
         </span>
       </div>
-      {meta ? <LineupEventIcons meta={meta} /> : null}
       <p className="text-[10px] font-bold uppercase tracking-wide text-white/80">
         {player.display_role ?? displayRole}
       </p>
@@ -6400,6 +6498,22 @@ function MatchTeamStatsPanel({
             {secondPossession}%
           </div>
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-3 text-xs font-black">
+          <span className="inline-flex items-center gap-2">
+            <span
+              className="h-3 w-3 rounded-full"
+              style={{ background: leftColor }}
+            />
+            {home}
+          </span>
+          <span className="inline-flex items-center justify-end gap-2 text-right">
+            {away}
+            <span
+              className="h-3 w-3 rounded-full"
+              style={{ background: rightColor }}
+            />
+          </span>
+        </div>
       </div>
 
       {sections.map((section) => (
@@ -6452,10 +6566,13 @@ function StatComparisonRow({
     <div className="grid grid-cols-[86px_1fr_86px] items-center gap-3 text-sm">
       <div className="justify-self-start">
         <span
-          className={`inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black ${
-            homeWins ? "text-white" : "text-white"
-          }`}
-          style={{ background: homeWins ? homeColor : "transparent" }}
+          className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black text-white"
+          style={{
+            background: homeWins
+              ? homeColor
+              : `${homeColor}22`,
+            border: `1px solid ${homeColor}66`,
+          }}
         >
           {homeValue}
         </span>
@@ -6469,8 +6586,10 @@ function StatComparisonRow({
               ? awayColor === "#0F172A"
                 ? "#FFFFFF"
                 : awayColor
-              : "transparent",
-            color: awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+              : `${awayColor}22`,
+            border: `1px solid ${awayColor}66`,
+            color:
+              awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
           }}
         >
           {awayValue}
