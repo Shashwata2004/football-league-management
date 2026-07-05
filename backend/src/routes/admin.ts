@@ -247,7 +247,7 @@ async function notifyMatchdayManagers(
         manager_id: pairing.managerId,
         team_registration_id: pairing.teamId,
         fixture_id: fixture.id,
-        related_type: "GENERAL_NOTICE",
+        related_type: "INJURY_NOTICE",
         message: `Today is your match against ${pairing.opponent} at ${kickoffText}. Submit your lineup before the deadline.`,
         created_by: adminId,
       }));

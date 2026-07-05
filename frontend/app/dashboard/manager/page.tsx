@@ -1064,6 +1064,18 @@ export default function ManagerDashboardPage() {
           ) : null}
           {loading ? (
             <LoadingState label="Loading manager dashboard..." />
+          ) : selectedFixture ? (
+            <MatchDetailModal
+              fixture={selectedFixture}
+              detail={matchDetail}
+              loading={matchDetailLoading}
+              activeTeamId={activeTeam?.id}
+              onClose={() => {
+                setSelectedFixture(null);
+                setMatchDetail(null);
+              }}
+              onTeamClick={(teamId) => void openTeamView(teamId)}
+            />
           ) : (
             <SectionView
               section={section}
@@ -1120,19 +1132,6 @@ export default function ManagerDashboardPage() {
             setSelectedPlayer(null);
             void load().catch((error) => setMessage(error.message));
           }}
-        />
-      ) : null}
-      {selectedFixture ? (
-        <MatchDetailModal
-          fixture={selectedFixture}
-          detail={matchDetail}
-          loading={matchDetailLoading}
-          activeTeamId={activeTeam?.id}
-          onClose={() => {
-            setSelectedFixture(null);
-            setMatchDetail(null);
-          }}
-          onTeamClick={(teamId) => void openTeamView(teamId)}
         />
       ) : null}
       {availabilityNotice ? (
@@ -1413,7 +1412,7 @@ function DashboardSection({
         </Panel>
         <Panel title="Latest Result">
           {latestResult ? (
-            <FixtureMini
+            <ResultMini
               fixture={latestResult}
               activeTeamId={activeTeam?.id}
               onOpen={onOpenMatch}
@@ -2762,6 +2761,7 @@ function ResultsSection({
   activeTeam,
   activeSeason,
   onTeamClick,
+  onOpenMatch,
 }: Parameters<typeof SectionView>[0]) {
   return (
     <div className="space-y-6">
@@ -2775,6 +2775,7 @@ function ResultsSection({
         showHomeAway={!isManagerGroupKnockoutFormat(activeSeason?.format)}
         emptyLabel="No results yet. Results will appear after matches are confirmed."
         onTeamClick={onTeamClick}
+        onOpen={onOpenMatch}
       />
     </div>
   );
@@ -5605,21 +5606,23 @@ function MatchDetailModal({
     payload?.lineups.find((lineup) => lineup.side === "AWAY") ??
     payload?.lineups[1] ??
     null;
-  const homeTeam = fixture.home_team?.teams;
-  const awayTeam = fixture.away_team?.teams;
+  const detailFixture = payload?.fixture ?? fixture;
+  const homeTeam = detailFixture.home_team?.teams ?? fixture.home_team?.teams;
+  const awayTeam = detailFixture.away_team?.teams ?? fixture.away_team?.teams;
   return (
-    <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 backdrop-blur"
-      onClick={onClose}
-    >
-      <div
-        className="mx-auto my-6 max-h-[calc(100vh-3rem)] w-full max-w-7xl overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
+    <div className="space-y-6">
+      <button
+        type="button"
+        onClick={onClose}
+        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
       >
+        ← Back to results
+      </button>
+      <div className="w-full rounded-[2rem] bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-sm font-black uppercase tracking-[0.24em] text-[var(--team-primary)]">
-              Fixture Detail
+              Match Detail
             </p>
             <h2 className="mt-2 text-2xl font-black">{matchLabel(fixture)}</h2>
             <p className="mt-1 text-sm font-semibold text-slate-500">
@@ -5627,10 +5630,11 @@ function MatchDetailModal({
             </p>
           </div>
           <button
+            type="button"
             className="rounded-full bg-slate-100 px-5 py-3 font-bold transition hover:bg-slate-200"
             onClick={onClose}
           >
-            Close
+            Back
           </button>
         </div>
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-slate-50 p-4">
@@ -5640,9 +5644,9 @@ function MatchDetailModal({
             onTeamClick={onTeamClick}
           />
           <span className="rounded-full bg-white px-5 py-2 text-sm font-black shadow-sm">
-            {fixture.home_score === null
+            {detailFixture.home_score === null
               ? "VS"
-              : `${fixture.home_score} - ${fixture.away_score}`}
+              : `${detailFixture.home_score} - ${detailFixture.away_score}`}
           </span>
           <TeamLogoName
             team={awayTeam}
@@ -6422,11 +6426,22 @@ function FixtureMini({
     </div>
   );
   return (
-    <button
-      type="button"
-      className="block w-full rounded-3xl bg-slate-50 p-4 text-left transition hover:-translate-y-0.5 hover:bg-slate-100 disabled:cursor-default disabled:hover:translate-y-0"
-      disabled={!onOpen}
+    <div
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : -1}
+      className={`block w-full rounded-3xl bg-slate-50 p-4 text-left transition ${
+        onOpen
+          ? "cursor-pointer hover:-translate-y-0.5 hover:bg-slate-100"
+          : "cursor-default"
+      }`}
       onClick={() => onOpen?.(fixture)}
+      onKeyDown={(event) => {
+        if (!onOpen) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(fixture);
+        }
+      }}
     >
       {content}
       <p className="mt-2 text-sm text-slate-500">
@@ -6436,7 +6451,78 @@ function FixtureMini({
         Opponent: <b>{opponentName(fixture, activeTeamId)}</b>
       </p>
       <StatusBadge status={fixture.status} />
-    </button>
+    </div>
+  );
+}
+
+function ResultMini({
+  fixture,
+  activeTeamId,
+  onOpen,
+}: {
+  fixture: FixtureRecord;
+  activeTeamId?: string | undefined;
+  onOpen?: (fixture: FixtureRecord) => void;
+}) {
+  const homeScore = fixture.home_score ?? 0;
+  const awayScore = fixture.away_score ?? 0;
+  const homeIsActive = fixture.home_team_registration_id === activeTeamId;
+  const awayIsActive = fixture.away_team_registration_id === activeTeamId;
+  const opponent = opponentName(fixture, activeTeamId);
+  return (
+    <div
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : -1}
+      className={`block w-full rounded-3xl bg-slate-50 p-4 text-left transition ${
+        onOpen
+          ? "cursor-pointer hover:-translate-y-0.5 hover:bg-slate-100"
+          : "cursor-default"
+      }`}
+      onClick={() => onOpen?.(fixture)}
+      onKeyDown={(event) => {
+        if (!onOpen) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen(fixture);
+        }
+      }}
+    >
+      <div className="space-y-3">
+        <div
+          className={`flex items-center justify-between gap-4 rounded-2xl px-3 py-2 ${
+            homeIsActive ? "bg-green-50 ring-1 ring-green-200" : "bg-white"
+          }`}
+        >
+          <TeamLogoName
+            team={fixture.home_team?.teams}
+            teamId={fixture.home_team_registration_id}
+          />
+          <span className="rounded-2xl bg-white px-4 py-2 text-xl font-black text-slate-950 shadow-sm ring-1 ring-slate-200">
+            {homeScore}
+          </span>
+        </div>
+        <div
+          className={`flex items-center justify-between gap-4 rounded-2xl px-3 py-2 ${
+            awayIsActive ? "bg-green-50 ring-1 ring-green-200" : "bg-white"
+          }`}
+        >
+          <TeamLogoName
+            team={fixture.away_team?.teams}
+            teamId={fixture.away_team_registration_id}
+          />
+          <span className="rounded-2xl bg-white px-4 py-2 text-xl font-black text-slate-950 shadow-sm ring-1 ring-slate-200">
+            {awayScore}
+          </span>
+        </div>
+      </div>
+      <p className="mt-3 text-sm text-slate-500">
+        {formatDate(fixture.kickoff_at)} · {fixture.venue ?? "TBA"}
+      </p>
+      <p className="mt-2 text-sm">
+        Opponent: <b>{opponent}</b>
+      </p>
+      <StatusBadge status={fixture.status} />
+    </div>
   );
 }
 
@@ -6675,7 +6761,10 @@ function Avatar({
         <button
           type="button"
           className={`${size} shrink-0 overflow-hidden rounded-2xl ring-2 ring-white transition hover:scale-105 hover:ring-[var(--team-primary)]`}
-          onClick={() => setPreviewOpen(true)}
+          onClick={(event) => {
+            event.stopPropagation();
+            setPreviewOpen(true);
+          }}
           title={`Open ${name} miniface`}
           aria-label={`Open ${name} miniface`}
         >

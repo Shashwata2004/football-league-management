@@ -585,7 +585,10 @@ function detailedPosition(player: SimPlayer): FootballPosition {
   return FootballPosition.ST;
 }
 
-function isPositionIn(position: FootballPosition, positions: FootballPosition[]) {
+function isPositionIn(
+  position: FootballPosition,
+  positions: FootballPosition[],
+) {
   return positions.includes(position);
 }
 
@@ -613,7 +616,10 @@ function playerOverall(player: SimPlayer) {
   );
 }
 
-function roleAbilityScoreForPosition(role: FootballPosition, player: SimPlayer) {
+function roleAbilityScoreForPosition(
+  role: FootballPosition,
+  player: SimPlayer,
+) {
   if (role === FootballPosition.GK) return gkStrength(player);
   if (role === FootballPosition.CB) {
     return (
@@ -720,7 +726,8 @@ function substitutionCompatibilityScore(
     return incomingPosition === FootballPosition.CM ? 68 : 72;
   }
   if (
-    (targetRole === FootballPosition.LW || targetRole === FootballPosition.RW) &&
+    (targetRole === FootballPosition.LW ||
+      targetRole === FootballPosition.RW) &&
     isPositionIn(incomingPosition, [
       FootballPosition.AM,
       FootballPosition.ST,
@@ -764,7 +771,8 @@ function substitutionCompatibilityScore(
     return incomingPosition === FootballPosition.DM ? 66 : 62;
   }
   if (
-    (targetRole === FootballPosition.LB || targetRole === FootballPosition.RB) &&
+    (targetRole === FootballPosition.LB ||
+      targetRole === FootballPosition.RB) &&
     isPositionIn(incomingPosition, [
       FootballPosition.CB,
       FootballPosition.LB,
@@ -958,7 +966,10 @@ function allocateWeightedRandomCappedTotal<T>(
       return {
         item,
         id: idForItem(item),
-        weight: Math.max(0.01, weightForItem(item) * fatiguePenalty * matchNoise),
+        weight: Math.max(
+          0.01,
+          weightForItem(item) * fatiguePenalty * matchNoise,
+        ),
       };
     });
     const weightTotal = weighted.reduce((sum, item) => sum + item.weight, 0);
@@ -1063,13 +1074,13 @@ function teamGoals(
   mismatch: number,
   matchTempo = 1,
 ) {
-  const finishingSwing = 0.82 + random() * 0.42;
-  const upsetSpike = random() > 0.88 ? random() * 0.42 : 0;
-  const chaosSpike = random() > 0.965 ? random() * 0.65 : 0;
+  const finishingSwing = 0.78 + random() * 0.5;
+  const upsetSpike = random() > 0.86 ? random() * 0.5 : 0;
+  const chaosSpike = random() > 0.94 ? random() * 0.82 : 0;
   const lambda = clampDecimal(
     expected * matchTempo * finishingSwing + upsetSpike + chaosSpike,
     0.08,
-    mismatch > 22 ? 2.65 : 2.35,
+    mismatch > 22 ? 2.95 : 2.65,
   );
   const goals = poissonGoals(lambda, random);
   const cap = mismatch > 22 && random() > 0.9 ? 6 : 5;
@@ -1087,30 +1098,33 @@ function makeTeamStats(
 ): SimTeamStats {
   const random = rng(`${seed}:team:${side}`);
   const chanceEdge = own.attack - opp.defense * 0.72 - opp.keeper * 0.28;
-  const dominanceBonus = Math.max(0, chanceEdge) * 0.045;
-  const lowTempo = random() < 0.18 ? -2 : 0;
-  const highTempo = random() > 0.92 ? 3 : 0;
-  const tempoShotBoost = (matchTempo - 1) * 4.5;
+  const dominanceBonus = Math.max(0, chanceEdge) * 0.035;
+  const lowTempo = random() < 0.2 ? -2 : 0;
+  const highTempo = random() > 0.9 ? 2 : 0;
+  const tempoShotBoost = (matchTempo - 1) * 3.2;
   let shots = clamp(
-    6 +
+    5.5 +
       dominanceBonus +
-      goals * 1.05 +
-      random() * 5 +
+      goals * 0.85 +
+      random() * 4.7 +
       lowTempo +
       highTempo +
       tempoShotBoost,
     2,
-    random() > 0.965 ? 25 : 21,
+    random() > 0.975 ? 24 : 18,
   );
   const shotsOnTarget = clamp(
-    Math.max(goals, shots * (0.24 + own.attack / 760) + random() * 1.4),
+    Math.max(goals, shots * (0.23 + own.attack / 900) + random() * 1.15),
     goals,
-    Math.min(shots, random() > 0.965 ? 11 : 9),
+    Math.min(shots, random() > 0.975 ? 10 : 8),
   );
   const bigChances = clamp(
-    goals + Math.max(0, chanceEdge) / 36 + random() * 1.35,
-    goals,
-    Math.min(shots, random() > 0.96 ? 5 : 4),
+    Math.max(
+      Math.min(goals, 2),
+      goals * 0.55 + Math.max(0, chanceEdge) / 52 + random() * 1.15,
+    ),
+    Math.min(goals, 1),
+    Math.min(shots, random() > 0.965 ? 5 : 4),
   );
   const bigChancesMissed = clamp(
     bigChances - goals + random() * 0.65,
@@ -1180,15 +1194,28 @@ function calculateExpectedGoalsFromStats(input: {
   hitWoodwork: number;
 }) {
   const raw =
-    input.shots * 0.025 +
-    input.shotsOnTarget * 0.045 +
-    input.bigChances * 0.24 +
-    input.bigChancesMissed * 0.065 +
+    input.shots * 0.018 +
+    input.shotsOnTarget * 0.052 +
+    input.bigChances * 0.3 +
+    input.bigChancesMissed * 0.07 +
     input.hitWoodwork * 0.06;
   const realisticLowScoreCap =
-    input.goals <= 1 && raw > 1.85 ? 1.85 + (raw - 1.85) * 0.2 : raw;
-  const finishingFloor = input.goals > 0 ? Math.min(0.32 + input.goals * 0.28, 1.25) : 0.04;
-  return clampDecimal(Math.max(realisticLowScoreCap, finishingFloor), 0.04, 3.6);
+    input.goals <= 1 && raw > 1.65 ? 1.65 + (raw - 1.65) * 0.18 : raw;
+  const finishingFloor =
+    input.goals === 0
+      ? 0.04
+      : input.goals === 1
+        ? 0.55
+        : input.goals === 2
+          ? 1.15
+          : input.goals === 3
+            ? 1.75
+            : 2.25 + (input.goals - 4) * 0.38;
+  return clampDecimal(
+    Math.max(realisticLowScoreCap, finishingFloor),
+    0.04,
+    3.4,
+  );
 }
 
 function playerActiveWindow(
@@ -1217,7 +1244,9 @@ function isPlayerActiveAtMinute(
   minute: number,
 ) {
   const window = playerActiveWindow(player, substitutions);
-  return window.start !== null && minute >= window.start && minute <= window.end;
+  return (
+    window.start !== null && minute >= window.start && minute <= window.end
+  );
 }
 
 function distributeGoals(
@@ -1330,7 +1359,11 @@ function generateSubstitutions(
       !player.is_starter && detailedPosition(player) !== FootballPosition.GK,
   );
   if (!starters.length || !bench.length) return [];
-  const count = Math.min(starters.length, bench.length, clamp(2 + random() * 3, 0, 5));
+  const count = Math.min(
+    starters.length,
+    bench.length,
+    clamp(2 + random() * 3, 0, 5),
+  );
   const usedOut = new Set<string>();
   const usedIn = new Set<string>();
 
@@ -1341,15 +1374,14 @@ function generateSubstitutions(
       const stamina = player.stamina ?? player.physical;
       const lowRoleFitPressure = Math.max(0, 76 - roleScore) * 1.25;
       const fatiguePressure = Math.max(0, 74 - stamina) * 0.75;
-      const tacticalPressure =
-        isPositionIn(role, [
-          FootballPosition.ST,
-          FootballPosition.LW,
-          FootballPosition.RW,
-          FootballPosition.AM,
-        ])
-          ? 7
-          : 3;
+      const tacticalPressure = isPositionIn(role, [
+        FootballPosition.ST,
+        FootballPosition.LW,
+        FootballPosition.RW,
+        FootballPosition.AM,
+      ])
+        ? 7
+        : 3;
       return {
         player,
         role,
@@ -1442,7 +1474,7 @@ function generateSpecialEvents(
         position === FootballPosition.ST ||
         position === FootballPosition.LW ||
         position === FootballPosition.RW ||
-          position === FootballPosition.AM
+        position === FootballPosition.AM
       );
     });
     const activeTakerPool = (takerPool.length ? takerPool : pool).filter(
@@ -1464,7 +1496,10 @@ function generateSpecialEvents(
     const activeOutfield = outfield.filter((player) =>
       isPlayerActiveAtMinute(player, substitutions, minute),
     );
-    const shooter = pick(activeOutfield.length ? activeOutfield : outfield, random);
+    const shooter = pick(
+      activeOutfield.length ? activeOutfield : outfield,
+      random,
+    );
     events.push({
       minute,
       side,
@@ -1551,7 +1586,9 @@ function allocateStats(
       return {
         player,
         risk:
-          (player.defending * 0.45 + player.physical * 0.35 + (player.stamina ?? player.physical) * 0.2) *
+          (player.defending * 0.45 +
+            player.physical * 0.35 +
+            (player.stamina ?? player.physical) * 0.2) *
             roleRisk +
           cardSelectionRandom() * 28,
       };
@@ -1564,7 +1601,11 @@ function allocateStats(
   );
   const redSet = new Set(
     teamStats.red_cards
-      ? [cardRiskRank.find((item) => !yellowSet.has(item.player.player_registration_id))?.player.player_registration_id]
+      ? [
+          cardRiskRank.find(
+            (item) => !yellowSet.has(item.player.player_registration_id),
+          )?.player.player_registration_id,
+        ]
       : [],
   );
   const outfieldActive = active.filter(
@@ -1644,12 +1685,14 @@ function allocateStats(
     (player) => {
       const position = detailedPosition(player);
       const minutesMultiplier = substitutions.some(
-        (sub) => sub.player_in_registration_id === player.player_registration_id,
+        (sub) =>
+          sub.player_in_registration_id === player.player_registration_id,
       )
         ? 0.38
         : substitutions.some(
               (sub) =>
-                sub.player_out_registration_id === player.player_registration_id,
+                sub.player_out_registration_id ===
+                player.player_registration_id,
             )
           ? 0.68
           : 1;
@@ -1668,7 +1711,7 @@ function allocateStats(
                   : 0.7;
       return (
         (position === FootballPosition.GK
-          ? player.distribution ?? player.passing
+          ? (player.distribution ?? player.passing)
           : player.passing) *
         roleWeight *
         minutesMultiplier
@@ -1684,7 +1727,7 @@ function allocateStats(
       const passes = passByPlayer.get(player.player_registration_id) ?? 0;
       const passing =
         position === FootballPosition.GK
-          ? player.distribution ?? player.passing
+          ? (player.distribution ?? player.passing)
           : player.passing;
       return passes * (0.58 + passing / 285);
     },
@@ -1752,24 +1795,24 @@ function allocateStats(
   const opponentPressure = Math.min(1, opponentShotsOnTarget / 9);
   const rareDefensiveChaos = defensiveRandom() > 0.965;
   const totalTackles = clamp(
-    12 + defensivePressure * 8 + opponentPressure * 4 + defensiveRandom() * 7,
-    9,
-    rareDefensiveChaos ? 34 : 27,
+    7 + defensivePressure * 5 + opponentPressure * 3 + defensiveRandom() * 6,
+    5,
+    rareDefensiveChaos ? 25 : 18,
   );
   const totalInterceptions = clamp(
-    6 + defensivePressure * 5 + defensiveRandom() * 5,
-    4,
-    rareDefensiveChaos ? 21 : 17,
+    5 + defensivePressure * 4 + defensiveRandom() * 4,
+    3,
+    rareDefensiveChaos ? 17 : 13,
   );
   const totalBlocks = clamp(
-    1 + opponentPressure * 2 + defensiveRandom() * 2.5,
+    1 + opponentPressure * 1.7 + defensiveRandom() * 2,
     0,
-    rareDefensiveChaos ? 8 : 5,
+    rareDefensiveChaos ? 7 : 5,
   );
   const totalClearances = clamp(
-    9 + defensivePressure * 8 + opponentPressure * 6 + defensiveRandom() * 6,
-    5,
-    rareDefensiveChaos ? 34 : 25,
+    8 + defensivePressure * 7 + opponentPressure * 5 + defensiveRandom() * 5,
+    4,
+    rareDefensiveChaos ? 30 : 23,
   );
   const tackleByPlayer = allocateWeightedRandomCappedTotal(
     totalTackles,
@@ -1796,9 +1839,9 @@ function allocateStats(
               ? 1.05
               : position === FootballPosition.CB
                 ? 0.95
-          : position === FootballPosition.AM
-            ? 0.55
-            : 0.32;
+                : position === FootballPosition.AM
+                  ? 0.55
+                  : 0.32;
       return (player.defending * 0.7 + player.physical * 0.3) * roleWeight;
     },
     defensiveRandom,
@@ -1809,7 +1852,8 @@ function allocateStats(
     playerId,
     (player) => {
       const position = detailedPosition(player);
-      return position === FootballPosition.CB || position === FootballPosition.DM
+      return position === FootballPosition.CB ||
+        position === FootballPosition.DM
         ? 5
         : position === FootballPosition.CM ||
             position === FootballPosition.LB ||
@@ -1824,10 +1868,14 @@ function allocateStats(
           ? 1.35
           : position === FootballPosition.CM
             ? 1.1
-            : position === FootballPosition.LB || position === FootballPosition.RB
+            : position === FootballPosition.LB ||
+                position === FootballPosition.RB
               ? 0.95
               : 0.35;
-      return (player.defending * 0.75 + (player.stamina ?? player.physical) * 0.25) * roleWeight;
+      return (
+        (player.defending * 0.75 + (player.stamina ?? player.physical) * 0.25) *
+        roleWeight
+      );
     },
     defensiveRandom,
   );
@@ -1852,7 +1900,8 @@ function allocateStats(
           ? 1.8
           : position === FootballPosition.DM
             ? 1.1
-            : position === FootballPosition.LB || position === FootballPosition.RB
+            : position === FootballPosition.LB ||
+                position === FootballPosition.RB
               ? 0.8
               : 0.18;
       return (player.defending * 0.8 + player.physical * 0.2) * roleWeight;
@@ -1889,233 +1938,222 @@ function allocateStats(
   );
 
   const stats = active.map((player) => {
-      const position = detailedPosition(player);
-      const subOut = substitutions.find(
-        (sub) =>
-          sub.player_out_registration_id === player.player_registration_id,
-      );
-      const subIn = substitutions.find(
-        (sub) =>
-          sub.player_in_registration_id === player.player_registration_id,
-      );
-      const minutes = subOut ? subOut.minute : subIn ? 90 - subIn.minute : 90;
-      const playerGoals = goalsByPlayer.get(player.player_registration_id) ?? 0;
-      const playerAssists =
-        assistsByPlayer.get(player.player_registration_id) ?? 0;
-      const yellow = yellowSet.has(player.player_registration_id) ? 1 : 0;
-      const red = redSet.has(player.player_registration_id) ? 1 : 0;
+    const position = detailedPosition(player);
+    const subOut = substitutions.find(
+      (sub) => sub.player_out_registration_id === player.player_registration_id,
+    );
+    const subIn = substitutions.find(
+      (sub) => sub.player_in_registration_id === player.player_registration_id,
+    );
+    const minutes = subOut ? subOut.minute : subIn ? 90 - subIn.minute : 90;
+    const playerGoals = goalsByPlayer.get(player.player_registration_id) ?? 0;
+    const playerAssists =
+      assistsByPlayer.get(player.player_registration_id) ?? 0;
+    const yellow = yellowSet.has(player.player_registration_id) ? 1 : 0;
+    const red = redSet.has(player.player_registration_id) ? 1 : 0;
 
-      if (position === FootballPosition.GK) {
-        const saves = clamp(opponentShotsOnTarget - opponentGoals, 0, 14);
-        const divingSaves = clamp(
-          saves *
-            (0.25 + (player.diving ?? player.goalkeeping) / 260) *
-            random(),
-          0,
-          saves,
-        );
-        const savesInsideBox = clamp(
-          saves * (0.45 + random() * 0.35),
-          0,
-          saves,
-        );
-        const passes = passByPlayer.get(player.player_registration_id) ?? 0;
-        const accuratePasses = Math.min(
-          passes,
-          accuratePassByPlayer.get(player.player_registration_id) ?? 0,
-        );
-        const rating = ratingForGoalkeeper({
-          saves,
-          goalsConceded: opponentGoals,
-          divingSaves,
-          savesInsideBox,
-          yellow,
-          red,
-          won,
-          lost,
-        });
-        return {
-          player_registration_id: player.player_registration_id,
-          minutes,
-          position_played: position,
-          goals: 0,
-          assists: 0,
-          shots: 0,
-          shots_on_target: 0,
-          chances_created: 0,
-          big_chances_created: 0,
-          big_chances_missed: 0,
-          passes,
-          accurate_passes: accuratePasses,
-          tackles: 0,
-          interceptions: 0,
-          clearances: clamp(1 + random() * 3, 0, 6),
-          blocks: 0,
-          fouls_committed: 0,
-          saves,
-          goals_conceded: opponentGoals,
-          accurate_long_balls: clamp(accuratePasses * 0.3, 0, accuratePasses),
-          diving_saves: divingSaves,
-          saves_inside_box: savesInsideBox,
-          clean_sheet: opponentGoals === 0 && minutes >= 60,
-          penalty_scored: 0,
-          penalty_missed: 0,
-          penalty_saved_for_gk: 0,
-          dribbles_attempted: 0,
-          successful_dribbles: 0,
-          dribbled_past: 0,
-          dispossessed: 0,
-          yellow_cards: yellow,
-          red_cards: red,
-          rating,
-        };
-      }
-
-      const [attemptCap, successCap] = dribbleCap(position);
+    if (position === FootballPosition.GK) {
+      const saves = clamp(opponentShotsOnTarget - opponentGoals, 0, 14);
+      const divingSaves = clamp(
+        saves * (0.25 + (player.diving ?? player.goalkeeping) / 260) * random(),
+        0,
+        saves,
+      );
+      const savesInsideBox = clamp(saves * (0.45 + random() * 0.35), 0, saves);
       const passes = passByPlayer.get(player.player_registration_id) ?? 0;
       const accuratePasses = Math.min(
         passes,
         accuratePassByPlayer.get(player.player_registration_id) ?? 0,
       );
-      const dribblesAttempted = clamp(
-        Math.max(
-          0,
-          (player.dribbling - 48) / 18 + random() * 1.8 - 1.05,
-        ) *
-          (minutes / 90) *
-          (position === FootballPosition.CB
-            ? 0.45
-            : position === FootballPosition.DM
-              ? 0.65
-              : position === FootballPosition.LB || position === FootballPosition.RB
-                ? 0.85
-                : 1),
-        0,
-        attemptCap,
-      );
-      const successfulDribbles = clamp(
-        dribblesAttempted * (0.35 + player.dribbling / 260),
-        0,
-        successCap,
-      );
-      const bigChancesCreated =
-        bigChanceCreatedByPlayer.get(player.player_registration_id) ?? 0;
-      const bigChancesMissed =
-        bigChanceMissedByPlayer.get(player.player_registration_id) ?? 0;
-      const shots = shotByPlayer.get(player.player_registration_id) ?? 0;
-      const shotsOnTarget =
-        shotsOnTargetByPlayer.get(player.player_registration_id) ?? 0;
-      const chancesCreated = clamp(
-        Math.max(
-          bigChancesCreated,
-          playerAssists +
-            (position === FootballPosition.AM ||
-            position === FootballPosition.CM
-              ? random() * 4
-              : random() * 2),
-        ),
-        Math.max(playerAssists, bigChancesCreated),
-        8,
-      );
-      const tackles = tackleByPlayer.get(player.player_registration_id) ?? 0;
-      const interceptions =
-        interceptionByPlayer.get(player.player_registration_id) ?? 0;
-      const clearances =
-        clearanceByPlayer.get(player.player_registration_id) ?? 0;
-      const blocks = blockByPlayer.get(player.player_registration_id) ?? 0;
-      const dispossessed = clamp(
-        random() *
-          (position === FootballPosition.ST ||
-          position === FootballPosition.LW ||
-          position === FootballPosition.RW
-            ? 4
-            : 2),
-        0,
-        6,
-      );
-      const dribbledPast = clamp(
-        (position === FootballPosition.CB
-          ? 0.7
-          : position === FootballPosition.LB || position === FootballPosition.RB
-            ? 1.1
-            : position === FootballPosition.DM
-              ? 0.9
-              : position === FootballPosition.CM
-                ? 0.55
-                : 0.25) *
-          (1.25 - Math.min(player.defending, 92) / 120) *
-          (1 + random() * 2.2),
-        0,
-        position === FootballPosition.LB || position === FootballPosition.RB
-          ? 5
-          : position === FootballPosition.CB || position === FootballPosition.DM
-            ? 4
-            : 2,
-      );
-      const foulsCommitted = clamp(
-        random() * 3 +
-          (position === FootballPosition.CB || position === FootballPosition.DM
-            ? 1
-            : 0),
-        0,
-        5,
-      );
-      const rating = ratingForOutfield({
-        goals: playerGoals,
-        assists: playerAssists,
-        chancesCreated,
-        passAccuracy: passes ? accuratePasses / passes : 0,
-        successfulDribbles,
-        tackles,
-        interceptions,
-        clearances,
-        dribbledPast,
-        bigChancesMissed,
-        dispossessed,
+      const rating = ratingForGoalkeeper({
+        saves,
+        goalsConceded: opponentGoals,
+        divingSaves,
+        savesInsideBox,
         yellow,
         red,
         won,
         lost,
-        position,
       });
       return {
         player_registration_id: player.player_registration_id,
         minutes,
         position_played: position,
-        goals: playerGoals,
-        assists: playerAssists,
-        shots,
-        shots_on_target: shotsOnTarget,
-        chances_created: chancesCreated,
-        big_chances_created: bigChancesCreated,
-        big_chances_missed: bigChancesMissed,
+        goals: 0,
+        assists: 0,
+        shots: 0,
+        shots_on_target: 0,
+        chances_created: 0,
+        big_chances_created: 0,
+        big_chances_missed: 0,
         passes,
         accurate_passes: accuratePasses,
-        tackles,
-        interceptions,
-        clearances,
-        blocks,
-        fouls_committed: foulsCommitted,
-        saves: 0,
-        clean_sheet:
-          opponentGoals === 0 &&
-          minutes >= 60 &&
-          (position === FootballPosition.CB ||
-            position === FootballPosition.LB ||
-            position === FootballPosition.RB ||
-            position === FootballPosition.DM),
+        tackles: 0,
+        interceptions: 0,
+        clearances: clamp(1 + random() * 3, 0, 6),
+        blocks: 0,
+        fouls_committed: 0,
+        saves,
+        goals_conceded: opponentGoals,
+        accurate_long_balls: clamp(accuratePasses * 0.3, 0, accuratePasses),
+        diving_saves: divingSaves,
+        saves_inside_box: savesInsideBox,
+        clean_sheet: opponentGoals === 0 && minutes >= 60,
         penalty_scored: 0,
         penalty_missed: 0,
         penalty_saved_for_gk: 0,
-        dribbles_attempted: dribblesAttempted,
-        successful_dribbles: successfulDribbles,
-        dribbled_past: dribbledPast,
-        dispossessed,
+        dribbles_attempted: 0,
+        successful_dribbles: 0,
+        dribbled_past: 0,
+        dispossessed: 0,
         yellow_cards: yellow,
         red_cards: red,
         rating,
       };
+    }
+
+    const [attemptCap, successCap] = dribbleCap(position);
+    const passes = passByPlayer.get(player.player_registration_id) ?? 0;
+    const accuratePasses = Math.min(
+      passes,
+      accuratePassByPlayer.get(player.player_registration_id) ?? 0,
+    );
+    const dribblesAttempted = clamp(
+      Math.max(0, (player.dribbling - 48) / 18 + random() * 1.8 - 1.05) *
+        (minutes / 90) *
+        (position === FootballPosition.CB
+          ? 0.45
+          : position === FootballPosition.DM
+            ? 0.65
+            : position === FootballPosition.LB ||
+                position === FootballPosition.RB
+              ? 0.85
+              : 1),
+      0,
+      attemptCap,
+    );
+    const successfulDribbles = clamp(
+      dribblesAttempted * (0.35 + player.dribbling / 260),
+      0,
+      successCap,
+    );
+    const bigChancesCreated =
+      bigChanceCreatedByPlayer.get(player.player_registration_id) ?? 0;
+    const bigChancesMissed =
+      bigChanceMissedByPlayer.get(player.player_registration_id) ?? 0;
+    const shots = shotByPlayer.get(player.player_registration_id) ?? 0;
+    const shotsOnTarget =
+      shotsOnTargetByPlayer.get(player.player_registration_id) ?? 0;
+    const chancesCreated = clamp(
+      Math.max(
+        bigChancesCreated,
+        playerAssists +
+          (position === FootballPosition.AM || position === FootballPosition.CM
+            ? random() * 4
+            : random() * 2),
+      ),
+      Math.max(playerAssists, bigChancesCreated),
+      8,
+    );
+    const tackles = tackleByPlayer.get(player.player_registration_id) ?? 0;
+    const interceptions =
+      interceptionByPlayer.get(player.player_registration_id) ?? 0;
+    const clearances =
+      clearanceByPlayer.get(player.player_registration_id) ?? 0;
+    const blocks = blockByPlayer.get(player.player_registration_id) ?? 0;
+    const dispossessed = clamp(
+      random() *
+        (position === FootballPosition.ST ||
+        position === FootballPosition.LW ||
+        position === FootballPosition.RW
+          ? 4
+          : 2),
+      0,
+      6,
+    );
+    const dribbledPast = clamp(
+      (position === FootballPosition.CB
+        ? 0.7
+        : position === FootballPosition.LB || position === FootballPosition.RB
+          ? 1.1
+          : position === FootballPosition.DM
+            ? 0.9
+            : position === FootballPosition.CM
+              ? 0.55
+              : 0.25) *
+        (1.25 - Math.min(player.defending, 92) / 120) *
+        (1 + random() * 2.2),
+      0,
+      position === FootballPosition.LB || position === FootballPosition.RB
+        ? 5
+        : position === FootballPosition.CB || position === FootballPosition.DM
+          ? 4
+          : 2,
+    );
+    const foulsCommitted = clamp(
+      random() * 3 +
+        (position === FootballPosition.CB || position === FootballPosition.DM
+          ? 1
+          : 0),
+      0,
+      5,
+    );
+    const rating = ratingForOutfield({
+      goals: playerGoals,
+      assists: playerAssists,
+      chancesCreated,
+      passAccuracy: passes ? accuratePasses / passes : 0,
+      successfulDribbles,
+      tackles,
+      interceptions,
+      clearances,
+      dribbledPast,
+      bigChancesMissed,
+      dispossessed,
+      yellow,
+      red,
+      won,
+      lost,
+      position,
     });
+    return {
+      player_registration_id: player.player_registration_id,
+      minutes,
+      position_played: position,
+      goals: playerGoals,
+      assists: playerAssists,
+      shots,
+      shots_on_target: shotsOnTarget,
+      chances_created: chancesCreated,
+      big_chances_created: bigChancesCreated,
+      big_chances_missed: bigChancesMissed,
+      passes,
+      accurate_passes: accuratePasses,
+      tackles,
+      interceptions,
+      clearances,
+      blocks,
+      fouls_committed: foulsCommitted,
+      saves: 0,
+      clean_sheet:
+        opponentGoals === 0 &&
+        minutes >= 60 &&
+        (position === FootballPosition.CB ||
+          position === FootballPosition.LB ||
+          position === FootballPosition.RB ||
+          position === FootballPosition.DM),
+      penalty_scored: 0,
+      penalty_missed: 0,
+      penalty_saved_for_gk: 0,
+      dribbles_attempted: dribblesAttempted,
+      successful_dribbles: successfulDribbles,
+      dribbled_past: dribbledPast,
+      dispossessed,
+      yellow_cards: yellow,
+      red_cards: red,
+      rating,
+    };
+  });
   const cardEventRandom = rng(`${seed}:cards:${side}`);
   const cardEvents = stats.flatMap((stat) => {
     const playerEvents: SimMatchEvent[] = [];
@@ -2176,22 +2214,22 @@ function ratingForOutfield(input: {
       ? input.dribbledPast * 0.13
       : input.dribbledPast * 0.05;
   const value =
-    6.5 +
-    input.goals * 0.72 +
-    input.assists * 0.45 +
+    6.62 +
+    input.goals * 0.82 +
+    input.assists * 0.52 +
     input.chancesCreated * 0.08 +
-    Math.max(0, input.passAccuracy - 0.75) * 1.2 +
-    input.successfulDribbles * 0.06 +
+    Math.max(0, input.passAccuracy - 0.72) * 1.15 +
+    input.successfulDribbles * 0.07 +
     defensiveBonus -
     dribbledPastPenalty -
-    input.bigChancesMissed * 0.18 -
-    input.dispossessed * 0.08 -
-    input.yellow * 0.25 -
+    input.bigChancesMissed * 0.15 -
+    input.dispossessed * 0.065 -
+    input.yellow * 0.2 -
     input.red * 1.1 +
-    (input.won ? 0.18 : 0) -
-    (input.lost ? 0.16 : 0);
+    (input.won ? 0.22 : 0) -
+    (input.lost ? 0.11 : 0);
   return Number(
-    Math.max(input.red ? 4.8 : 5.5, Math.min(9.8, value)).toFixed(1),
+    Math.max(input.red ? 4.8 : 5.7, Math.min(9.8, value)).toFixed(1),
   );
 }
 
@@ -2206,18 +2244,18 @@ function ratingForGoalkeeper(input: {
   lost: boolean;
 }) {
   const value =
-    6.5 +
+    6.62 +
     (input.goalsConceded === 0 ? 0.45 : 0) +
-    input.saves * 0.15 +
+    input.saves * 0.16 +
     input.divingSaves * 0.12 +
     input.savesInsideBox * 0.08 -
-    input.goalsConceded * 0.28 -
-    input.yellow * 0.25 -
+    input.goalsConceded * 0.24 -
+    input.yellow * 0.2 -
     input.red * 1.1 +
-    (input.won ? 0.18 : 0) -
-    (input.lost ? 0.16 : 0);
+    (input.won ? 0.22 : 0) -
+    (input.lost ? 0.11 : 0);
   return Number(
-    Math.max(input.red ? 4.8 : 5.5, Math.min(9.8, value)).toFixed(1),
+    Math.max(input.red ? 4.8 : 5.7, Math.min(9.8, value)).toFixed(1),
   );
 }
 

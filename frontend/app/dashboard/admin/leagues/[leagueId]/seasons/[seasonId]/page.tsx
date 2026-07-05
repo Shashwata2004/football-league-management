@@ -51,6 +51,7 @@ type TabId =
   | "fixtures"
   | "lineups"
   | "matches-ready"
+  | "completed-matches"
   | "standings"
   | "reports"
   | "team-stats"
@@ -205,9 +206,17 @@ interface StandingTeam {
 }
 
 interface CompletedMatchRow {
+  id: string;
   date: string;
   home: string;
   away: string;
+  homeLogoUrl?: string | null;
+  awayLogoUrl?: string | null;
+  homePrimaryColor?: string | null;
+  awayPrimaryColor?: string | null;
+  stage: string;
+  kickoff: string;
+  status: string;
   score: string;
 }
 
@@ -288,18 +297,21 @@ interface AdminSeasonData {
   topScorer: {
     name: string;
     team: string;
+    avatarUrl?: string | null;
     goals: number;
     matches: number;
   } | null;
   topAssist: {
     name: string;
     team: string;
+    avatarUrl?: string | null;
     assists: number;
     matches: number;
   } | null;
   topRated: {
     name: string;
     team: string;
+    avatarUrl?: string | null;
     rating: string;
     matches: number;
   } | null;
@@ -669,6 +681,7 @@ type StandingApiRow = {
   lost: number;
   goals_for: number;
   goals_against: number;
+  goal_difference?: number | null;
   points: number;
 };
 
@@ -700,7 +713,7 @@ type PlayerSeasonStatApiRow = {
     position?: string | null;
     football_position?: string | null;
     shirt_number?: number | null;
-    players?: { full_name?: string | null } | null;
+    players?: { full_name?: string | null; avatar_url?: string | null } | null;
   } | null;
 };
 
@@ -1106,6 +1119,7 @@ function buildAdminSeasonData(input: {
   const completedMatches = input.fixtures
     .filter((fixture) => fixture.status === FixtureStatus.FINAL)
     .map((fixture) => ({
+      id: fixture.id,
       date: safeDate(fixture.kickoff_at),
       home: fixture.home_team_registration_id
         ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
@@ -1115,6 +1129,29 @@ function buildAdminSeasonData(input: {
         ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
             ?.name ?? "Away team")
         : (fixture.away_source ?? "TBD"),
+      homeLogoUrl: fixture.home_team_registration_id
+        ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+            ?.logo_url ?? null)
+        : null,
+      awayLogoUrl: fixture.away_team_registration_id
+        ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+            ?.logo_url ?? null)
+        : null,
+      homePrimaryColor: fixture.home_team_registration_id
+        ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
+            ?.primary_color ??
+          fixture.home_team?.teams?.primary_color ??
+          null)
+        : null,
+      awayPrimaryColor: fixture.away_team_registration_id
+        ? (teamByRegistration.get(fixture.away_team_registration_id)?.teams
+            ?.primary_color ??
+          fixture.away_team?.teams?.primary_color ??
+          null)
+        : null,
+      stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
+      kickoff: fixture.kickoff_at ? safeDateTime(fixture.kickoff_at) : "Kickoff not set",
+      status: statusLabel(fixture.status),
       score: `${fixture.home_score ?? 0} - ${fixture.away_score ?? 0}`,
     }));
 
@@ -1213,6 +1250,8 @@ function buildAdminSeasonData(input: {
               topGoal.player_season_registrations?.players?.full_name ??
               "Unnamed player",
             team: "Season team",
+            avatarUrl:
+              topGoal.player_season_registrations?.players?.avatar_url ?? null,
             goals: topGoal.goals ?? 0,
             matches: topGoal.appearances ?? 0,
           }
@@ -1226,6 +1265,8 @@ function buildAdminSeasonData(input: {
               topAssist.player_season_registrations?.players?.full_name ??
               "Unnamed player",
             team: "Season team",
+            avatarUrl:
+              topAssist.player_season_registrations?.players?.avatar_url ?? null,
             assists: topAssist.assists ?? 0,
             matches: topAssist.appearances ?? 0,
           }
@@ -1237,6 +1278,8 @@ function buildAdminSeasonData(input: {
               topRated.player_season_registrations?.players?.full_name ??
               "Unnamed player",
             team: "Season team",
+            avatarUrl:
+              topRated.player_season_registrations?.players?.avatar_url ?? null,
             rating: String(topRated.average_rating),
             matches: topRated.appearances ?? 0,
           }
@@ -1560,6 +1603,7 @@ const adminTabIds: TabId[] = [
   "fixtures",
   "lineups",
   "matches-ready",
+  "completed-matches",
   "standings",
   "reports",
   "team-stats",
@@ -1922,6 +1966,7 @@ export default function AdminLeagueSeasonDashboard() {
         { id: "fixtures", label: "Fixtures", icon: CalendarDays },
         { id: "lineups", label: "Lineups", icon: ClipboardCheck },
         { id: "matches-ready", label: "Matches Ready", icon: PlayCircle },
+        { id: "completed-matches", label: "Completed Matches", icon: CheckCircle2 },
         ...(!isGroupKnockout
           ? [{ id: "standings", label: "Standings", icon: Trophy }]
           : []),
@@ -2194,6 +2239,9 @@ export default function AdminLeagueSeasonDashboard() {
               onLoadMatchday={loadCurrentMatchday}
             />
           ) : null}
+          {activeTab === "completed-matches" ? (
+            <CompletedMatchesView matches={adminData.completedMatches} />
+          ) : null}
           {activeTab === "standings" && !isGroupKnockout ? (
             <StandingsView groupMode={false} teams={adminData.standings} />
           ) : null}
@@ -2305,7 +2353,7 @@ function DashboardView({
           value={String(data.completedMatches.length)}
           color="cyan"
           action="View matches"
-          onAction={() => onNavigate("fixtures")}
+          onAction={() => onNavigate("completed-matches")}
         />
       </div>
 
@@ -2354,6 +2402,7 @@ function DashboardView({
               <PlayerHero
                 name={data.topScorer.name}
                 team={data.topScorer.team}
+                avatarUrl={data.topScorer.avatarUrl}
                 shirt="-"
                 color="blue"
               />
@@ -2379,6 +2428,7 @@ function DashboardView({
               <PlayerHero
                 name={data.topAssist.name}
                 team={data.topAssist.team}
+                avatarUrl={data.topAssist.avatarUrl}
                 shirt="-"
                 color="blue"
               />
@@ -2404,6 +2454,7 @@ function DashboardView({
               <PlayerHero
                 name={data.topRated.name}
                 team={data.topRated.team}
+                avatarUrl={data.topRated.avatarUrl}
                 shirt="-"
                 color="black"
               />
@@ -2436,22 +2487,27 @@ function DashboardView({
         <Panel
           title="Recently Completed Matches"
           action="View all"
-          onAction={() => onNavigate("fixtures")}
+          onAction={() => onNavigate("completed-matches")}
         >
           {data.completedMatches.length > 0 ? (
             <div className="divide-y divide-slate-200">
               {data.completedMatches.map((match) => (
                 <div
-                  key={`${match.date}-${match.home}`}
+                  key={match.id}
                   className="grid grid-cols-[120px_1fr_68px_1fr_70px] items-center gap-3 py-4 text-sm"
                 >
                   <span className="text-slate-600">{match.date}</span>
-                  <span className="text-right font-medium">{match.home}</span>
+                  <div className="justify-self-end">
+                    <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
+                  </div>
                   <span className="rounded-md bg-green-100 px-3 py-1 text-center font-black text-green-800">
                     {match.score}
                   </span>
-                  <span className="font-medium">{match.away}</span>
-                  <button className="rounded-md border border-slate-200 px-4 py-2 font-semibold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm active:translate-y-0 active:scale-[0.97]">
+                  <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
+                  <button
+                    className="rounded-md border border-slate-200 px-4 py-2 font-semibold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:shadow-sm active:translate-y-0 active:scale-[0.97]"
+                    onClick={() => onNavigate("completed-matches")}
+                  >
                     View
                   </button>
                 </div>
@@ -2462,7 +2518,7 @@ function DashboardView({
           )}
           <button
             className="mt-4 w-full text-sm font-bold text-indigo-700 transition hover:text-indigo-900 hover:drop-shadow-[0_0_8px_rgba(79,70,229,0.25)]"
-            onClick={() => onNavigate("fixtures")}
+            onClick={() => onNavigate("completed-matches")}
           >
             View all completed matches →
           </button>
@@ -5762,6 +5818,120 @@ function MatchesReadyView({
   );
 }
 
+function CompletedMatchesView({ matches }: { matches: CompletedMatchRow[] }) {
+  const [selectedMatch, setSelectedMatch] = useState<CompletedMatchRow | null>(
+    null,
+  );
+  const [detail, setDetail] = useState<MatchDetailResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedStat, setSelectedStat] = useState<MatchDetailPlayerStat | null>(
+    null,
+  );
+  const [error, setError] = useState("");
+
+  async function openDetail(match: CompletedMatchRow) {
+    setSelectedMatch(match);
+    setDetail(null);
+    setDetailLoading(true);
+    setError("");
+    try {
+      const data = await api<MatchDetailResponse>(
+        `/admin/matches/${match.id}/detail`,
+      );
+      setDetail(data);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not load completed match",
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  if (selectedMatch) {
+    const detailMatch: ReadyMatchRow = {
+      id: selectedMatch.id,
+      home: selectedMatch.home,
+      away: selectedMatch.away,
+      homeLogoUrl: selectedMatch.homeLogoUrl ?? null,
+      awayLogoUrl: selectedMatch.awayLogoUrl ?? null,
+      homePrimaryColor: selectedMatch.homePrimaryColor ?? null,
+      awayPrimaryColor: selectedMatch.awayPrimaryColor ?? null,
+      stage: selectedMatch.stage,
+      kickoff: selectedMatch.kickoff,
+      status: selectedMatch.status,
+      submitted_lineups: 2,
+      confirmed_lineups: 2,
+      can_simulate: false,
+    };
+    return (
+      <div>
+        {error ? (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
+        ) : null}
+        <MatchDetailPage
+          match={detailMatch}
+          detail={detail}
+          loading={detailLoading}
+          simulating={false}
+          confirming={false}
+          onBack={() => {
+            setSelectedMatch(null);
+            setDetail(null);
+            setSelectedStat(null);
+          }}
+          onSimulate={() => undefined}
+          onConfirm={() => undefined}
+          onPlayerStat={setSelectedStat}
+        />
+        {selectedStat ? (
+          <PlayerMatchStatModal
+            stat={selectedStat}
+            onClose={() => setSelectedStat(null)}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageTitle
+        title="Completed Matches"
+        subtitle="Finalized matches and confirmed simulation data."
+      />
+      {matches.length === 0 ? (
+        <EmptyState label="No completed matches yet." />
+      ) : (
+        <div className="grid gap-4 xl:grid-cols-2">
+          {matches.map((match, index) => (
+            <Panel key={match.id} title={`Completed Match ${index + 1}`}>
+              <button
+                type="button"
+                className="block w-full rounded-2xl p-2 text-left transition hover:-translate-y-0.5 hover:bg-slate-50"
+                onClick={() => void openDetail(match)}
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
+                  <span className="rounded-xl bg-green-100 px-4 py-2 text-lg font-black text-green-800">
+                    {match.score}
+                  </span>
+                  <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
+                </div>
+                <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-center text-sm font-bold text-slate-600">
+                  {match.kickoff} · {match.stage}
+                </p>
+              </button>
+            </Panel>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MatchDetailPage({
   match,
   detail,
@@ -7377,17 +7547,39 @@ function DivideGroupsView({
 
 function GroupsView({ season }: { season: SeasonDto }) {
   const [data, setData] = useState<AdminGroupsResponse | null>(null);
+  const [standings, setStandings] = useState<StandingApiRow[]>([]);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    void api<AdminGroupsResponse>(`/admin/seasons/${season.id}/groups`)
-      .then(setData)
+    let alive = true;
+    void Promise.all([
+      api<AdminGroupsResponse>(`/admin/seasons/${season.id}/groups`),
+      publicApi<{ standings: StandingApiRow[] }>(
+        `/public/seasons/${season.id}/standings`,
+      ),
+    ])
+      .then(([groupData, standingData]) => {
+        if (!alive) return;
+        setData(groupData);
+        setStandings(standingData.standings ?? []);
+      })
       .catch((error) =>
         setMessage(
           error instanceof Error ? error.message : "Could not load groups",
         ),
       );
+    return () => {
+      alive = false;
+    };
   }, [season.id]);
+
+  const standingByTeam = useMemo(
+    () =>
+      new Map(
+        standings.map((standing) => [standing.team_registration_id, standing]),
+      ),
+    [standings],
+  );
 
   return (
     <div>
@@ -7409,18 +7601,70 @@ function GroupsView({ season }: { season: SeasonDto }) {
               {group.teams.length === 0 ? (
                 <EmptyState label="No teams in this group." />
               ) : (
-                group.teams.map((team) => (
-                  <div
-                    key={team.id}
-                    className="flex items-center justify-between border-b border-slate-100 py-3 last:border-b-0"
-                  >
-                    <TeamCompact
-                      name={team.name ?? "Unnamed team"}
-                      logoUrl={team.logo_url ?? null}
-                    />
-                    <StatusPill tone="blue">Assigned</StatusPill>
-                  </div>
-                ))
+                <div className="overflow-hidden rounded-2xl border border-slate-200">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500">
+                      <tr>
+                        <th className="px-4 py-3">Team</th>
+                        <th className="px-3 py-3 text-center">P</th>
+                        <th className="px-3 py-3 text-center">W</th>
+                        <th className="px-3 py-3 text-center">D</th>
+                        <th className="px-3 py-3 text-center">L</th>
+                        <th className="px-3 py-3 text-center">GF</th>
+                        <th className="px-3 py-3 text-center">GA</th>
+                        <th className="px-3 py-3 text-center">GD</th>
+                        <th className="px-3 py-3 text-center">PTS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.teams.map((team) => {
+                        const standing = standingByTeam.get(team.id);
+                        const goalsFor = standing?.goals_for ?? 0;
+                        const goalsAgainst = standing?.goals_against ?? 0;
+                        const goalDifference =
+                          standing?.goal_difference ??
+                          goalsFor - goalsAgainst;
+                        return (
+                          <tr
+                            key={team.id}
+                            className="border-t border-slate-100"
+                          >
+                            <td className="px-4 py-3">
+                              <TeamCompact
+                                name={team.name ?? "Unnamed team"}
+                                logoUrl={team.logo_url ?? null}
+                              />
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold">
+                              {standing?.played ?? 0}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold">
+                              {standing?.won ?? 0}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold">
+                              {standing?.drawn ?? 0}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold">
+                              {standing?.lost ?? 0}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold">
+                              {goalsFor}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold">
+                              {goalsAgainst}
+                            </td>
+                            <td className="px-3 py-3 text-center font-bold">
+                              {goalDifference}
+                            </td>
+                            <td className="px-3 py-3 text-center font-black text-indigo-700">
+                              {standing?.points ?? 0}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </Panel>
           ))}
@@ -8096,24 +8340,34 @@ function TeamCompact({
 function PlayerHero({
   name,
   team,
+  avatarUrl,
   shirt,
   color,
 }: {
   name: string;
   team: string;
+  avatarUrl?: string | null | undefined;
   shirt: string;
   color: "blue" | "black";
 }) {
   return (
     <div className="flex items-center gap-6">
       <div
-        className={`grid h-24 w-24 place-items-center rounded-full ${color === "blue" ? "bg-blue-100" : "bg-slate-100"}`}
+        className={`grid h-24 w-24 place-items-center overflow-hidden rounded-full ${color === "blue" ? "bg-blue-100" : "bg-slate-100"}`}
       >
-        <div
-          className={`grid h-16 w-14 place-items-center rounded-t-2xl text-2xl font-black text-white ${color === "blue" ? "bg-blue-800" : "bg-slate-900"}`}
-        >
-          {shirt}
-        </div>
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={name}
+            className="h-full w-full object-cover object-top"
+          />
+        ) : (
+          <div
+            className={`grid h-16 w-14 place-items-center rounded-t-2xl text-2xl font-black text-white ${color === "blue" ? "bg-blue-800" : "bg-slate-900"}`}
+          >
+            {shirt}
+          </div>
+        )}
       </div>
       <div>
         <h3 className="text-2xl font-black">{name}</h3>
