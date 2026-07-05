@@ -157,8 +157,8 @@ async function loadCurrentMatchdayMatches(seasonId: string) {
     null;
   const matchdayFixtures = firstMatchday
     ? activeFixtures.filter(
-        (fixture) => fixture.kickoff_at?.slice(0, 10) === firstMatchday,
-      )
+      (fixture) => fixture.kickoff_at?.slice(0, 10) === firstMatchday,
+    )
     : activeFixtures.slice(0, 8);
   return matchdayFixtures.map(formatAdminMatchdayFixture);
 }
@@ -191,11 +191,11 @@ async function notifyMatchdayManagers(
   const fixtureIds = rows.map((fixture) => fixture.id).filter(Boolean);
   const { data: existingMessages, error: existingError } = fixtureIds.length
     ? await supabaseAdmin
-        .from("manager_messages")
-        .select("fixture_id,team_registration_id,message")
-        .eq("season_id", seasonId)
-        .in("fixture_id", fixtureIds)
-        .ilike("message", "%Submit your lineup%")
+      .from("manager_messages")
+      .select("fixture_id,team_registration_id,message")
+      .eq("season_id", seasonId)
+      .in("fixture_id", fixtureIds)
+      .ilike("message", "%Submit your lineup%")
     : { data: [], error: null };
   if (existingError) throw existingError;
   const existingKeys = new Set(
@@ -217,10 +217,10 @@ async function notifyMatchdayManagers(
     );
     const kickoffText = fixture.kickoff_at
       ? new Date(fixture.kickoff_at).toLocaleString("en-US", {
-          dateStyle: "medium",
-          timeStyle: "short",
-          timeZone: "Asia/Dhaka",
-        })
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "Asia/Dhaka",
+      })
       : "the scheduled match time";
     const pairings = [
       {
@@ -247,7 +247,7 @@ async function notifyMatchdayManagers(
         manager_id: pairing.managerId,
         team_registration_id: pairing.teamId,
         fixture_id: fixture.id,
-        related_type: "INJURY_NOTICE",
+        related_type: "GENERAL_NOTICE",
         message: `Today is your match against ${pairing.opponent} at ${kickoffText}. Submit your lineup before the deadline.`,
         created_by: adminId,
       }));
@@ -567,22 +567,22 @@ adminRouter.get(
     ] = await Promise.all([
       playerIds.length
         ? supabaseAdmin
-            .from("player_season_stats")
-            .select("*")
-            .eq("season_id", seasonId)
-            .in("player_registration_id", playerIds)
+          .from("player_season_stats")
+          .select("*")
+          .eq("season_id", seasonId)
+          .in("player_registration_id", playerIds)
         : Promise.resolve({ data: [], error: null }),
       playerIds.length
         ? supabaseAdmin
-            .from("player_match_stats")
-            .select("*")
-            .in("player_registration_id", playerIds)
+          .from("player_match_stats")
+          .select("*")
+          .in("player_registration_id", playerIds)
         : Promise.resolve({ data: [], error: null }),
       teamIds.length
         ? supabaseAdmin
-            .from("team_match_stats")
-            .select("*")
-            .in("team_registration_id", teamIds)
+          .from("team_match_stats")
+          .select("*")
+          .in("team_registration_id", teamIds)
         : Promise.resolve({ data: [], error: null }),
     ]);
     if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
@@ -1368,8 +1368,8 @@ adminRouter.patch(
       : null;
     const suspensionMatchesRemaining =
       req.body?.suspension_matches_remaining === undefined ||
-      req.body.suspension_matches_remaining === null ||
-      req.body.suspension_matches_remaining === ""
+        req.body.suspension_matches_remaining === null ||
+        req.body.suspension_matches_remaining === ""
         ? null
         : Number(req.body.suspension_matches_remaining);
     if (
@@ -1483,57 +1483,57 @@ adminRouter.patch(
     const row =
       generated.position === FootballPosition.GK
         ? {
-            player_registration_id: registration.id,
-            player_id: registration.player_id,
-            season_id: registration.season_id,
-            team_registration_id: registration.team_registration_id,
-            position: generated.position,
-            rating_tier: generated.rating_tier,
-            shooting: null,
-            passing: null,
-            dribbling: null,
-            defending: null,
-            pace: null,
-            stamina: null,
-            physical: generated.physical,
-            shot_stopping: generated.shot_stopping,
-            reflexes: generated.reflexes,
-            positioning: generated.positioning,
-            handling: generated.handling,
-            diving: generated.diving,
-            distribution: generated.distribution,
-            communication: generated.communication,
-            overall_rating: generated.overall_rating,
-            generated_by_admin_id: req.auth!.userId,
-            generated_at: new Date().toISOString(),
-            is_hidden_from_manager: true,
-          }
+          player_registration_id: registration.id,
+          player_id: registration.player_id,
+          season_id: registration.season_id,
+          team_registration_id: registration.team_registration_id,
+          position: generated.position,
+          rating_tier: generated.rating_tier,
+          shooting: null,
+          passing: null,
+          dribbling: null,
+          defending: null,
+          pace: null,
+          stamina: null,
+          physical: generated.physical,
+          shot_stopping: generated.shot_stopping,
+          reflexes: generated.reflexes,
+          positioning: generated.positioning,
+          handling: generated.handling,
+          diving: generated.diving,
+          distribution: generated.distribution,
+          communication: generated.communication,
+          overall_rating: generated.overall_rating,
+          generated_by_admin_id: req.auth!.userId,
+          generated_at: new Date().toISOString(),
+          is_hidden_from_manager: true,
+        }
         : {
-            player_registration_id: registration.id,
-            player_id: registration.player_id,
-            season_id: registration.season_id,
-            team_registration_id: registration.team_registration_id,
-            position: generated.position,
-            rating_tier: generated.rating_tier,
-            shooting: generated.shooting,
-            passing: generated.passing,
-            dribbling: generated.dribbling,
-            defending: generated.defending,
-            physical: generated.physical,
-            pace: generated.pace,
-            stamina: generated.stamina,
-            shot_stopping: null,
-            reflexes: null,
-            positioning: null,
-            handling: null,
-            diving: null,
-            distribution: null,
-            communication: null,
-            overall_rating: generated.overall_rating,
-            generated_by_admin_id: req.auth!.userId,
-            generated_at: new Date().toISOString(),
-            is_hidden_from_manager: true,
-          };
+          player_registration_id: registration.id,
+          player_id: registration.player_id,
+          season_id: registration.season_id,
+          team_registration_id: registration.team_registration_id,
+          position: generated.position,
+          rating_tier: generated.rating_tier,
+          shooting: generated.shooting,
+          passing: generated.passing,
+          dribbling: generated.dribbling,
+          defending: generated.defending,
+          physical: generated.physical,
+          pace: generated.pace,
+          stamina: generated.stamina,
+          shot_stopping: null,
+          reflexes: null,
+          positioning: null,
+          handling: null,
+          diving: null,
+          distribution: null,
+          communication: null,
+          overall_rating: generated.overall_rating,
+          generated_by_admin_id: req.auth!.userId,
+          generated_at: new Date().toISOString(),
+          is_hidden_from_manager: true,
+        };
     const { data: ability, error: abilityError } = await supabaseAdmin
       .from("player_abilities")
       .upsert(row, { onConflict: "player_registration_id" })
@@ -1617,8 +1617,8 @@ adminRouter.patch(
       merged.position === FootballPosition.GK ? gkValues : outfieldValues;
     const overall_rating = values.length
       ? Math.round(
-          values.reduce((sum, value) => sum + value, 0) / values.length,
-        )
+        values.reduce((sum, value) => sum + value, 0) / values.length,
+      )
       : merged.overall_rating;
     const { data, error } = await supabaseAdmin
       .from("player_abilities")
@@ -2651,16 +2651,16 @@ async function decrementMatchAbsences(fixture: any) {
     const update =
       next === 0
         ? {
-            player_status: PlayerLifecycleStatus.ACTIVE,
-            suspension_reason: null,
-            suspension_type: null,
-            suspension_matches_remaining: null,
-            updated_at: new Date().toISOString(),
-          }
+          player_status: PlayerLifecycleStatus.ACTIVE,
+          suspension_reason: null,
+          suspension_type: null,
+          suspension_matches_remaining: null,
+          updated_at: new Date().toISOString(),
+        }
         : {
-            suspension_matches_remaining: next,
-            updated_at: new Date().toISOString(),
-          };
+          suspension_matches_remaining: next,
+          updated_at: new Date().toISOString(),
+        };
     const { error } = await supabaseAdmin
       .from("player_season_registrations")
       .update(update)
