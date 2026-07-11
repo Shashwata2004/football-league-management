@@ -30,7 +30,8 @@ try {
     from information_schema.columns
     where table_schema = 'public'
       and (
-        (table_name = 'seasons' and column_name in ('active_matchday_number', 'active_matchday_started_at'))
+        (table_name = 'seasons' and column_name in ('active_matchday_number', 'active_matchday_date', 'active_matchday_started_at'))
+        or (table_name = 'manager_messages' and column_name = 'notification_key')
         or (table_name = 'team_match_stats' and column_name in ('blocks', 'expected_goals', 'shots_off_target', 'hit_woodwork', 'tackles', 'interceptions', 'clearances', 'keeper_saves'))
         or (table_name = 'player_match_stats' and column_name in ('dribbled_past', 'clean_sheet', 'penalty_scored', 'penalty_missed', 'penalty_saved_for_gk'))
       )

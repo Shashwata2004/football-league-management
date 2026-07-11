@@ -199,6 +199,7 @@ create table if not exists public.seasons (
   total_knockout_teams integer,
   champion_team_registration_id uuid,
   active_matchday_number integer,
+  active_matchday_date date,
   active_matchday_started_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -243,6 +244,7 @@ alter table public.seasons add column if not exists phase public.season_phase no
 alter table public.seasons add column if not exists round_format public.season_format not null default 'SINGLE_ROUND_ROBIN';
 alter table public.seasons add column if not exists fixture_status text not null default 'NOT_GENERATED';
 alter table public.seasons add column if not exists active_matchday_number integer;
+alter table public.seasons add column if not exists active_matchday_date date;
 alter table public.seasons add column if not exists active_matchday_started_at timestamptz;
 alter table public.seasons add column if not exists total_teams integer;
 alter table public.seasons add column if not exists min_players_per_team integer;
@@ -857,6 +859,7 @@ create table if not exists public.manager_messages (
   team_registration_id uuid references public.team_registrations(id) on delete set null,
   player_registration_id uuid references public.player_season_registrations(id) on delete set null,
   fixture_id uuid references public.fixtures(id) on delete set null,
+  notification_key text,
   related_type public.manager_message_type not null,
   message text not null,
   created_by uuid references public.profiles(id),
@@ -866,6 +869,8 @@ create table if not exists public.manager_messages (
 
 alter table public.manager_messages add column if not exists player_registration_id uuid references public.player_season_registrations(id) on delete set null;
 alter table public.manager_messages add column if not exists fixture_id uuid references public.fixtures(id) on delete set null;
+alter table public.manager_messages add column if not exists notification_key text;
+create unique index if not exists manager_messages_notification_key_uidx on public.manager_messages (notification_key);
 
 create table if not exists public.season_groups (
   id uuid primary key default gen_random_uuid(),

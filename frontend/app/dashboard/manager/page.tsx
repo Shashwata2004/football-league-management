@@ -872,6 +872,10 @@ export default function ManagerDashboardPage() {
   const [matchDetailLoading, setMatchDetailLoading] = useState(false);
   const [availabilityNotice, setAvailabilityNotice] =
     useState<MessageRecord | null>(null);
+  const [dismissedAvailabilityNoticeIds, setDismissedAvailabilityNoticeIds] =
+    useState<Set<string>>(() => new Set());
+  const [hasPresentedAvailabilityNotice, setHasPresentedAvailabilityNotice] =
+    useState(false);
 
   async function load() {
     setLoading(true);
@@ -969,11 +973,29 @@ export default function ManagerDashboardPage() {
 
   async function closeAvailabilityNotice() {
     const notice = availabilityNotice;
+    if (notice) {
+      setDismissedAvailabilityNoticeIds((current) => {
+        const next = new Set(current);
+        next.add(notice.id);
+        return next;
+      });
+      setPayload((current) =>
+        current
+          ? {
+            ...current,
+            messages: current.messages.map((item) =>
+              item.id === notice.id
+                ? { ...item, read_at: item.read_at ?? new Date().toISOString() }
+                : item,
+            ),
+          }
+          : current,
+      );
+    }
     setAvailabilityNotice(null);
     if (!notice || notice.read_at) return;
     try {
       await api(`/manager/messages/${notice.id}/read`, { method: "PATCH" });
-      await load();
     } catch {
       // Non-critical: dismissal should not block the manager panel.
     }
@@ -1009,16 +1031,30 @@ export default function ManagerDashboardPage() {
     : "rgba(255, 255, 255, 0.12)";
 
   useEffect(() => {
-    if (!payload?.messages?.length || availabilityNotice) return;
+    if (
+      !payload?.messages?.length ||
+      availabilityNotice ||
+      hasPresentedAvailabilityNotice
+    )
+      return;
     const notice = payload.messages.find(
       (item) =>
         !item.read_at &&
+        !dismissedAvailabilityNoticeIds.has(item.id) &&
         /injur|suspend|out for|submit your lineup|today is your match|matchday/i.test(
           `${item.related_type} ${item.message}`,
         ),
     );
-    if (notice) setAvailabilityNotice(notice);
-  }, [payload?.messages, availabilityNotice]);
+    if (notice) {
+      setAvailabilityNotice(notice);
+      setHasPresentedAvailabilityNotice(true);
+    }
+  }, [
+    payload?.messages,
+    availabilityNotice,
+    dismissedAvailabilityNoticeIds,
+    hasPresentedAvailabilityNotice,
+  ]);
 
   return (
     <div

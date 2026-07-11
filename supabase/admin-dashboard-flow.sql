@@ -51,6 +51,12 @@ create table if not exists public.manager_messages (
   created_at timestamptz not null default now()
 );
 
+alter table public.manager_messages
+  add column if not exists notification_key text;
+
+create unique index if not exists manager_messages_notification_key_uidx
+  on public.manager_messages (notification_key);
+
 create table if not exists public.season_groups (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references public.seasons(id) on delete cascade,

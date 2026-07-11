@@ -3,7 +3,70 @@
 
 alter table public.seasons
   add column if not exists active_matchday_number integer,
+  add column if not exists active_matchday_date date,
   add column if not exists active_matchday_started_at timestamptz;
+
+update public.seasons as season
+set active_matchday_date = coalesce(
+  (
+    select min((fixture.kickoff_at at time zone 'Asia/Dhaka')::date)
+    from public.fixtures as fixture
+    where fixture.season_id = season.id
+      and coalesce(fixture.matchday_number, fixture.round_no) = season.active_matchday_number
+      and coalesce(fixture.result_confirmed, false) = false
+      and fixture.status not in ('FINAL', 'COMPLETED')
+  ),
+  (
+    select max((fixture.kickoff_at at time zone 'Asia/Dhaka')::date)
+    from public.fixtures as fixture
+    where fixture.season_id = season.id
+      and coalesce(fixture.matchday_number, fixture.round_no) = season.active_matchday_number
+  )
+)
+where season.active_matchday_number is not null
+  and season.active_matchday_date is null;
+
+alter table public.manager_messages
+  add column if not exists notification_key text;
+
+with ranked_reminders as (
+  select
+    id,
+    row_number() over (
+      partition by fixture_id, team_registration_id
+      order by created_at desc, id desc
+    ) as row_number
+  from public.manager_messages
+  where fixture_id is not null
+    and team_registration_id is not null
+    and lower(message) like '%submit your lineup%'
+)
+update public.manager_messages as message
+set read_at = coalesce(message.read_at, now())
+from ranked_reminders as reminder
+where message.id = reminder.id
+  and reminder.row_number > 1;
+
+with latest_reminders as (
+  select distinct on (fixture_id, team_registration_id)
+    id,
+    fixture_id,
+    team_registration_id
+  from public.manager_messages
+  where fixture_id is not null
+    and team_registration_id is not null
+    and lower(message) like '%submit your lineup%'
+  order by fixture_id, team_registration_id, created_at desc, id desc
+)
+update public.manager_messages as message
+set notification_key =
+  'matchday-lineup:' || reminder.fixture_id || ':' || reminder.team_registration_id
+from latest_reminders as reminder
+where message.id = reminder.id
+  and message.notification_key is null;
+
+create unique index if not exists manager_messages_notification_key_uidx
+  on public.manager_messages (notification_key);
 
 alter table public.team_match_stats
   add column if not exists expected_goals numeric(4,2) not null default 0 check (expected_goals >= 0),

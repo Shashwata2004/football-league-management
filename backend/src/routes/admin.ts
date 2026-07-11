@@ -100,10 +100,26 @@ function formatAdminMatchdayFixture(fixture: any) {
   };
 }
 
+function fixtureDateKey(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Dhaka",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 async function loadCurrentMatchdayMatches(seasonId: string) {
   const { data: season, error: seasonError } = await supabaseAdmin
     .from("seasons")
-    .select("active_matchday_number")
+    .select("active_matchday_number,active_matchday_date")
     .eq("id", seasonId)
     .single();
   if (seasonError && seasonError.code !== "PGRST204") throw seasonError;
@@ -129,12 +145,19 @@ async function loadCurrentMatchdayMatches(seasonId: string) {
   const activeFixtures = fixtures ?? [];
   const activeMatchdayNumber =
     Number(season?.active_matchday_number ?? 0) || null;
-  if (activeMatchdayNumber) {
+  const storedActiveDate = season?.active_matchday_date ?? null;
+  const legacyActiveDate = activeMatchdayNumber
+    ? activeFixtures.find(
+      (fixture) =>
+        Number(fixture.matchday_number ?? fixture.round_no) ===
+        activeMatchdayNumber,
+    )?.kickoff_at
+    : null;
+  const activeDate = storedActiveDate ?? fixtureDateKey(legacyActiveDate);
+  if (activeDate) {
     return activeFixtures
       .filter(
-        (fixture) =>
-          Number(fixture.matchday_number ?? fixture.round_no) ===
-          activeMatchdayNumber,
+        (fixture) => fixtureDateKey(fixture.kickoff_at) === activeDate,
       )
       .map(formatAdminMatchdayFixture);
   }
@@ -173,7 +196,7 @@ function isFixtureCompleted(fixture: Record<string, unknown>) {
 
 async function notifyMatchdayManagers(
   seasonId: string,
-  matchdayNumber: number,
+  matchdayDate: string,
   adminId: string | null,
 ) {
   const { data: fixtures, error } = await supabaseAdmin
@@ -185,8 +208,7 @@ async function notifyMatchdayManagers(
   if (error) throw error;
 
   const rows = (fixtures ?? []).filter(
-    (fixture) =>
-      Number(fixture.matchday_number ?? fixture.round_no) === matchdayNumber,
+    (fixture) => fixtureDateKey(fixture.kickoff_at) === matchdayDate,
   );
   const fixtureIds = rows.map((fixture) => fixture.id).filter(Boolean);
   const { data: existingMessages, error: existingError } = fixtureIds.length
@@ -247,6 +269,7 @@ async function notifyMatchdayManagers(
         manager_id: pairing.managerId,
         team_registration_id: pairing.teamId,
         fixture_id: fixture.id,
+        notification_key: `matchday-lineup:${fixture.id}:${pairing.teamId}`,
         related_type: "GENERAL_NOTICE",
         message: `Today is your match against ${pairing.opponent} at ${kickoffText}. Submit your lineup before the deadline.`,
         created_by: adminId,
@@ -255,7 +278,10 @@ async function notifyMatchdayManagers(
   if (messages.length) {
     const { error: messageError } = await supabaseAdmin
       .from("manager_messages")
-      .insert(messages);
+      .upsert(messages, {
+        onConflict: "notification_key",
+        ignoreDuplicates: true,
+      });
     if (messageError) throw messageError;
   }
 }
@@ -1954,16 +1980,30 @@ adminRouter.post(
     const activeMatchdayNumber =
       Number(season.active_matchday_number ?? 0) || null;
 
-    if (activeMatchdayNumber) {
-      const { data: activeFixtures, error: activeError } = await supabaseAdmin
-        .from("fixtures")
-        .select("id,status,result_confirmed,round_no,matchday_number")
-        .eq("season_id", seasonId);
-      if (activeError) throw activeError;
-      const current = (activeFixtures ?? []).filter(
+    const { data: nextFixtures, error: nextError } = await supabaseAdmin
+      .from("fixtures")
+      .select("id,status,result_confirmed,round_no,matchday_number,kickoff_at")
+      .eq("season_id", seasonId)
+      .order("kickoff_at", { ascending: true })
+      .order("matchday_number", { ascending: true })
+      .order("round_no", { ascending: true });
+    if (nextError) throw nextError;
+
+    const fixtures = nextFixtures ?? [];
+    const legacyActiveDate = activeMatchdayNumber
+      ? fixtures.find(
         (fixture) =>
+          !isFixtureCompleted(fixture) &&
           Number(fixture.matchday_number ?? fixture.round_no) ===
           activeMatchdayNumber,
+      )?.kickoff_at
+      : null;
+    const activeDate =
+      season.active_matchday_date ?? fixtureDateKey(legacyActiveDate);
+
+    if (activeDate) {
+      const current = fixtures.filter(
+        (fixture) => fixtureDateKey(fixture.kickoff_at) === activeDate,
       );
       if (
         current.length &&
@@ -1971,30 +2011,25 @@ adminRouter.post(
       ) {
         throw new AppError(
           400,
-          `Complete all Matchday ${activeMatchdayNumber} matches before jumping to the next matchday.`,
+          `Complete all matches scheduled for ${activeDate} before opening the next matchday.`,
         );
       }
     }
 
-    const { data: nextFixtures, error: nextError } = await supabaseAdmin
-      .from("fixtures")
-      .select("id,status,result_confirmed,round_no,matchday_number,kickoff_at")
-      .eq("season_id", seasonId)
-      .order("matchday_number", { ascending: true })
-      .order("round_no", { ascending: true })
-      .order("kickoff_at", { ascending: true });
-    if (nextError) throw nextError;
-
-    const nextMatchday = (nextFixtures ?? [])
-      .filter((fixture) => !isFixtureCompleted(fixture))
-      .map((fixture) => Number(fixture.matchday_number ?? fixture.round_no))
-      .find(
-        (value) =>
-          Number.isFinite(value) &&
-          (!activeMatchdayNumber || value > activeMatchdayNumber),
+    const nextFixture = fixtures.find((fixture) => {
+      const date = fixtureDateKey(fixture.kickoff_at);
+      return (
+        !isFixtureCompleted(fixture) &&
+        Boolean(date) &&
+        (!activeDate || date! > activeDate)
       );
+    });
+    const nextMatchday = nextFixture
+      ? Number(nextFixture.matchday_number ?? nextFixture.round_no)
+      : null;
+    const nextMatchdayDate = fixtureDateKey(nextFixture?.kickoff_at);
 
-    if (!nextMatchday) {
+    if (!nextMatchday || !nextMatchdayDate) {
       res.json({ updated_count: 0, matches: [] });
       return;
     }
@@ -2004,28 +2039,31 @@ adminRouter.post(
       .from("seasons")
       .update({
         active_matchday_number: nextMatchday,
+        active_matchday_date: nextMatchdayDate,
         active_matchday_started_at: now,
         updated_at: now,
       })
       .eq("id", seasonId);
     if (seasonUpdateError) throw seasonUpdateError;
 
+    const fixtureIdsForDate = fixtures
+      .filter(
+        (fixture) => fixtureDateKey(fixture.kickoff_at) === nextMatchdayDate,
+      )
+      .map((fixture) => fixture.id);
     const { data, error } = await supabaseAdmin
       .from("fixtures")
       .update({
         status: FixtureStatus.READY_TO_SIMULATE,
         updated_at: new Date().toISOString(),
       })
-      .eq("season_id", seasonId)
-      .or(
-        `matchday_number.eq.${nextMatchday},and(matchday_number.is.null,round_no.eq.${nextMatchday})`,
-      )
+      .in("id", fixtureIdsForDate)
       .eq("status", FixtureStatus.LINEUPS_CONFIRMED)
       .select("id");
     if (error) throw error;
     await notifyMatchdayManagers(
       seasonId,
-      nextMatchday,
+      nextMatchdayDate,
       req.auth?.userId ?? null,
     );
     const matches = await loadCurrentMatchdayMatches(seasonId);
@@ -2038,12 +2076,11 @@ adminRouter.get(
   asyncHandler(async (req, res) => {
     const seasonId = routeParam(req.params.seasonId, "seasonId");
     const season = await loadFixtureSeason(seasonId);
-    const activeMatchdayNumber =
-      Number(season.active_matchday_number ?? 0) || null;
-    if (activeMatchdayNumber) {
+    const activeMatchdayDate = season.active_matchday_date ?? null;
+    if (activeMatchdayDate) {
       await notifyMatchdayManagers(
         seasonId,
-        activeMatchdayNumber,
+        activeMatchdayDate,
         req.auth?.userId ?? null,
       );
     }

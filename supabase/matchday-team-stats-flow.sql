@@ -1,5 +1,6 @@
 alter table public.seasons
   add column if not exists active_matchday_number integer,
+  add column if not exists active_matchday_date date,
   add column if not exists active_matchday_started_at timestamptz;
 
 alter table public.team_match_stats
