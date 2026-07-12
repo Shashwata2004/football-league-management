@@ -792,6 +792,21 @@ function matchLabel(fixture: FixtureRecord) {
   return `${fixture.home_team?.teams?.name ?? "Home"} vs ${fixture.away_team?.teams?.name ?? "Away"}`;
 }
 
+function matchStageLabel(stage?: string | null) {
+  const normalized = (stage ?? "").toUpperCase();
+  const labels: Record<string, string> = {
+    GROUP: "Group",
+    LEAGUE: "League",
+    ROUND_OF_64: "Round of 64",
+    ROUND_OF_32: "Round of 32",
+    ROUND_OF_16: "Round of 16",
+    QUARTER_FINAL: "Quarter Final",
+    SEMI_FINAL: "Semi Final",
+    FINAL: "Final",
+  };
+  return labels[normalized] ?? (normalized.replaceAll("_", " ") || "Match");
+}
+
 function teamName(team?: TeamRecord["teams"] | null) {
   return team?.name ?? "Team";
 }
@@ -982,13 +997,16 @@ export default function ManagerDashboardPage() {
       setPayload((current) =>
         current
           ? {
-            ...current,
-            messages: current.messages.map((item) =>
-              item.id === notice.id
-                ? { ...item, read_at: item.read_at ?? new Date().toISOString() }
-                : item,
-            ),
-          }
+              ...current,
+              messages: current.messages.map((item) =>
+                item.id === notice.id
+                  ? {
+                      ...item,
+                      read_at: item.read_at ?? new Date().toISOString(),
+                    }
+                  : item,
+              ),
+            }
           : current,
       );
     }
@@ -1973,6 +1991,9 @@ function SubmitLineupSection({
     starters.map((player) => player.player_registration_id),
   );
   const bench = lineupPlayers.filter((player) => !player.is_starter);
+  const benchIds = new Set(
+    bench.map((player) => player.player_registration_id),
+  );
   const captainId =
     starters.find((player) => player.is_captain)?.player_registration_id ??
     null;
@@ -2296,7 +2317,7 @@ function SubmitLineupSection({
       const matchesPosition =
         positionFilter === "ALL" ||
         naturalPlayerPosition(player) === positionFilter;
-      return matchesSearch && matchesPosition;
+      return benchIds.has(player.id) && matchesSearch && matchesPosition;
     },
   );
   const visibleAlternatives = alternatives.filter(
@@ -2596,14 +2617,11 @@ function SubmitLineupSection({
                     </p>
                     <div className="mt-2 max-h-[540px] space-y-2 overflow-auto pr-1">
                       {filteredAvailable.map((player) => {
-                        const status = starterIds.has(player.id)
-                          ? "Starter"
-                          : "Bench";
                         return (
                           <LineupPlayerRow
                             key={player.id}
                             player={player}
-                            label={status}
+                            label="Bench"
                             onOpen={() => onPlayerClick(player)}
                           />
                         );
@@ -5645,6 +5663,60 @@ function MatchDetailModal({
   const detailFixture = payload?.fixture ?? fixture;
   const homeTeam = detailFixture.home_team?.teams ?? fixture.home_team?.teams;
   const awayTeam = detailFixture.away_team?.teams ?? fixture.away_team?.teams;
+  const playerNames = new Map<string, string>();
+  for (const lineup of payload?.lineups ?? []) {
+    for (const player of lineup.lineup_players ?? []) {
+      playerNames.set(
+        player.player_registration_id,
+        player.player_season_registrations?.players?.full_name ?? "Player",
+      );
+    }
+  }
+  const scoreEventLines = (side: "HOME" | "AWAY") =>
+    (payload?.events ?? [])
+      .filter((event) => {
+        const type = String(event.type ?? "");
+        return (
+          event.side === side &&
+          [
+            "GOAL",
+            "PENALTY_GOAL",
+            "OWN_GOAL",
+            "PENALTY_MISS",
+            "PENALTY_SAVED",
+          ].includes(type)
+        );
+      })
+      .map((event) => {
+        const type = String(event.type ?? "");
+        const suffix =
+          type === "PENALTY_GOAL"
+            ? " (Pen)"
+            : type === "OWN_GOAL"
+              ? " (OG)"
+              : type === "PENALTY_SAVED"
+                ? " (Pen saved)"
+                : type === "PENALTY_MISS"
+                  ? " (Pen missed)"
+                  : "";
+        return `${playerNames.get(String(event.player_registration_id ?? "")) ?? "Player"} ${managerFormatNumber(event.minute)}'${suffix}`;
+      });
+  const homeScoreEvents = scoreEventLines("HOME");
+  const awayScoreEvents = scoreEventLines("AWAY");
+  const redCardEventLines = (side: "HOME" | "AWAY") =>
+    (payload?.events ?? [])
+      .filter(
+        (event) =>
+          event.side === side && String(event.type ?? "") === "RED_CARD",
+      )
+      .map((event) => {
+        const name =
+          playerNames.get(String(event.player_registration_id ?? "")) ??
+          "Player";
+        return `${name} ${managerFormatNumber(event.minute)}'`;
+      });
+  const homeRedCards = redCardEventLines("HOME");
+  const awayRedCards = redCardEventLines("AWAY");
   return (
     <div className="space-y-6">
       <button
@@ -5674,21 +5746,71 @@ function MatchDetailModal({
           </button>
         </div>
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-slate-50 p-4">
-          <TeamLogoName
-            team={homeTeam}
-            teamId={fixture.home_team_registration_id}
-            onTeamClick={onTeamClick}
-          />
-          <span className="rounded-full bg-white px-5 py-2 text-sm font-black shadow-sm">
-            {detailFixture.home_score === null
-              ? "VS"
-              : `${detailFixture.home_score} - ${detailFixture.away_score}`}
+          <div>
+            <TeamLogoName
+              team={homeTeam}
+              teamId={fixture.home_team_registration_id}
+              onTeamClick={onTeamClick}
+            />
+            <div className="mt-2 space-y-1 text-xs font-semibold text-slate-500">
+              {homeScoreEvents.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+              {homeRedCards.map((line, index) => (
+                <p
+                  key={`home-red-${line}-${index}`}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <span className="h-3.5 w-2.5 rounded-[2px] bg-red-600" />
+                  {line}
+                </p>
+              ))}
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-sm font-black shadow-sm">
+            {detailFixture.home_score === null ? (
+              "VS"
+            ) : (
+              <>
+                <span>{detailFixture.home_score}</span>
+                {homeRedCards.length ? (
+                  <span
+                    className="h-3.5 w-2.5 rounded-[2px] bg-red-600"
+                    title={`${homeRedCards.length} home red card${homeRedCards.length === 1 ? "" : "s"}`}
+                  />
+                ) : null}
+                <span>-</span>
+                <span>{detailFixture.away_score}</span>
+                {awayRedCards.length ? (
+                  <span
+                    className="h-3.5 w-2.5 rounded-[2px] bg-red-600"
+                    title={`${awayRedCards.length} away red card${awayRedCards.length === 1 ? "" : "s"}`}
+                  />
+                ) : null}
+              </>
+            )}
           </span>
-          <TeamLogoName
-            team={awayTeam}
-            teamId={fixture.away_team_registration_id}
-            onTeamClick={onTeamClick}
-          />
+          <div className="text-right">
+            <TeamLogoName
+              team={awayTeam}
+              teamId={fixture.away_team_registration_id}
+              onTeamClick={onTeamClick}
+            />
+            <div className="mt-2 space-y-1 text-xs font-semibold text-slate-500">
+              {awayScoreEvents.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+              {awayRedCards.map((line, index) => (
+                <p
+                  key={`away-red-${line}-${index}`}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <span className="h-3.5 w-2.5 rounded-[2px] bg-red-600" />
+                  {line}
+                </p>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <Detail label="Status" value={fixture.status} />
@@ -6557,7 +6679,7 @@ function ResultMini({
       <p className="mt-2 text-sm">
         Opponent: <b>{opponent}</b>
       </p>
-      <StatusBadge status={fixture.status} />
+      <StageBadge stage={fixture.stage} />
     </div>
   );
 }
@@ -6712,6 +6834,14 @@ function StatusBadge({ status }: { status?: string | null }) {
       className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-black uppercase tracking-wider ring-1 ${statusClass(status)}`}
     >
       {status?.replaceAll("_", " ") ?? "-"}
+    </span>
+  );
+}
+
+function StageBadge({ stage }: { stage?: string | null }) {
+  return (
+    <span className="mt-2 inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-black uppercase tracking-wider text-violet-700 ring-1 ring-violet-200">
+      {matchStageLabel(stage)}
     </span>
   );
 }

@@ -297,6 +297,7 @@ interface AdminSeasonData {
   topScorer: {
     name: string;
     team: string;
+    teamLogoUrl?: string | null;
     avatarUrl?: string | null;
     goals: number;
     matches: number;
@@ -304,6 +305,7 @@ interface AdminSeasonData {
   topAssist: {
     name: string;
     team: string;
+    teamLogoUrl?: string | null;
     avatarUrl?: string | null;
     assists: number;
     matches: number;
@@ -311,6 +313,7 @@ interface AdminSeasonData {
   topRated: {
     name: string;
     team: string;
+    teamLogoUrl?: string | null;
     avatarUrl?: string | null;
     rating: string;
     matches: number;
@@ -796,7 +799,8 @@ function compactStatusLabel(status?: string | null) {
     return "Pending Confirmation";
   if (normalized === FixtureStatus.SIMULATED) return "Simulated";
   if (normalized === FixtureStatus.READY_TO_SIMULATE) return "Ready";
-  if (normalized === FixtureStatus.LINEUPS_CONFIRMED) return "Lineups Confirmed";
+  if (normalized === FixtureStatus.LINEUPS_CONFIRMED)
+    return "Lineups Confirmed";
   if (normalized === FixtureStatus.LINEUPS_SUBMITTED) return "Submitted";
   if (normalized === FixtureStatus.LINEUP_PENDING) return "Lineup Pending";
   return statusLabel(status);
@@ -1150,7 +1154,9 @@ function buildAdminSeasonData(input: {
           null)
         : null,
       stage: fixture.stage ?? `Round ${fixture.round_no ?? ""}`.trim(),
-      kickoff: fixture.kickoff_at ? safeDateTime(fixture.kickoff_at) : "Kickoff not set",
+      kickoff: fixture.kickoff_at
+        ? safeDateTime(fixture.kickoff_at)
+        : "Kickoff not set",
       status: statusLabel(fixture.status),
       score: `${fixture.home_score ?? 0} - ${fixture.away_score ?? 0}`,
     }));
@@ -1230,6 +1236,20 @@ function buildAdminSeasonData(input: {
     .sort(
       (a, b) => Number(b.average_rating ?? 0) - Number(a.average_rating ?? 0),
     )[0];
+  const registrationForStat = (stat?: PlayerSeasonStatApiRow | null) =>
+    stat
+      ? input.playerRegistrations.find(
+          (registration) =>
+            registration.id === stat.player_registration_id &&
+            registration.season_id === input.season.id,
+        )
+      : undefined;
+  const teamForStat = (stat?: PlayerSeasonStatApiRow | null) => {
+    const registration = registrationForStat(stat);
+    return registration
+      ? teamByRegistration.get(registration.team_registration_id)
+      : undefined;
+  };
 
   return {
     teams,
@@ -1249,7 +1269,11 @@ function buildAdminSeasonData(input: {
             name:
               topGoal.player_season_registrations?.players?.full_name ??
               "Unnamed player",
-            team: "Season team",
+            team:
+              teamForStat(topGoal)?.teams?.name ??
+              registrationForStat(topGoal)?.team_registrations?.teams?.name ??
+              "Unassigned team",
+            teamLogoUrl: teamForStat(topGoal)?.teams?.logo_url ?? null,
             avatarUrl:
               topGoal.player_season_registrations?.players?.avatar_url ?? null,
             goals: topGoal.goals ?? 0,
@@ -1264,9 +1288,14 @@ function buildAdminSeasonData(input: {
             name:
               topAssist.player_season_registrations?.players?.full_name ??
               "Unnamed player",
-            team: "Season team",
+            team:
+              teamForStat(topAssist)?.teams?.name ??
+              registrationForStat(topAssist)?.team_registrations?.teams?.name ??
+              "Unassigned team",
+            teamLogoUrl: teamForStat(topAssist)?.teams?.logo_url ?? null,
             avatarUrl:
-              topAssist.player_season_registrations?.players?.avatar_url ?? null,
+              topAssist.player_season_registrations?.players?.avatar_url ??
+              null,
             assists: topAssist.assists ?? 0,
             matches: topAssist.appearances ?? 0,
           }
@@ -1277,7 +1306,11 @@ function buildAdminSeasonData(input: {
             name:
               topRated.player_season_registrations?.players?.full_name ??
               "Unnamed player",
-            team: "Season team",
+            team:
+              teamForStat(topRated)?.teams?.name ??
+              registrationForStat(topRated)?.team_registrations?.teams?.name ??
+              "Unassigned team",
+            teamLogoUrl: teamForStat(topRated)?.teams?.logo_url ?? null,
             avatarUrl:
               topRated.player_season_registrations?.players?.avatar_url ?? null,
             rating: String(topRated.average_rating),
@@ -1509,18 +1542,12 @@ function LineupEventIcons({
         </span>
       ) : null}
       {meta.goals ? (
-        <span
-          className={`${badgeBase} bg-white text-slate-950`}
-          title="Goal"
-        >
+        <span className={`${badgeBase} bg-white text-slate-950`} title="Goal">
           ⚽{meta.goals > 1 ? meta.goals : ""}
         </span>
       ) : null}
       {meta.assists ? (
-        <span
-          className={`${badgeBase} bg-white text-slate-800`}
-          title="Assist"
-        >
+        <span className={`${badgeBase} bg-white text-slate-800`} title="Assist">
           <span className="flex items-center gap-0.5">
             {assistIcon}
             {meta.assists > 1 ? meta.assists : ""}
@@ -1966,7 +1993,11 @@ export default function AdminLeagueSeasonDashboard() {
         { id: "fixtures", label: "Fixtures", icon: CalendarDays },
         { id: "lineups", label: "Lineups", icon: ClipboardCheck },
         { id: "matches-ready", label: "Matches Ready", icon: PlayCircle },
-        { id: "completed-matches", label: "Completed Matches", icon: CheckCircle2 },
+        {
+          id: "completed-matches",
+          label: "Completed Matches",
+          icon: CheckCircle2,
+        },
         ...(!isGroupKnockout
           ? [{ id: "standings", label: "Standings", icon: Trophy }]
           : []),
@@ -2402,6 +2433,7 @@ function DashboardView({
               <PlayerHero
                 name={data.topScorer.name}
                 team={data.topScorer.team}
+                teamLogoUrl={data.topScorer.teamLogoUrl}
                 avatarUrl={data.topScorer.avatarUrl}
                 shirt="-"
                 color="blue"
@@ -2428,6 +2460,7 @@ function DashboardView({
               <PlayerHero
                 name={data.topAssist.name}
                 team={data.topAssist.team}
+                teamLogoUrl={data.topAssist.teamLogoUrl}
                 avatarUrl={data.topAssist.avatarUrl}
                 shirt="-"
                 color="blue"
@@ -2454,6 +2487,7 @@ function DashboardView({
               <PlayerHero
                 name={data.topRated.name}
                 team={data.topRated.team}
+                teamLogoUrl={data.topRated.teamLogoUrl}
                 avatarUrl={data.topRated.avatarUrl}
                 shirt="-"
                 color="black"
@@ -2498,7 +2532,10 @@ function DashboardView({
                 >
                   <span className="text-slate-600">{match.date}</span>
                   <div className="justify-self-end">
-                    <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
+                    <TeamCompact
+                      name={match.home}
+                      logoUrl={match.homeLogoUrl}
+                    />
                   </div>
                   <span className="rounded-md bg-green-100 px-3 py-1 text-center font-black text-green-800">
                     {match.score}
@@ -4395,6 +4432,18 @@ function FixturesView({ season }: { season: SeasonDto }) {
     );
   }
 
+  function rowScore(row: FixtureApiRow | FixturePreviewRow) {
+    if (!("home_score" in row) || !("away_score" in row)) return null;
+    if (
+      row.home_score === null ||
+      row.home_score === undefined ||
+      row.away_score === null ||
+      row.away_score === undefined
+    )
+      return null;
+    return `${row.home_score} - ${row.away_score}`;
+  }
+
   function rowGroupName(row: FixtureApiRow | FixturePreviewRow) {
     return (
       ("season_groups" in row ? row.season_groups?.name : null) ??
@@ -4770,18 +4819,20 @@ function FixturesView({ season }: { season: SeasonDto }) {
                       />
                     </td>
                     <td className="px-5 py-4">
-                      <StatusPill
-                        tone={
-                          row.status === "WAITING_FOR_TEAMS"
-                            ? "orange"
-                            : row.status === "FINAL" ||
-                                row.status === "COMPLETED"
-                              ? "green"
+                      {(row.status === "FINAL" || row.status === "COMPLETED") &&
+                      rowScore(row) ? (
+                        <StatusPill tone="green">{rowScore(row)}</StatusPill>
+                      ) : (
+                        <StatusPill
+                          tone={
+                            row.status === "WAITING_FOR_TEAMS"
+                              ? "orange"
                               : "blue"
-                        }
-                      >
-                        {statusLabel(row.status)}
-                      </StatusPill>
+                          }
+                        >
+                          {statusLabel(row.status)}
+                        </StatusPill>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -5164,7 +5215,8 @@ function LineupConfirmationsView({
   const selectedLineups = selectedFixtureId
     ? lineups.filter((lineup) => lineup.fixture_id === selectedFixtureId)
     : [];
-  const selectedFixture = selectedLineups[0]?.fixtures ?? null;
+  const selectedFixture =
+    detail?.fixture ?? selectedLineups[0]?.fixtures ?? null;
   const homeName = selectedFixture?.home_team?.teams?.name ?? "Home team";
   const awayName = selectedFixture?.away_team?.teams?.name ?? "Away team";
   const showSide = !isGroupKnockoutFormat(season.format);
@@ -5738,7 +5790,8 @@ function MatchesReadyView({
       </div>
       {jumpLocked ? (
         <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-800">
-          Simulate all current matchday matches before opening the next matchday.
+          Simulate all current matchday matches before opening the next
+          matchday.
         </div>
       ) : null}
       {error ? (
@@ -5824,9 +5877,8 @@ function CompletedMatchesView({ matches }: { matches: CompletedMatchRow[] }) {
   );
   const [detail, setDetail] = useState<MatchDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [selectedStat, setSelectedStat] = useState<MatchDetailPlayerStat | null>(
-    null,
-  );
+  const [selectedStat, setSelectedStat] =
+    useState<MatchDetailPlayerStat | null>(null);
   const [error, setError] = useState("");
 
   async function openDetail(match: CompletedMatchRow) {
@@ -6098,13 +6150,17 @@ function MatchScorelineHeader({
       );
     }
   }
-  const scorerLines = (side: "HOME" | "AWAY") =>
+  const scoreEventLines = (side: "HOME" | "AWAY") =>
     (detail?.events ?? [])
       .filter((event) => {
         const type = String(event.type ?? "");
         return (
           event.side === side &&
-          (type === "GOAL" || type === "PENALTY_GOAL" || type === "OWN_GOAL")
+          (type === "GOAL" ||
+            type === "PENALTY_GOAL" ||
+            type === "OWN_GOAL" ||
+            type === "PENALTY_MISS" ||
+            type === "PENALTY_SAVED")
         );
       })
       .map((event) => {
@@ -6117,11 +6173,29 @@ function MatchScorelineHeader({
             ? " (Pen)"
             : type === "OWN_GOAL"
               ? " (OG)"
-              : "";
+              : type === "PENALTY_SAVED"
+                ? " (Pen saved)"
+                : type === "PENALTY_MISS"
+                  ? " (Pen missed)"
+                  : "";
         return `${name} ${formatNumber(event.minute)}'${suffix}`;
       });
-  const homeScorers = scorerLines("HOME");
-  const awayScorers = scorerLines("AWAY");
+  const homeScorers = scoreEventLines("HOME");
+  const awayScorers = scoreEventLines("AWAY");
+  const redCardEventLines = (side: "HOME" | "AWAY") =>
+    (detail?.events ?? [])
+      .filter(
+        (event) =>
+          event.side === side && String(event.type ?? "") === "RED_CARD",
+      )
+      .map((event) => {
+        const name =
+          playerNames.get(String(event.player_registration_id ?? "")) ??
+          "Player";
+        return `${name} ${formatNumber(event.minute)}'`;
+      });
+  const homeRedCards = redCardEventLines("HOME");
+  const awayRedCards = redCardEventLines("AWAY");
   const homeScore = detail?.fixture?.home_score ?? "-";
   const awayScore = detail?.fixture?.away_score ?? "-";
   return (
@@ -6136,11 +6210,34 @@ function MatchScorelineHeader({
             ) : (
               <p>No scorers</p>
             )}
+            {homeRedCards.map((line, index) => (
+              <p
+                key={`home-red-${line}-${index}`}
+                className="inline-flex items-center gap-1.5 md:justify-end"
+              >
+                <span className="h-3.5 w-2.5 rounded-[2px] bg-red-600" />
+                {line}
+              </p>
+            ))}
           </div>
         </div>
         <div>
-          <p className="text-4xl font-black tracking-tight">
-            {homeScore} - {awayScore}
+          <p className="flex items-center justify-center gap-2 text-4xl font-black tracking-tight">
+            <span>{homeScore}</span>
+            {homeRedCards.length ? (
+              <span
+                className="h-4 w-2.5 rounded-[2px] bg-red-600"
+                title={`${homeRedCards.length} home red card${homeRedCards.length === 1 ? "" : "s"}`}
+              />
+            ) : null}
+            <span>-</span>
+            <span>{awayScore}</span>
+            {awayRedCards.length ? (
+              <span
+                className="h-4 w-2.5 rounded-[2px] bg-red-600"
+                title={`${awayRedCards.length} away red card${awayRedCards.length === 1 ? "" : "s"}`}
+              />
+            ) : null}
           </p>
           <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
             {detail?.fixture?.status
@@ -6157,6 +6254,15 @@ function MatchScorelineHeader({
             ) : (
               <p>No scorers</p>
             )}
+            {awayRedCards.map((line, index) => (
+              <p
+                key={`away-red-${line}-${index}`}
+                className="inline-flex items-center gap-1.5"
+              >
+                <span className="h-3.5 w-2.5 rounded-[2px] bg-red-600" />
+                {line}
+              </p>
+            ))}
           </div>
         </div>
       </div>
@@ -6444,7 +6550,8 @@ function MatchBenchColumn({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-black">{name}</p>
                   <p className="text-xs font-semibold text-slate-500">
-                    #{registration?.shirt_number ?? player.shirt_number ?? "-"} ·{" "}
+                    #{registration?.shirt_number ?? player.shirt_number ?? "-"}{" "}
+                    ·{" "}
                     {registration?.football_position ??
                       player.football_position ??
                       player.player_natural_position ??
@@ -6738,9 +6845,7 @@ function StatComparisonRow({
         <span
           className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black text-white"
           style={{
-            background: homeWins
-              ? homeColor
-              : `${homeColor}22`,
+            background: homeWins ? homeColor : `${homeColor}22`,
             border: `1px solid ${homeColor}66`,
           }}
         >
@@ -6758,8 +6863,7 @@ function StatComparisonRow({
                 : awayColor
               : `${awayColor}22`,
             border: `1px solid ${awayColor}66`,
-            color:
-              awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+            color: awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
           }}
         >
           {awayValue}
@@ -6787,13 +6891,19 @@ function PlayerMatchStatModal({
     (stat.position_played ?? player?.football_position) === "GK";
   const name = player?.players?.full_name ?? "Player";
   const position =
-    stat.position_played ?? player?.football_position ?? player?.position ?? "POS";
+    stat.position_played ??
+    player?.football_position ??
+    player?.position ??
+    "POS";
   const defensiveContribution =
     Number(stat.tackles ?? 0) +
     Number(stat.interceptions ?? 0) +
     Number(stat.clearances ?? 0) +
     Number(stat.blocks ?? 0);
-  const sectionGroups: Array<{ title: string; items: Array<[string, unknown]> }> = isGoalkeeper
+  const sectionGroups: Array<{
+    title: string;
+    items: Array<[string, unknown]>;
+  }> = isGoalkeeper
     ? [
         {
           title: "Top stats",
@@ -6921,7 +7031,9 @@ function PlayerMatchStatModal({
                   <p className="text-slate-500">Position</p>
                 </div>
                 <div>
-                  <p className="font-black">{player?.shirt_number ? `#${player.shirt_number}` : "-"}</p>
+                  <p className="font-black">
+                    {player?.shirt_number ? `#${player.shirt_number}` : "-"}
+                  </p>
                   <p className="text-slate-500">Number</p>
                 </div>
                 <div>
@@ -7622,8 +7734,7 @@ function GroupsView({ season }: { season: SeasonDto }) {
                         const goalsFor = standing?.goals_for ?? 0;
                         const goalsAgainst = standing?.goals_against ?? 0;
                         const goalDifference =
-                          standing?.goal_difference ??
-                          goalsFor - goalsAgainst;
+                          standing?.goal_difference ?? goalsFor - goalsAgainst;
                         return (
                           <tr
                             key={team.id}
@@ -8290,7 +8401,7 @@ function TeamBadge({
 }: {
   name: string;
   logoUrl?: string | null | undefined;
-  size?: "md" | "lg" | "xl";
+  size?: "sm" | "md" | "lg" | "xl";
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   const dimensions =
@@ -8298,7 +8409,9 @@ function TeamBadge({
       ? "h-28 w-28 text-xl"
       : size === "lg"
         ? "h-20 w-20 text-sm"
-        : "h-12 w-12 text-xs";
+        : size === "sm"
+          ? "h-7 w-7 text-[9px]"
+          : "h-12 w-12 text-xs";
   if (logoUrl && !imageFailed) {
     return (
       <img
@@ -8340,12 +8453,14 @@ function TeamCompact({
 function PlayerHero({
   name,
   team,
+  teamLogoUrl,
   avatarUrl,
   shirt,
   color,
 }: {
   name: string;
   team: string;
+  teamLogoUrl?: string | null | undefined;
   avatarUrl?: string | null | undefined;
   shirt: string;
   color: "blue" | "black";
@@ -8371,7 +8486,10 @@ function PlayerHero({
       </div>
       <div>
         <h3 className="text-2xl font-black">{name}</h3>
-        <p className="text-base text-slate-600">{team}</p>
+        <div className="mt-1 flex items-center gap-2 text-base text-slate-600">
+          <TeamBadge name={team} logoUrl={teamLogoUrl} size="sm" />
+          <span>{team}</span>
+        </div>
       </div>
     </div>
   );
