@@ -192,6 +192,7 @@ create table if not exists public.seasons (
   lineup_size integer,
   substitute_limit integer,
   lineup_submission_deadline_hours integer,
+  yellow_card_suspension_threshold integer not null default 3,
   group_count integer,
   teams_per_group integer,
   qualifiers_per_group integer,
@@ -204,6 +205,9 @@ create table if not exists public.seasons (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint valid_total_teams check (total_teams is null or total_teams >= 2),
+  constraint seasons_yellow_card_suspension_threshold_check check (
+    yellow_card_suspension_threshold between 2 and 10
+  ),
   constraint valid_player_limits check (
     min_players_per_team is null
     or max_players_per_team is null
@@ -602,6 +606,20 @@ create table if not exists public.lineup_players (
   created_at timestamptz not null default now(),
   unique (lineup_id, player_registration_id)
 );
+
+create table if not exists public.lineup_set_piece_takers (
+  id uuid primary key default gen_random_uuid(),
+  lineup_id uuid not null references public.lineups(id) on delete cascade,
+  player_registration_id uuid not null references public.player_season_registrations(id) on delete cascade,
+  set_piece_type text not null check (set_piece_type in ('PENALTY', 'FREE_KICK')),
+  priority smallint not null check (priority between 1 and 60),
+  created_at timestamptz not null default now(),
+  unique (lineup_id, set_piece_type, priority),
+  unique (lineup_id, set_piece_type, player_registration_id)
+);
+
+create index if not exists idx_lineup_set_piece_takers_lineup
+  on public.lineup_set_piece_takers(lineup_id, set_piece_type, priority);
 
 create table if not exists public.manager_team_preferences (
   id uuid primary key default gen_random_uuid(),
@@ -1004,6 +1022,7 @@ alter table public.player_hidden_attributes enable row level security;
 alter table public.fixtures enable row level security;
 alter table public.lineups enable row level security;
 alter table public.lineup_players enable row level security;
+alter table public.lineup_set_piece_takers enable row level security;
 alter table public.team_match_stats enable row level security;
 alter table public.player_match_stats enable row level security;
 alter table public.match_events enable row level security;

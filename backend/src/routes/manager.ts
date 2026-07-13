@@ -16,6 +16,8 @@ import {
   teamRegistrationSchema,
   updateDraftPlayerSchema,
   UserRole,
+  MatchEventType,
+  VenueSide,
 } from "@flms/shared";
 import { supabaseAdmin } from "../db/supabase.js";
 import { AppError, assertFound, asyncHandler } from "../errors.js";
@@ -44,6 +46,11 @@ import {
   suggestedPositionBreakdown,
   targetDistribution,
 } from "../domain/squad-generator.js";
+import {
+  disciplinePhaseForStage,
+  isStageInDisciplinePhase,
+  yellowCardProgress,
+} from "../domain/discipline.js";
 
 export const managerRouter = Router();
 managerRouter.use(requireAuth, requireRole(UserRole.MANAGER, UserRole.ADMIN));
@@ -80,7 +87,7 @@ async function assertManagerOwnsTeam(
   const { data, error } = await supabaseAdmin
     .from("team_registrations")
     .select(
-      "id,manager_id,season_id,team_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,league_id,leagues(id,name,short_name,logo_url))",
+      "id,manager_id,season_id,team_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,yellow_card_suspension_threshold,league_id,leagues(id,name,short_name,logo_url))",
     )
     .eq("id", teamRegistrationId)
     .single();
@@ -172,11 +179,11 @@ function avg(values: number[]) {
   );
 }
 
-type LeaderboardDirection = "asc" | "desc";
-type LeaderboardFormat = "number" | "decimal" | "percent";
+type LeaderboardFormat = "number" | "decimal" | "percent" | "rating";
 
 function formatLeaderboardValue(value: number, format: LeaderboardFormat) {
   if (format === "percent") return `${Math.round(value)}%`;
+  if (format === "rating") return value.toFixed(1);
   if (format === "decimal") return value.toFixed(2).replace(/\.00$/, "");
   return String(Math.round(value));
 }
@@ -195,18 +202,13 @@ function makeLeaderboard<
   rows: T[],
   field: keyof T,
   format: LeaderboardFormat,
-  direction: LeaderboardDirection = "desc",
 ) {
   const entries = rows
     .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
     .filter(
       ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
     )
-    .sort((a, b) =>
-      direction === "asc"
-        ? a.numericValue - b.numericValue
-        : b.numericValue - a.numericValue,
-    )
+    .sort((a, b) => b.numericValue - a.numericValue)
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,
@@ -234,18 +236,13 @@ function makeTeamLeaderboard<
   rows: T[],
   field: keyof T,
   format: LeaderboardFormat,
-  direction: LeaderboardDirection = "desc",
 ) {
   const entries = rows
     .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
     .filter(
       ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
     )
-    .sort((a, b) =>
-      direction === "asc"
-        ? a.numericValue - b.numericValue
-        : b.numericValue - a.numericValue,
-    )
+    .sort((a, b) => b.numericValue - a.numericValue)
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,
@@ -295,7 +292,7 @@ function makeStatsReport(
             "minutes",
             "number",
           ),
-          makeLeaderboard("rating", "Rating", playerRows, "rating", "decimal"),
+          makeLeaderboard("rating", "Rating", playerRows, "rating", "rating"),
         ],
       },
       {
@@ -415,7 +412,6 @@ function makeStatsReport(
             playerRows,
             "goalsConcededPer90",
             "decimal",
-            "asc",
           ),
         ],
       },
@@ -462,7 +458,7 @@ function makeStatsReport(
             "Rating",
             teamRows,
             "rating",
-            "decimal",
+            "rating",
           ),
         ],
       },
@@ -529,7 +525,6 @@ function makeStatsReport(
             teamRows,
             "goalsConcededPerMatch",
             "decimal",
-            "asc",
           ),
           makeTeamLeaderboard(
             "tackles_per_match",
@@ -551,7 +546,6 @@ function makeStatsReport(
             teamRows,
             "penaltiesConceded",
             "number",
-            "asc",
           ),
           makeTeamLeaderboard(
             "gk_saves_per_match",
@@ -571,7 +565,6 @@ function makeStatsReport(
             teamRows,
             "foulsPerMatch",
             "decimal",
-            "asc",
           ),
           makeTeamLeaderboard(
             "yellow_cards",
@@ -579,7 +572,6 @@ function makeStatsReport(
             teamRows,
             "yellowCards",
             "number",
-            "asc",
           ),
           makeTeamLeaderboard(
             "red_cards",
@@ -587,7 +579,6 @@ function makeStatsReport(
             teamRows,
             "redCards",
             "number",
-            "asc",
           ),
         ],
       },
@@ -694,7 +685,7 @@ async function loadManagerTeams(userId: string) {
   const { data, error } = await supabaseAdmin
     .from("team_registrations")
     .select(
-      "id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,league_id,leagues(id,name,short_name,logo_url))",
+      "id,season_id,team_id,manager_id,status,rejection_reason,created_at,teams(*),seasons!team_registrations_season_id_fkey(id,name,season_year,format,phase,max_players_per_team,total_teams,lineup_size,substitute_limit,yellow_card_suspension_threshold,league_id,leagues(id,name,short_name,logo_url))",
     )
     .eq("manager_id", userId)
     .order("created_at", { ascending: false });
@@ -770,6 +761,48 @@ async function assertManagerOwnsPlayerRegistration(
   return data;
 }
 
+async function loadManagerVisiblePlayerRegistration(
+  userId: string,
+  playerRegistrationId: string,
+) {
+  const { data, error } = await supabaseAdmin
+    .from("player_season_registrations")
+    .select(
+      "id,player_id,season_id,team_registration_id,status,shirt_number,position,football_position,position_category,preferred_foot,player_status,player_code,identity_mode,is_generated,created_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(overall_rating),team_registrations!inner(id,manager_id,season_id,team_id,teams(id,name,short_name,logo_url,primary_color,secondary_color,accent_color),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
+    )
+    .eq("id", playerRegistrationId)
+    .single();
+  if (error) throw error;
+
+  await assertManagerCanViewSeason(userId, data.season_id);
+  const teamRegistration = relatedOne(data.team_registrations);
+  const ownsPlayer = teamRegistration?.manager_id === userId;
+  if (!ownsPlayer && data.status !== RegistrationStatus.APPROVED) {
+    throw new AppError(403, "Only approved opposition players are visible");
+  }
+
+  const identity = relatedOne(data.players);
+  const overallRating = Number(
+    relatedOne(data.player_abilities)?.overall_rating ?? NaN,
+  );
+  return {
+    player: {
+      ...data,
+      overall_rating: Number.isFinite(overallRating) ? overallRating : null,
+      player_abilities: undefined,
+      players: identity
+        ? {
+            ...identity,
+            generated_identity_number: ownsPlayer
+              ? identity.generated_identity_number
+              : null,
+          }
+        : null,
+    },
+    overallRating: Number.isFinite(overallRating) ? overallRating : null,
+  };
+}
+
 async function loadLeagueRatings(playerRegistrationIds: string[]) {
   if (playerRegistrationIds.length === 0) return new Map<string, number>();
   const { data, error } = await supabaseAdmin
@@ -795,6 +828,77 @@ async function loadLeagueRatings(playerRegistrationIds: string[]) {
     ratings.set(id, Number((total.weighted / total.minutes).toFixed(2)));
   }
   return ratings;
+}
+
+async function loadYellowCardDiscipline(
+  seasonId: string,
+  fixtureStage: string,
+  thresholdValue: unknown,
+  players: any[],
+) {
+  const threshold = Math.max(2, Math.min(10, Number(thresholdValue ?? 3)));
+  const phase = disciplinePhaseForStage(fixtureStage);
+  const { data: fixtures, error: fixturesError } = await supabaseAdmin
+    .from("fixtures")
+    .select("id,stage")
+    .eq("season_id", seasonId)
+    .eq("result_confirmed", true);
+  if (fixturesError) throw fixturesError;
+
+  const fixtureIds = (fixtures ?? [])
+    .filter((fixture) =>
+      isStageInDisciplinePhase(String(fixture.stage ?? "LEAGUE"), phase),
+    )
+    .map((fixture) => String(fixture.id));
+  const eligiblePlayers = players.filter(
+    (player) =>
+      player.status === RegistrationStatus.APPROVED &&
+      player.player_status !== PlayerLifecycleStatus.REMOVED,
+  );
+  const totals = new Map<string, number>();
+  if (fixtureIds.length && eligiblePlayers.length) {
+    const { data: rows, error } = await supabaseAdmin
+      .from("player_match_stats")
+      .select("player_registration_id,yellow_cards")
+      .in("fixture_id", fixtureIds)
+      .in(
+        "player_registration_id",
+        eligiblePlayers.map((player) => player.id),
+      )
+      .gt("yellow_cards", 0);
+    if (error) throw error;
+    for (const row of rows ?? []) {
+      const id = String(row.player_registration_id);
+      totals.set(id, (totals.get(id) ?? 0) + Number(row.yellow_cards ?? 0));
+    }
+  }
+
+  return {
+    phase,
+    yellow_card_suspension_threshold: threshold,
+    players: eligiblePlayers
+      .map((player) => {
+        const total = totals.get(player.id) ?? 0;
+        const yellowSuspensionActive = String(
+          player.active_suspension?.reason ?? player.suspension_reason ?? "",
+        )
+          .toLowerCase()
+          .includes("yellow card");
+        const progress = yellowSuspensionActive
+          ? threshold
+          : yellowCardProgress(total, threshold);
+        return {
+          player_registration_id: player.id,
+          full_name: player.players?.full_name ?? "Player",
+          avatar_url: player.players?.avatar_url ?? null,
+          shirt_number: player.shirt_number ?? null,
+          yellow_cards: progress,
+          total_phase_yellow_cards: total,
+          suspended_for_accumulation: yellowSuspensionActive,
+        };
+      })
+      .filter((player) => player.total_phase_yellow_cards > 0),
+  };
 }
 
 function buildPlayerSeasonStatsFromMatchRows(
@@ -936,7 +1040,7 @@ async function loadPreviousLineup(
   let query = supabaseAdmin
     .from("lineups")
     .select(
-      "*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url)))",
+      "*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url))),lineup_set_piece_takers(player_registration_id,set_piece_type,priority)",
     )
     .eq("team_registration_id", teamRegistrationId)
     .eq("season_id", seasonId)
@@ -956,13 +1060,67 @@ async function loadExistingLineup(
   const { data, error } = await supabaseAdmin
     .from("lineups")
     .select(
-      "*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url)))",
+      "*,lineup_players(*,player_season_registrations(id,player_id,football_position,position,shirt_number,status,player_status,players(full_name,avatar_url))),lineup_set_piece_takers(player_registration_id,set_piece_type,priority)",
     )
     .eq("team_registration_id", teamRegistrationId)
     .eq("fixture_id", fixtureId)
     .maybeSingle();
   if (error) throw error;
   return data;
+}
+
+type SetPieceType = "PENALTY" | "FREE_KICK";
+
+function orderedSetPieceIds(
+  lineup: Record<string, any> | null | undefined,
+  type: SetPieceType,
+) {
+  return [...(lineup?.lineup_set_piece_takers ?? [])]
+    .filter((row: any) => row.set_piece_type === type)
+    .sort((a: any, b: any) => Number(a.priority) - Number(b.priority))
+    .map((row: any) => String(row.player_registration_id));
+}
+
+async function saveLineupSetPieceTakers(
+  lineupId: string,
+  selectedPlayerIds: string[],
+  penaltyTakerIds: string[],
+  freeKickTakerIds: string[],
+) {
+  const selected = new Set(selectedPlayerIds);
+  const assertValidOrder = (ids: string[], label: string) => {
+    if (new Set(ids).size !== ids.length)
+      throw new AppError(400, `${label} order contains duplicate players`);
+    if (ids.some((id) => !selected.has(id)))
+      throw new AppError(400, `${label} must belong to the submitted lineup`);
+  };
+  assertValidOrder(penaltyTakerIds, "Penalty takers");
+  assertValidOrder(freeKickTakerIds, "Free-kick takers");
+
+  const { error: deleteError } = await supabaseAdmin
+    .from("lineup_set_piece_takers")
+    .delete()
+    .eq("lineup_id", lineupId);
+  if (deleteError) throw deleteError;
+
+  const rows = (
+    [
+      ["PENALTY", penaltyTakerIds],
+      ["FREE_KICK", freeKickTakerIds],
+    ] as const
+  ).flatMap(([setPieceType, ids]) =>
+    ids.map((playerRegistrationId, index) => ({
+      lineup_id: lineupId,
+      player_registration_id: playerRegistrationId,
+      set_piece_type: setPieceType,
+      priority: index + 1,
+    })),
+  );
+  if (!rows.length) return;
+  const { error: insertError } = await supabaseAdmin
+    .from("lineup_set_piece_takers")
+    .insert(rows);
+  if (insertError) throw insertError;
 }
 
 function lineupPlayersFromPicks(
@@ -1264,6 +1422,18 @@ managerRouter.get(
     if (error) throw error;
     await assertManagerCanViewSeason(req.auth!.userId, team.season_id);
     const players = await loadTeamPlayers(team.id);
+    const visiblePlayers = players.map((player) => {
+      const ability = relatedOne(player.player_abilities);
+      const identity = relatedOne(player.players);
+      return {
+        ...player,
+        overall_rating: ability?.overall_rating ?? null,
+        player_abilities: undefined,
+        players: identity
+          ? { ...identity, generated_identity_number: null }
+          : null,
+      };
+    });
     const counts = statusCounts(players);
     const [
       { data: fixtures, error: fixturesError },
@@ -1298,7 +1468,7 @@ managerRouter.get(
     if (resultsError) throw resultsError;
     res.json({
       team,
-      players,
+      players: visiblePlayers,
       fixtures: fixtures ?? [],
       results: results ?? [],
       squad_summary: {
@@ -2079,10 +2249,11 @@ managerRouter.get(
 managerRouter.get(
   "/players/:playerId/profile",
   asyncHandler(async (req, res) => {
-    const player = await assertManagerOwnsPlayerRegistration(
-      req.auth!.userId,
-      routeParam(req.params.playerId, "playerId"),
-    );
+    const { player, overallRating } =
+      await loadManagerVisiblePlayerRegistration(
+        req.auth!.userId,
+        routeParam(req.params.playerId, "playerId"),
+      );
     const [
       { data: seasonStats, error: seasonError },
       { data: matchStats, error: matchError },
@@ -2105,7 +2276,7 @@ managerRouter.get(
     const leagueRatings = await loadLeagueRatings([player.id]);
     res.json({
       player,
-      ability: relatedOne(player.player_abilities),
+      overall_rating: overallRating,
       league_rating: leagueRatings.get(player.id) ?? null,
       season_stats: buildPlayerSeasonStatsFromMatchRows(matchStats ?? []),
       stored_season_stats: seasonStats,
@@ -2259,11 +2430,14 @@ managerRouter.get(
       teamIds.includes(player.team_registration_id),
     );
     const playerIds = playerRegistrations.map((player) => player.id);
+    const fixtures = fixturesResult.data ?? [];
+    const fixtureIds = fixtures.map((fixture) => fixture.id);
 
     const [
       playerSeasonStatsResult,
       playerMatchStatsResult,
       teamMatchStatsResult,
+      penaltyEventsResult,
     ] = await Promise.all([
       playerIds.length
         ? supabaseAdmin
@@ -2284,10 +2458,22 @@ managerRouter.get(
             .select("*")
             .in("team_registration_id", teamIds)
         : Promise.resolve({ data: [], error: null }),
+      fixtureIds.length
+        ? supabaseAdmin
+            .from("match_events")
+            .select("fixture_id,side,type")
+            .in("fixture_id", fixtureIds)
+            .in("type", [
+              MatchEventType.PENALTY_GOAL,
+              MatchEventType.PENALTY_MISS,
+              MatchEventType.PENALTY_SAVED,
+            ])
+        : Promise.resolve({ data: [], error: null }),
     ]);
     if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
     if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
     if (teamMatchStatsResult.error) throw teamMatchStatsResult.error;
+    if (penaltyEventsResult.error) throw penaltyEventsResult.error;
 
     const allTeamById = new Map(allTeams.map((team) => [team.id, team]));
     const teamById = new Map(scopedTeams.map((team) => [team.id, team]));
@@ -2367,7 +2553,10 @@ managerRouter.get(
         standing,
       ]),
     );
-    const fixtures = fixturesResult.data ?? [];
+    const fixtureById = new Map(
+      fixtures.map((fixture) => [fixture.id, fixture]),
+    );
+    const penaltyEvents = penaltyEventsResult.data ?? [];
     const allPlayerMatchStats = playerMatchStatsResult.data ?? [];
     const teamMatchStats = teamMatchStatsResult.data ?? [];
     const teamRows = scopedTeams.map((team) => {
@@ -2434,7 +2623,13 @@ managerRouter.get(
         ),
         tacklesPerMatch: perMatch(sumPlayers("tackles"), played),
         clearancesPerMatch: perMatch(sumPlayers("clearances"), played),
-        penaltiesConceded: 0,
+        penaltiesConceded: penaltyEvents.filter((event) => {
+          const fixture = fixtureById.get(event.fixture_id);
+          if (!fixture) return false;
+          return event.side === VenueSide.HOME
+            ? fixture.away_team_registration_id === team.id
+            : fixture.home_team_registration_id === team.id;
+        }).length,
         gkSavesPerMatch: perMatch(sumPlayers("saves"), played),
         foulsPerMatch: perMatch(sumTeam("fouls"), played),
         yellowCards: sumTeam("yellow_cards"),
@@ -2616,6 +2811,12 @@ managerRouter.get(
       fixture.season_id,
     );
     const allTeamPlayers = await loadTeamPlayers(teamRegistrationId);
+    const discipline = await loadYellowCardDiscipline(
+      fixture.season_id,
+      String(fixture.stage ?? "LEAGUE"),
+      season?.yellow_card_suspension_threshold,
+      allTeamPlayers,
+    );
     const unavailablePlayers = allTeamPlayers.filter(
       (player) =>
         player.status === RegistrationStatus.APPROVED &&
@@ -2769,12 +2970,21 @@ managerRouter.get(
       formationSlots: getFormationSlots(formation),
       approvedPlayers,
       unavailablePlayers,
+      discipline,
       benchSize,
       initialLineupMode,
       warnings,
       initialLineup: {
         formation,
         playing_style: playingStyle,
+        penalty_taker_ids: orderedSetPieceIds(
+          sourceLineup,
+          "PENALTY",
+        ).filter((id) => selectedIds.has(id)),
+        free_kick_taker_ids: orderedSetPieceIds(
+          sourceLineup,
+          "FREE_KICK",
+        ).filter((id) => selectedIds.has(id)),
         players: playersForLineup,
       },
     });
@@ -2995,6 +3205,12 @@ managerRouter.post(
         })),
       );
     if (insertError) throw insertError;
+    await saveLineupSetPieceTakers(
+      lineup.id,
+      selectedPlayerIds,
+      input.penalty_taker_ids,
+      input.free_kick_taker_ids,
+    );
     await saveManagerPreference(
       req.auth!.userId,
       input.team_registration_id,
@@ -3002,7 +3218,14 @@ managerRouter.post(
       input.formation,
       normalizedPlayingStyle(input.playing_style),
     );
-    res.status(201).json({ lineup: { ...lineup, players: input.players } });
+    res.status(201).json({
+      lineup: {
+        ...lineup,
+        players: input.players,
+        penalty_taker_ids: input.penalty_taker_ids,
+        free_kick_taker_ids: input.free_kick_taker_ids,
+      },
+    });
   }),
 );
 
@@ -3014,7 +3237,7 @@ managerRouter.get(
     const { data: lineups, error } = await supabaseAdmin
       .from("lineups")
       .select(
-        "*,lineup_players(*,player_season_registrations(id,shirt_number,football_position,players(full_name,avatar_url)))",
+        "*,lineup_players(*,player_season_registrations(id,shirt_number,football_position,players(full_name,avatar_url))),lineup_set_piece_takers(player_registration_id,set_piece_type,priority)",
       )
       .eq("fixture_id", req.params.matchId)
       .in("team_registration_id", ids);
@@ -3253,6 +3476,12 @@ managerRouter.post(
         })),
       );
     if (insertError) throw insertError;
+    await saveLineupSetPieceTakers(
+      lineup.id,
+      selectedPlayerIds,
+      input.penalty_taker_ids,
+      input.free_kick_taker_ids,
+    );
     await saveManagerPreference(
       req.auth!.userId,
       input.team_registration_id,
@@ -3260,7 +3489,14 @@ managerRouter.post(
       input.formation,
       normalizedPlayingStyle(input.playing_style),
     );
-    res.status(201).json({ lineup: { ...lineup, players: input.players } });
+    res.status(201).json({
+      lineup: {
+        ...lineup,
+        players: input.players,
+        penalty_taker_ids: input.penalty_taker_ids,
+        free_kick_taker_ids: input.free_kick_taker_ids,
+      },
+    });
   }),
 );
 

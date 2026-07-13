@@ -45,6 +45,7 @@ interface SeasonForm {
   lineup_size: string;
   substitute_limit: string;
   lineup_submission_deadline_hours: string;
+  yellow_card_suspension_threshold: string;
   group_count: string;
   teams_per_group: string;
   qualifiers_per_group: string;
@@ -95,6 +96,7 @@ function defaultSeasonForm(): SeasonForm {
     lineup_size: "11",
     substitute_limit: "5",
     lineup_submission_deadline_hours: "24",
+    yellow_card_suspension_threshold: "3",
     group_count: "4",
     teams_per_group: "4",
     qualifiers_per_group: "2",
@@ -217,6 +219,9 @@ export default function AdminDashboard() {
       lineup_submission_deadline_hours: String(
         previousSeason.lineup_submission_deadline_hours ?? current.lineup_submission_deadline_hours
       ),
+      yellow_card_suspension_threshold: String(
+        previousSeason.yellow_card_suspension_threshold ?? current.yellow_card_suspension_threshold
+      ),
       group_count: String(previousSeason.group_count ?? current.group_count),
       teams_per_group: String(previousSeason.teams_per_group ?? current.teams_per_group),
       qualifiers_per_group: String(previousSeason.qualifiers_per_group ?? current.qualifiers_per_group),
@@ -256,7 +261,12 @@ export default function AdminDashboard() {
       max_players_per_team: numberValue(seasonForm.max_players_per_team),
       lineup_size: numberValue(seasonForm.lineup_size),
       substitute_limit: numberValue(seasonForm.substitute_limit),
-      lineup_submission_deadline_hours: numberValue(seasonForm.lineup_submission_deadline_hours)
+      lineup_submission_deadline_hours: numberValue(
+        seasonForm.lineup_submission_deadline_hours
+      ),
+      yellow_card_suspension_threshold: numberValue(
+        seasonForm.yellow_card_suspension_threshold
+      )
     };
 
     if (!hasGroupKnockout) return base;
@@ -809,7 +819,17 @@ export default function AdminDashboard() {
             onChange={(value) => updateSeasonForm("lineup_submission_deadline_hours", value)}
             placeholder="Hours before kickoff"
           />
-          <p className="scoreline-mono text-xs text-[#257aad]">Value is stored in hours before kickoff.</p>
+          <TextInput
+            label="Yellow Cards for 1-Match Suspension"
+            type="number"
+            value={seasonForm.yellow_card_suspension_threshold}
+            onChange={(value) => updateSeasonForm("yellow_card_suspension_threshold", value)}
+            placeholder="Usually 3 or 5"
+          />
+          <p className="scoreline-mono text-xs text-[#257aad]">
+            Deadline is stored in hours before kickoff. Yellow accumulation is
+            reset when a group-stage season enters the knockout phase.
+          </p>
         </div>
       );
     }

@@ -232,6 +232,8 @@ interface AdminMessageRow {
 
 interface ReadyMatchRow {
   id: string;
+  homeTeamRegistrationId?: string | null;
+  awayTeamRegistrationId?: string | null;
   home: string;
   away: string;
   homeLogoUrl?: string | null;
@@ -761,6 +763,14 @@ function statusLabel(status?: string | null) {
     .join(" ");
 }
 
+function normalizeReadyMatches(matches: ReadyMatchRow[]) {
+  return matches.map((match) => ({
+    ...match,
+    kickoff: safeDateTime(match.kickoff),
+    status: statusLabel(match.status),
+  }));
+}
+
 function isGroupKnockoutFormat(format?: string | null) {
   const normalized = String(format ?? "").toUpperCase();
   return normalized.includes("GROUP") && normalized.includes("KNOCKOUT");
@@ -896,12 +906,12 @@ function zeroLeagueStats(
     interceptions: stat?.interceptions ?? 0,
     yellowCards: stat?.yellow_cards ?? 0,
     redCards: stat?.red_cards ?? 0,
-    averageRating: stat?.average_rating ? String(stat.average_rating) : "N/A",
+    averageRating: formatRating(stat?.average_rating, "N/A"),
     bestMatchRating: stat?.best_match_rating
-      ? String(stat.best_match_rating)
+      ? formatRating(stat.best_match_rating, "N/A")
       : "N/A",
     lowestMatchRating: stat?.lowest_match_rating
-      ? String(stat.lowest_match_rating)
+      ? formatRating(stat.lowest_match_rating, "N/A")
       : "N/A",
     playerOfTheMatch: stat?.player_of_match_count ?? 0,
   };
@@ -1190,6 +1200,8 @@ function buildAdminSeasonData(input: {
     )
     .map((fixture) => ({
       id: fixture.id,
+      homeTeamRegistrationId: fixture.home_team_registration_id ?? null,
+      awayTeamRegistrationId: fixture.away_team_registration_id ?? null,
       home: fixture.home_team_registration_id
         ? (teamByRegistration.get(fixture.home_team_registration_id)?.teams
             ?.name ?? "Home team")
@@ -1314,7 +1326,7 @@ function buildAdminSeasonData(input: {
             teamLogoUrl: teamForStat(topRated)?.teams?.logo_url ?? null,
             avatarUrl:
               topRated.player_season_registrations?.players?.avatar_url ?? null,
-            rating: String(topRated.average_rating),
+            rating: formatRating(topRated.average_rating, "N/A"),
             matches: topRated.appearances ?? 0,
           }
         : null,
@@ -1339,6 +1351,12 @@ function formatNumber(value: unknown) {
   return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
 }
 
+function formatRating(value: unknown, fallback = "0.0") {
+  if (value === null || value === undefined || value === "") return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(1) : fallback;
+}
+
 function formatValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "0";
   if (typeof value === "number")
@@ -1359,7 +1377,7 @@ function percent(part: unknown, total: unknown) {
 }
 
 function ratingTone(value: number) {
-  if (value >= 7.9) return "bg-sky-500";
+  if (value > 7.9) return "bg-sky-500";
   if (value >= 7) return "bg-emerald-500";
   return "bg-orange-500";
 }
@@ -1430,7 +1448,10 @@ function buildPlayerEventMeta(
     const minute = Number(sub.minute ?? 0);
     const outId = String(sub.player_out_registration_id ?? "");
     const inId = String(sub.player_in_registration_id ?? "");
-    if (outId) ensurePlayerEventMeta(map, outId).subOutMinute = minute;
+    if (outId) {
+      const meta = ensurePlayerEventMeta(map, outId);
+      if (!meta.red) meta.subOutMinute = minute;
+    }
     if (inId) ensurePlayerEventMeta(map, inId).subInMinute = minute;
   }
   return map;
@@ -1599,7 +1620,7 @@ function formatTeamStat(
     const value = Number(stat[field] ?? 0);
     return value.toFixed(2).replace(/\.00$/, "");
   }
-  if (format === "rating") return formatNumber(stat[field]);
+  if (format === "rating") return formatRating(stat[field]);
   return formatNumber(stat[field]);
 }
 
@@ -1670,6 +1691,12 @@ export default function AdminLeagueSeasonDashboard() {
     playerId: string;
   } | null>(null);
   const [error, setError] = useState("");
+  const [requestedTeamId, setRequestedTeamId] = useState<string | null>(null);
+  const [requestedPlayerId, setRequestedPlayerId] = useState<string | null>(
+    null,
+  );
+  const [requestedTeamReturnTab, setRequestedTeamReturnTab] =
+    useState<TabId | null>(null);
 
   async function loadDashboardData() {
     const [me, leagueData, seasonData] = await Promise.all([
@@ -1701,6 +1728,7 @@ export default function AdminLeagueSeasonDashboard() {
       playerStatData,
       statsReportData,
       pendingLineupData,
+      currentMatchdayData,
     ] = await Promise.all([
       api<{ team_registrations: TeamRegistrationApiRow[] }>(
         "/admin/team-registrations",
@@ -1723,6 +1751,9 @@ export default function AdminLeagueSeasonDashboard() {
       api<{ lineups: AdminPendingLineupRow[] }>(
         `/admin/seasons/${selectedSeason.id}/lineups/pending`,
       ),
+      api<{ matches: ReadyMatchRow[] }>(
+        `/admin/seasons/${selectedSeason.id}/matches/current-matchday`,
+      ),
     ]);
     const nextAdminData = buildAdminSeasonData({
       season: selectedSeason,
@@ -1736,6 +1767,7 @@ export default function AdminLeagueSeasonDashboard() {
     setAdminData({
       ...nextAdminData,
       pendingLineups: pendingLineupData.lineups?.length ?? 0,
+      readyMatches: normalizeReadyMatches(currentMatchdayData.matches ?? []),
     });
     if (isGroupKnockoutFormat(selectedSeason.format)) {
       const groupData = await api<AdminGroupsResponse>(
@@ -1838,22 +1870,16 @@ export default function AdminLeagueSeasonDashboard() {
   }
 
   async function jumpToMatchday() {
-    if (!season?.id) return { updated_count: 0 };
+    if (!season?.id) return { updated_count: 0, matches: [] };
     const result = await api<{
       updated_count: number;
       matches: ReadyMatchRow[];
     }>(`/admin/seasons/${season.id}/matches/jump-to-matchday`, {
       method: "POST",
     });
-    await loadDashboardData();
-    return result;
-  }
-
-  async function loadCurrentMatchday() {
-    if (!season?.id) return { matches: [] as ReadyMatchRow[] };
-    return api<{ matches: ReadyMatchRow[] }>(
-      `/admin/seasons/${season.id}/matches/current-matchday`,
-    );
+    const matches = normalizeReadyMatches(result.matches ?? []);
+    setAdminData((current) => ({ ...current, readyMatches: matches }));
+    return { ...result, matches };
   }
 
   async function updateAbilityScores(
@@ -2058,6 +2084,31 @@ export default function AdminLeagueSeasonDashboard() {
     }
   }
 
+  function openAdminPlayerProfile(playerRegistrationId: string) {
+    const owningTeam = adminData.teams.find((team) =>
+      [...team.players, ...team.suspendedPlayers].some(
+        (player) => player.id === playerRegistrationId,
+      ),
+    );
+    if (!owningTeam) return;
+    setRequestedTeamReturnTab(activeTab === "teams" ? null : activeTab);
+    setRequestedTeamId(owningTeam.id);
+    setRequestedPlayerId(playerRegistrationId);
+    setSelectedLineupPlayer(null);
+    setActiveTab("teams");
+  }
+
+  function openAdminTeamProfile(
+    teamRegistrationId: string,
+    returnTab: TabId = activeTab,
+  ) {
+    if (!adminData.teams.some((team) => team.id === teamRegistrationId)) return;
+    setRequestedTeamReturnTab(returnTab === "teams" ? null : returnTab);
+    setRequestedTeamId(teamRegistrationId);
+    setRequestedPlayerId(null);
+    setActiveTab("teams");
+  }
+
   useEffect(() => {
     if (isGroupKnockout && activeTab === "standings") setActiveTab("dashboard");
   }, [activeTab, isGroupKnockout]);
@@ -2235,6 +2286,15 @@ export default function AdminLeagueSeasonDashboard() {
             <TeamsView
               season={season}
               teams={adminData.teams}
+              initialTeamId={requestedTeamId}
+              initialPlayerId={requestedPlayerId}
+              initialBackTab={requestedTeamReturnTab}
+              onInitialTeamOpened={() => {
+                setRequestedTeamId(null);
+                setRequestedPlayerId(null);
+                setRequestedTeamReturnTab(null);
+              }}
+              onNavigateBack={setActiveTab}
               onKickOutTeam={kickOutTeam}
               onSendTeamMessage={sendTeamMessage}
               onPlayerDecision={decidePlayerRequest}
@@ -2277,8 +2337,10 @@ export default function AdminLeagueSeasonDashboard() {
               onSimulate={simulateReadyMatch}
               onConfirm={confirmMatchResult}
               onJumpToMatchday={jumpToMatchday}
-              onLoadMatchday={loadCurrentMatchday}
               onPlayerProfile={openLineupPlayer}
+              onOpenTeam={(teamId) =>
+                openAdminTeamProfile(teamId, "matches-ready")
+              }
             />
           ) : null}
           {activeTab === "completed-matches" ? (
@@ -2291,10 +2353,13 @@ export default function AdminLeagueSeasonDashboard() {
             <StandingsView groupMode={false} teams={adminData.standings} />
           ) : null}
           {activeTab === "reports" ? (
-            <PlayerStatsView data={adminData} />
+            <PlayerStatsView
+              data={adminData}
+              onOpenPlayer={openAdminPlayerProfile}
+            />
           ) : null}
           {activeTab === "team-stats" ? (
-            <TeamStatsView data={adminData} />
+            <TeamStatsView data={adminData} onOpenTeam={openAdminTeamProfile} />
           ) : null}
           {activeTab === "messages" ? (
             <MessagesView messages={adminData.messages} />
@@ -2581,9 +2646,29 @@ function DashboardView({
   );
 }
 
+function adminBackLabel(tab: TabId | null) {
+  switch (tab) {
+    case "matches-ready":
+      return "Back to Matches Ready";
+    case "completed-matches":
+      return "Back to Completed Matches";
+    case "reports":
+      return "Back to Player Stats";
+    case "team-stats":
+      return "Back to Team Stats";
+    default:
+      return "Back to Teams";
+  }
+}
+
 function TeamsView({
   season,
   teams,
+  initialTeamId,
+  initialPlayerId,
+  initialBackTab,
+  onInitialTeamOpened,
+  onNavigateBack,
   onKickOutTeam,
   onSendTeamMessage,
   onPlayerDecision,
@@ -2595,6 +2680,11 @@ function TeamsView({
 }: {
   season: SeasonDto;
   teams: AdminTeam[];
+  initialTeamId?: string | null;
+  initialPlayerId?: string | null;
+  initialBackTab?: TabId | null;
+  onInitialTeamOpened?: (() => void) | undefined;
+  onNavigateBack: (tab: TabId) => void;
   onKickOutTeam: (id: string) => Promise<void>;
   onSendTeamMessage: (id: string) => Promise<void>;
   onPlayerDecision: (
@@ -2613,9 +2703,12 @@ function TeamsView({
     scores: Record<string, number>,
   ) => Promise<void>;
 }) {
-  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(
+    initialTeamId ?? null,
+  );
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [playerTab, setPlayerTab] = useState<"personal" | "stats">("personal");
+  const [backTab, setBackTab] = useState<TabId | null>(initialBackTab ?? null);
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
   const allTeamPlayers = selectedTeam
@@ -2624,12 +2717,33 @@ function TeamsView({
   const selectedPlayer =
     allTeamPlayers.find((player) => player.id === selectedPlayerId) ?? null;
 
+  useEffect(() => {
+    if (initialTeamId && teams.some((team) => team.id === initialTeamId)) {
+      setSelectedTeamId(initialTeamId);
+      setSelectedPlayerId(initialPlayerId ?? null);
+      setPlayerTab(initialBackTab === "reports" ? "stats" : "personal");
+      setBackTab(initialBackTab ?? null);
+      onInitialTeamOpened?.();
+    }
+  }, [
+    initialBackTab,
+    initialPlayerId,
+    initialTeamId,
+    onInitialTeamOpened,
+    teams,
+  ]);
+
   if (selectedTeam && selectedPlayer) {
     return (
       <PlayerDetailView
         season={season}
         team={selectedTeam}
         player={selectedPlayer}
+        backLabel={
+          backTab && backTab !== "teams"
+            ? adminBackLabel(backTab)
+            : `Back to ${selectedTeam.name}`
+        }
         activeTab={playerTab}
         onTabChange={setPlayerTab}
         onDecision={onPlayerDecision}
@@ -2637,9 +2751,16 @@ function TeamsView({
         onPlayerAction={onPlayerAction}
         onAbilityScoresUpdate={onAbilityScoresUpdate}
         onMessageManager={() => onSendTeamMessage(selectedTeam.id)}
+        hideAbility={backTab === "reports"}
         onBack={() => {
+          const destination = backTab;
           setSelectedPlayerId(null);
           setPlayerTab("personal");
+          if (destination && destination !== "teams") {
+            setSelectedTeamId(null);
+            setBackTab(null);
+            onNavigateBack(destination);
+          }
         }}
       />
     );
@@ -2650,7 +2771,15 @@ function TeamsView({
       <TeamDetailView
         team={selectedTeam}
         season={season}
-        onBack={() => setSelectedTeamId(null)}
+        backLabel={adminBackLabel(backTab)}
+        onBack={() => {
+          const destination = backTab;
+          setSelectedTeamId(null);
+          setBackTab(null);
+          if (destination && destination !== "teams") {
+            onNavigateBack(destination);
+          }
+        }}
         onKickOutTeam={() => onKickOutTeam(selectedTeam.id)}
         onSendMessage={() => onSendTeamMessage(selectedTeam.id)}
         onPlayerDecision={onPlayerDecision}
@@ -2717,7 +2846,10 @@ function TeamsView({
             </div>
             <button
               type="button"
-              onClick={() => setSelectedTeamId(team.id)}
+              onClick={() => {
+                setBackTab(null);
+                setSelectedTeamId(team.id);
+              }}
               className="mt-5 w-full rounded-lg bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98]"
             >
               Open Team
@@ -2732,6 +2864,7 @@ function TeamsView({
 function TeamDetailView({
   team,
   season,
+  backLabel,
   onBack,
   onKickOutTeam,
   onSendMessage,
@@ -2745,6 +2878,7 @@ function TeamDetailView({
 }: {
   team: AdminTeam;
   season: SeasonDto;
+  backLabel: string;
   onBack: () => void;
   onKickOutTeam: () => Promise<void>;
   onSendMessage: () => Promise<void>;
@@ -2817,7 +2951,7 @@ function TeamDetailView({
         className="mb-5 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 active:translate-y-0 active:scale-[0.98]"
       >
         <ArrowLeft size={16} />
-        Back to Teams
+        {backLabel}
       </button>
 
       <div
@@ -3060,6 +3194,7 @@ function PlayerDetailView({
   season,
   team,
   player,
+  backLabel,
   activeTab,
   onTabChange,
   onDecision,
@@ -3067,11 +3202,13 @@ function PlayerDetailView({
   onPlayerAction,
   onAbilityScoresUpdate,
   onMessageManager,
+  hideAbility,
   onBack,
 }: {
   season: SeasonDto;
   team: AdminTeam;
   player: AdminPlayer;
+  backLabel: string;
   activeTab: "personal" | "stats";
   onTabChange: (tab: "personal" | "stats") => void;
   onDecision: (id: string, status: "APPROVED" | "REJECTED") => Promise<void>;
@@ -3085,6 +3222,7 @@ function PlayerDetailView({
     scores: Record<string, number>,
   ) => Promise<void>;
   onMessageManager: () => Promise<void>;
+  hideAbility?: boolean;
   onBack: () => void;
 }) {
   return (
@@ -3095,7 +3233,7 @@ function PlayerDetailView({
         className="mb-5 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-indigo-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-indigo-50 active:translate-y-0 active:scale-[0.98]"
       >
         <ArrowLeft size={16} />
-        Back to {team.name}
+        {backLabel}
       </button>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -3162,6 +3300,7 @@ function PlayerDetailView({
           onPlayerAction={onPlayerAction}
           onAbilityScoresUpdate={onAbilityScoresUpdate}
           onMessageManager={onMessageManager}
+          showAbility={!hideAbility}
         />
       ) : (
         <PlayerLeagueStats player={player} />
@@ -3301,6 +3440,7 @@ function PlayerPersonalData({
   onPlayerAction,
   onAbilityScoresUpdate,
   onMessageManager,
+  showAbility,
 }: {
   team: AdminTeam;
   season: SeasonDto;
@@ -3316,6 +3456,7 @@ function PlayerPersonalData({
     scores: Record<string, number>,
   ) => Promise<void>;
   onMessageManager: () => Promise<void>;
+  showAbility: boolean;
 }) {
   const [editingAbility, setEditingAbility] = useState(false);
   const [abilityDraft, setAbilityDraft] = useState<Record<string, string>>({});
@@ -3473,63 +3614,65 @@ function PlayerPersonalData({
           </p>
         </Panel>
 
-        <Panel
-          title="Hidden Ability Scores"
-          action={
-            player.abilityDetails.length > 0
-              ? editingAbility
-                ? "Save scores"
-                : "Edit scores"
-              : undefined
-          }
-          onAction={
-            player.abilityDetails.length > 0
-              ? () => {
-                  if (editingAbility) void saveAbilityEdit();
-                  else startAbilityEdit();
-                }
-              : undefined
-          }
-        >
-          {player.abilityDetails.length > 0 ? (
-            <div className="grid grid-cols-2 gap-3">
-              {player.abilityDetails.map((ability) =>
-                editingAbility &&
-                ability.label !== "Tier" &&
-                ability.label !== "Overall" ? (
-                  <label
-                    key={ability.label}
-                    className="rounded-lg bg-slate-50 p-3"
-                  >
-                    <span className="text-xs font-black uppercase tracking-wide text-slate-500">
-                      {ability.label}
-                    </span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={92}
-                      value={abilityDraft[ability.label] ?? ability.value}
-                      onChange={(event) =>
-                        setAbilityDraft((current) => ({
-                          ...current,
-                          [ability.label]: event.target.value,
-                        }))
-                      }
-                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-black text-slate-800"
-                    />
-                  </label>
-                ) : (
-                  <AbilityDetailCard key={ability.label} ability={ability} />
-                ),
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">
-              No ability scores generated yet. Click Low, Moderate, or High
-              first.
-            </p>
-          )}
-        </Panel>
+        {showAbility ? (
+          <Panel
+            title="Hidden Ability Scores"
+            action={
+              player.abilityDetails.length > 0
+                ? editingAbility
+                  ? "Save scores"
+                  : "Edit scores"
+                : undefined
+            }
+            onAction={
+              player.abilityDetails.length > 0
+                ? () => {
+                    if (editingAbility) void saveAbilityEdit();
+                    else startAbilityEdit();
+                  }
+                : undefined
+            }
+          >
+            {player.abilityDetails.length > 0 ? (
+              <div className="grid grid-cols-2 gap-3">
+                {player.abilityDetails.map((ability) =>
+                  editingAbility &&
+                  ability.label !== "Tier" &&
+                  ability.label !== "Overall" ? (
+                    <label
+                      key={ability.label}
+                      className="rounded-lg bg-slate-50 p-3"
+                    >
+                      <span className="text-xs font-black uppercase tracking-wide text-slate-500">
+                        {ability.label}
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={92}
+                        value={abilityDraft[ability.label] ?? ability.value}
+                        onChange={(event) =>
+                          setAbilityDraft((current) => ({
+                            ...current,
+                            [ability.label]: event.target.value,
+                          }))
+                        }
+                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-black text-slate-800"
+                      />
+                    </label>
+                  ) : (
+                    <AbilityDetailCard key={ability.label} ability={ability} />
+                  ),
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">
+                No ability scores generated yet. Click Low, Moderate, or High
+                first.
+              </p>
+            )}
+          </Panel>
+        ) : null}
       </div>
     </div>
   );
@@ -3567,9 +3710,22 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
     <div className="space-y-6">
       <Panel title="Overall League Stats">
         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
-          {statRows.map(([label, value]) => (
-            <InfoBox key={label} label={String(label)} value={String(value)} />
-          ))}
+          {statRows.map(([label, value]) => {
+            const isRating = String(label).includes("Rating");
+            return (
+              <InfoBox
+                key={label}
+                label={String(label)}
+                value={
+                  isRating ? (
+                    <LeagueRatingCapsule value={value} />
+                  ) : (
+                    String(value)
+                  )
+                }
+              />
+            );
+          })}
         </div>
       </Panel>
 
@@ -3624,8 +3780,8 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
                     <td className="px-4 py-3">{row.successfulDribbles}</td>
                     <td className="px-4 py-3">{row.tackles}</td>
                     <td className="px-4 py-3">{row.cards}</td>
-                    <td className="px-4 py-3 font-black text-indigo-700">
-                      {row.rating}
+                    <td className="px-4 py-3 font-black">
+                      <LeagueRatingCapsule value={row.rating} />
                     </td>
                   </tr>
                 ))}
@@ -3963,6 +4119,39 @@ function abilityTone(tier: AdminPlayer["abilityRating"]) {
   return "bg-slate-100 text-slate-500 ring-slate-200";
 }
 
+function overallAbilityTone(
+  overall: number,
+  tier: AdminPlayer["abilityRating"],
+) {
+  if (tier !== "Not rated") return abilityTone(tier);
+  if (overall >= 73) return abilityTone("High");
+  if (overall >= 55) return abilityTone("Moderate");
+  return abilityTone("Low");
+}
+
+function LeagueRatingCapsule({ value }: { value: unknown }) {
+  const numeric = Number(value);
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    !Number.isFinite(numeric)
+  ) {
+    return (
+      <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-black text-slate-500 ring-1 ring-slate-200">
+        N/A
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black text-white ${ratingBadgeClass(numeric)}`}
+    >
+      {formatRating(numeric)}
+    </span>
+  );
+}
+
 function AbilityCapsule({ player }: { player: AdminPlayer }) {
   if (player.overallRating === null || player.overallRating === undefined) {
     return (
@@ -3973,7 +4162,7 @@ function AbilityCapsule({ player }: { player: AdminPlayer }) {
   }
   return (
     <span
-      className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${abilityTone(player.abilityRating)}`}
+      className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${overallAbilityTone(player.overallRating, player.abilityRating)}`}
     >
       {player.overallRating}
     </span>
@@ -4868,6 +5057,7 @@ function PlayerRequestDetailModal({
   player: AdminPlayer;
   onClose: () => void;
 }) {
+  const [tab, setTab] = useState<"stats" | "personal">("stats");
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
       <div className="max-h-[86vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
@@ -4876,7 +5066,7 @@ function PlayerRequestDetailModal({
             <PlayerAvatar player={player} />
             <div>
               <p className="text-xs font-black uppercase tracking-[0.3em] text-indigo-700">
-                Player Personal Data
+                Player Profile
               </p>
               <h2 className="mt-1 text-3xl font-black">{player.fullName}</h2>
               <p className="text-sm font-semibold text-slate-500">
@@ -4893,60 +5083,65 @@ function PlayerRequestDetailModal({
             Close
           </button>
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <DetailRow label="Player Code" value={player.code} />
-          <DetailRow label="Full Name" value={player.fullName} />
-          <DetailRow label="Date of Birth" value={player.dateOfBirth} />
-          <DetailRow label="Age" value={String(player.age)} />
-          <DetailRow label="ID Type" value={player.idType} />
-          <DetailRow label="Masked ID Number" value={player.maskedId} />
-          <DetailRow
-            label="Jersey Number"
-            value={String(player.jerseyNumber)}
-          />
-          <DetailRow
-            label="Position"
-            value={`${player.footballPosition} (${player.position})`}
-          />
-          <DetailRow label="Preferred Foot" value={player.preferredFoot} />
-          <DetailRow label="Approval Status" value={player.approvalStatus} />
-          <DetailRow label="Player Status" value={player.playerStatus} />
-          <DetailRow
-            label="Registration Date"
-            value={player.registrationDate}
-          />
-          <DetailRow
-            label="Submitted By Manager"
-            value={player.submittedByManager}
-          />
-          <DetailRow
-            label="Admin Approval Date"
-            value={player.adminApprovalDate}
-          />
-          <DetailRow label="Ability Rating" value={player.abilityRating} />
+        <div className="mb-5 grid grid-cols-2 gap-2 rounded-xl bg-slate-100 p-2 sm:w-[420px]">
+          <TabButton active={tab === "stats"} onClick={() => setTab("stats")}>
+            League Stats
+          </TabButton>
+          <TabButton
+            active={tab === "personal"}
+            onClick={() => setTab("personal")}
+          >
+            Personal Data
+          </TabButton>
         </div>
-        <div className="mt-5 rounded-xl bg-slate-50 p-4">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500">
-            Admin Message
-          </p>
-          <p className="mt-2 text-sm text-slate-700">{player.adminMessage}</p>
-        </div>
-        <div className="mt-5 rounded-xl border border-slate-200 p-4">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-500">
-            Hidden Ability Scores
-          </p>
-          {player.abilityDetails.length > 0 ? (
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              {player.abilityDetails.map((ability) => (
-                <AbilityDetailCard key={ability.label} ability={ability} />
-              ))}
+        {tab === "stats" ? (
+          <PlayerLeagueStats player={player} />
+        ) : (
+          <>
+            <div className="grid gap-4 md:grid-cols-2">
+              <DetailRow label="Player Code" value={player.code} />
+              <DetailRow label="Full Name" value={player.fullName} />
+              <DetailRow label="Date of Birth" value={player.dateOfBirth} />
+              <DetailRow label="Age" value={String(player.age)} />
+              <DetailRow label="ID Type" value={player.idType} />
+              <DetailRow label="Masked ID Number" value={player.maskedId} />
+              <DetailRow
+                label="Jersey Number"
+                value={String(player.jerseyNumber)}
+              />
+              <DetailRow
+                label="Position"
+                value={`${player.footballPosition} (${player.position})`}
+              />
+              <DetailRow label="Preferred Foot" value={player.preferredFoot} />
+              <DetailRow
+                label="Approval Status"
+                value={player.approvalStatus}
+              />
+              <DetailRow label="Player Status" value={player.playerStatus} />
+              <DetailRow
+                label="Registration Date"
+                value={player.registrationDate}
+              />
+              <DetailRow
+                label="Submitted By Manager"
+                value={player.submittedByManager}
+              />
+              <DetailRow
+                label="Admin Approval Date"
+                value={player.adminApprovalDate}
+              />
             </div>
-          ) : (
-            <p className="mt-2 text-sm text-slate-500">
-              No ability scores generated yet.
-            </p>
-          )}
-        </div>
+            <div className="mt-5 rounded-xl bg-slate-50 p-4">
+              <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                Admin Message
+              </p>
+              <p className="mt-2 text-sm text-slate-700">
+                {player.adminMessage}
+              </p>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -5694,7 +5889,7 @@ function AdminLineupPitch({
                           <span
                             className={`absolute -right-1 -top-2 rounded-full px-2 py-0.5 text-[11px] font-black text-white shadow ${ratingBadgeClass(Number(stat.rating))}`}
                           >
-                            {formatNumber(stat.rating)}
+                            {formatRating(stat.rating)}
                             {player.player_registration_id ===
                             bestRatedPlayerId ? (
                               <Star
@@ -5772,7 +5967,7 @@ function AdminLineupPitch({
                           <span
                             className={`rounded-full px-2 py-0.5 text-[11px] font-black text-white ${ratingBadgeClass(Number(stat.rating))}`}
                           >
-                            {formatNumber(stat.rating)}
+                            {formatRating(stat.rating)}
                           </span>
                         ) : null}
                         <p className="truncate font-black">
@@ -5828,8 +6023,8 @@ function MatchesReadyView({
   onSimulate,
   onConfirm,
   onJumpToMatchday,
-  onLoadMatchday,
   onPlayerProfile,
+  onOpenTeam,
 }: {
   matches: ReadyMatchRow[];
   onSimulate: (fixtureId: string) => Promise<void>;
@@ -5838,11 +6033,11 @@ function MatchesReadyView({
     updated_count: number;
     matches?: ReadyMatchRow[];
   }>;
-  onLoadMatchday: () => Promise<{ matches?: ReadyMatchRow[] }>;
   onPlayerProfile: (
     player: MatchDetailLineupPlayer,
     teamRegistrationId?: string,
   ) => void;
+  onOpenTeam: (teamRegistrationId: string) => void;
 }) {
   const [selectedMatch, setSelectedMatch] = useState<ReadyMatchRow | null>(
     null,
@@ -5853,35 +6048,14 @@ function MatchesReadyView({
   const [jumping, setJumping] = useState(false);
   const [selectedStat, setSelectedStat] =
     useState<MatchDetailPlayerStat | null>(null);
-  const [jumpMatches, setJumpMatches] = useState<ReadyMatchRow[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const visibleMatches = jumpMatches.length ? jumpMatches : matches;
+  const visibleMatches = matches;
   const hasUnsimulatedVisibleMatch = visibleMatches.some(
     (match) => !isSimulatedOrDoneStatus(match.status),
   );
   const jumpLocked = visibleMatches.length > 0 && hasUnsimulatedVisibleMatch;
-
-  useEffect(() => {
-    let cancelled = false;
-    void onLoadMatchday()
-      .then((result) => {
-        if (cancelled) return;
-        setJumpMatches(
-          (result.matches ?? []).map((match) => ({
-            ...match,
-            kickoff: safeDateTime(match.kickoff),
-            status: statusLabel(match.status),
-          })),
-        );
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function openDetail(match: ReadyMatchRow) {
     setSelectedMatch(match);
@@ -6003,13 +6177,6 @@ function MatchesReadyView({
             setNotice("");
             try {
               const result = await onJumpToMatchday();
-              setJumpMatches(
-                (result.matches ?? []).map((match) => ({
-                  ...match,
-                  kickoff: safeDateTime(match.kickoff),
-                  status: statusLabel(match.status),
-                })),
-              );
               setNotice(
                 result.updated_count > 0
                   ? `${result.updated_count} confirmed-lineup match${result.updated_count === 1 ? "" : "es"} moved to ready simulation.`
@@ -6065,9 +6232,25 @@ function MatchesReadyView({
               title={`${canSimulate ? "Ready" : "Matchday"} Match ${index + 1}`}
             >
               <div className="flex items-center justify-between">
-                <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
+                <TeamCompact
+                  name={match.home}
+                  logoUrl={match.homeLogoUrl}
+                  onClick={
+                    match.homeTeamRegistrationId
+                      ? () => onOpenTeam(match.homeTeamRegistrationId!)
+                      : undefined
+                  }
+                />
                 <span className="font-black text-slate-500">VS</span>
-                <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
+                <TeamCompact
+                  name={match.away}
+                  logoUrl={match.awayLogoUrl}
+                  onClick={
+                    match.awayTeamRegistrationId
+                      ? () => onOpenTeam(match.awayTeamRegistrationId!)
+                      : undefined
+                  }
+                />
               </div>
               <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-center text-sm font-black text-slate-700">
                 {match.kickoff}
@@ -6590,7 +6773,7 @@ function AdminCombinedMatchPitch({
           <span
             className={`rounded-full px-2.5 py-1 text-xs ${ratingBadgeClass(homeRating)}`}
           >
-            {homeRating ? formatNumber(homeRating) : "-"}
+            {homeRating ? formatRating(homeRating) : "-"}
           </span>
           <TeamBadge name={match.home} logoUrl={match.homeLogoUrl} />
           <span>{match.home}</span>
@@ -6603,7 +6786,7 @@ function AdminCombinedMatchPitch({
           <span
             className={`rounded-full px-2.5 py-1 text-xs ${ratingBadgeClass(awayRating)}`}
           >
-            {awayRating ? formatNumber(awayRating) : "-"}
+            {awayRating ? formatRating(awayRating) : "-"}
           </span>
         </div>
       </div>
@@ -6776,7 +6959,7 @@ function AdminMatchPlayerNode({
           <span
             className={`absolute -right-2 -top-2 rounded-full px-2 py-0.5 text-[11px] font-black text-white shadow ${ratingBadgeClass(Number(stat.rating))}`}
           >
-            {formatNumber(stat.rating)}
+            {formatRating(stat.rating)}
             {isBest ? (
               <Star size={10} className="ml-0.5 inline fill-current" />
             ) : null}
@@ -6866,7 +7049,7 @@ function MatchBenchColumn({
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-black text-white ${ratingBadgeClass(Number(stat.rating))}`}
                   >
-                    {formatNumber(stat.rating)}
+                    {formatRating(stat.rating)}
                     {player.player_registration_id === bestRatedPlayerId ? (
                       <Star size={10} className="ml-0.5 inline fill-current" />
                     ) : null}
@@ -6950,7 +7133,7 @@ function LineupSide({
                   <span
                     className={`absolute right-2 top-2 rounded-full px-2 py-0.5 text-xs font-black text-white ${ratingTone(Number(stat.rating))}`}
                   >
-                    {formatNumber(stat.rating)}
+                    {formatRating(stat.rating)}
                   </span>
                 ) : null}
                 <div className="flex items-center gap-2">
@@ -7413,7 +7596,7 @@ function PlayerMatchStatModal({
                 <span
                   className={`absolute -right-1 -top-1 rounded-full px-2 py-0.5 text-xs font-black text-white ${ratingBadgeClass(Number(stat.rating))}`}
                 >
-                  {formatNumber(stat.rating)}
+                  {formatRating(stat.rating)}
                 </span>
               </div>
               <h3 className="mt-3 text-lg font-black">{name}</h3>
@@ -7467,7 +7650,9 @@ function PlayerMatchStatModal({
                   >
                     <span className="font-medium text-slate-700">{label}</span>
                     <span className="text-right font-black">
-                      {formatValue(value)}
+                      {label === "Rating"
+                        ? formatRating(value)
+                        : formatValue(value)}
                     </span>
                   </div>
                 ))}
@@ -7517,7 +7702,13 @@ function StandingsView({
   );
 }
 
-function PlayerStatsView({ data }: { data: AdminSeasonData }) {
+function PlayerStatsView({
+  data,
+  onOpenPlayer,
+}: {
+  data: AdminSeasonData;
+  onOpenPlayer: (playerRegistrationId: string) => void;
+}) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
   const [teamFilter, setTeamFilter] = useState("ALL");
   const sections = filterStatSections(
@@ -7541,15 +7732,26 @@ function PlayerStatsView({ data }: { data: AdminSeasonData }) {
         title="Player Stats"
         sections={sections}
         onOpen={setOpenCard}
+        onEntryOpen={(entry) => onOpenPlayer(entry.id)}
       />
       {openCard ? (
-        <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} />
+        <LeaderboardModal
+          card={openCard}
+          onEntryOpen={(entry) => onOpenPlayer(entry.id)}
+          onClose={() => setOpenCard(null)}
+        />
       ) : null}
     </div>
   );
 }
 
-function TeamStatsView({ data }: { data: AdminSeasonData }) {
+function TeamStatsView({
+  data,
+  onOpenTeam,
+}: {
+  data: AdminSeasonData;
+  onOpenTeam: (teamRegistrationId: string) => void;
+}) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
   const [teamFilter, setTeamFilter] = useState("ALL");
   const sections = filterStatSections(
@@ -7573,9 +7775,14 @@ function TeamStatsView({ data }: { data: AdminSeasonData }) {
         title="Team Stats"
         sections={sections}
         onOpen={setOpenCard}
+        onEntryOpen={(entry) => onOpenTeam(entry.id)}
       />
       {openCard ? (
-        <LeaderboardModal card={openCard} onClose={() => setOpenCard(null)} />
+        <LeaderboardModal
+          card={openCard}
+          onEntryOpen={(entry) => onOpenTeam(entry.id)}
+          onClose={() => setOpenCard(null)}
+        />
       ) : null}
     </div>
   );
@@ -7639,10 +7846,12 @@ function LeaderboardSections({
   title,
   sections,
   onOpen,
+  onEntryOpen,
 }: {
   title: string;
   sections: StatSectionData[];
   onOpen: (card: StatCardData) => void;
+  onEntryOpen: (entry: StatEntry) => void;
 }) {
   const hasData = sections.some((section) =>
     section.cards.some((card) => card.entries.length > 0),
@@ -7665,6 +7874,7 @@ function LeaderboardSections({
                   key={card.id}
                   card={card}
                   onOpen={() => onOpen(card)}
+                  onEntryOpen={onEntryOpen}
                 />
               ))}
             </div>
@@ -7678,21 +7888,24 @@ function LeaderboardSections({
 function LeaderboardCard({
   card,
   onOpen,
+  onEntryOpen,
 }: {
   card: StatCardData;
   onOpen: () => void;
+  onEntryOpen: (entry: StatEntry) => void;
 }) {
   const topEntries = card.entries.slice(0, 3);
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-indigo-200 hover:shadow-xl active:translate-y-0 active:scale-[0.99]"
-    >
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <article className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-indigo-200 hover:shadow-xl">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="mb-4 flex w-full items-center justify-between gap-3 rounded-lg text-left outline-none transition hover:text-indigo-700 focus-visible:ring-2 focus-visible:ring-indigo-500"
+        aria-label={`Open full ${card.title} leaderboard`}
+      >
         <h4 className="text-lg font-black">{card.title}</h4>
         <span className="text-2xl font-black text-slate-300">›</span>
-      </div>
+      </button>
       {topEntries.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center text-sm font-bold text-slate-500">
           No data yet.
@@ -7704,23 +7917,26 @@ function LeaderboardCard({
               key={entry.id}
               entry={entry}
               rank={index + 1}
+              onOpen={() => onEntryOpen(entry)}
             />
           ))}
         </div>
       )}
-    </button>
+    </article>
   );
 }
 
 function LeaderboardEntryRow({
   entry,
   rank,
+  onOpen,
 }: {
   entry: StatEntry;
   rank: number;
+  onOpen?: (() => void) | undefined;
 }) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-3">
+  const content = (
+    <>
       <div className="flex min-w-0 items-center gap-3">
         <span className="w-5 text-sm font-black text-slate-400">{rank}</span>
         <PlayerOrTeamAvatar entry={entry} />
@@ -7743,6 +7959,23 @@ function LeaderboardEntryRow({
       >
         {entry.value}
       </span>
+    </>
+  );
+  if (onOpen) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full items-center justify-between gap-4 rounded-lg py-3 text-left transition hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        aria-label={`Open ${entry.name}`}
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      {content}
     </div>
   );
 }
@@ -7768,9 +8001,11 @@ function PlayerOrTeamAvatar({ entry }: { entry: StatEntry }) {
 
 function LeaderboardModal({
   card,
+  onEntryOpen,
   onClose,
 }: {
   card: StatCardData;
+  onEntryOpen: (entry: StatEntry) => void;
   onClose: () => void;
 }) {
   return (
@@ -7800,6 +8035,7 @@ function LeaderboardModal({
                 key={entry.id}
                 entry={entry}
                 rank={index + 1}
+                onOpen={() => onEntryOpen(entry)}
               />
             ))}
           </div>
@@ -8225,6 +8461,9 @@ function SettingsView({
     total_teams: String(season.total_teams ?? ""),
     lineup_size: String(season.lineup_size ?? ""),
     substitute_limit: String(season.substitute_limit ?? ""),
+    yellow_card_suspension_threshold: String(
+      season.yellow_card_suspension_threshold ?? 3,
+    ),
     registration_start_date: season.registration_start_date ?? "",
     registration_deadline: season.registration_deadline ?? "",
     start_date: season.start_date ?? "",
@@ -8383,6 +8622,17 @@ function SettingsView({
                 setSeasonDraft((current) => ({
                   ...current,
                   substitute_limit: value,
+                }))
+              }
+            />
+            <EditableField
+              label="Yellow Cards for 1-Match Suspension"
+              value={seasonDraft.yellow_card_suspension_threshold}
+              type="number"
+              onChange={(value) =>
+                setSeasonDraft((current) => ({
+                  ...current,
+                  yellow_card_suspension_threshold: value,
                 }))
               }
             />
@@ -8841,15 +9091,29 @@ function TeamBadge({
 function TeamCompact({
   name,
   logoUrl,
+  onClick,
 }: {
   name: string;
   logoUrl?: string | null | undefined;
+  onClick?: (() => void) | undefined;
 }) {
-  return (
-    <div className="flex items-center gap-3">
+  const content = (
+    <>
       <TeamBadge name={name} logoUrl={logoUrl} />
       <span className="font-black">{name}</span>
-    </div>
+    </>
+  );
+  return onClick ? (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-3 rounded-lg text-left transition hover:-translate-y-0.5 hover:text-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+      title={`Open ${name}`}
+    >
+      {content}
+    </button>
+  ) : (
+    <div className="flex items-center gap-3">{content}</div>
   );
 }
 
@@ -8992,7 +9256,7 @@ function InfoBox({
   children,
 }: {
   label: string;
-  value: string;
+  value: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (

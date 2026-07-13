@@ -57,6 +57,12 @@ export const createSeasonSchema = z
       .min(1)
       .max(168)
       .optional(),
+    yellow_card_suspension_threshold: z
+      .number()
+      .int()
+      .min(2)
+      .max(10)
+      .optional(),
     group_count: z.number().int().min(1).max(16).optional(),
     teams_per_group: z.number().int().min(2).max(16).optional(),
     qualifiers_per_group: z.number().int().min(1).max(4).optional(),
@@ -391,7 +397,22 @@ export const lineupSubmissionSchema = z.object({
   formation: z.string().trim().min(3).max(30),
   playing_style: z.string().trim().min(3).max(50).optional(),
   captain_id: uuidSchema.optional().nullable(),
+  penalty_taker_ids: z.array(uuidSchema).max(60).optional().default([]),
+  free_kick_taker_ids: z.array(uuidSchema).max(60).optional().default([]),
   players: z.array(lineupPlayerInputSchema).min(11).max(60),
+}).superRefine((input, context) => {
+  for (const [field, ids] of [
+    ["penalty_taker_ids", input.penalty_taker_ids],
+    ["free_kick_taker_ids", input.free_kick_taker_ids],
+  ] as const) {
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: "Set-piece taker order cannot contain duplicate players",
+      });
+    }
+  }
 });
 
 export const generateFixturesSchema = z.object({

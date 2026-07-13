@@ -239,6 +239,35 @@ describe("match-stat simulator", () => {
     }
   });
 
+  it("varies attacker dribble attempts and outcomes across deterministic matches", () => {
+    const attempts = new Set<number>();
+    const outcomes = new Set<string>();
+    for (let index = 0; index < 40; index += 1) {
+      const result = simulateMatch(
+        players(VenueSide.HOME),
+        players(VenueSide.AWAY),
+        `dribble-variation-${index}`,
+      );
+      for (const stat of result.player_stats) {
+        if (
+          stat.position_played !== FootballPosition.LW &&
+          stat.position_played !== FootballPosition.RW &&
+          stat.position_played !== FootballPosition.ST
+        ) {
+          continue;
+        }
+        attempts.add(stat.dribbles_attempted);
+        outcomes.add(
+          `${stat.successful_dribbles}/${stat.dribbles_attempted}`,
+        );
+      }
+    }
+    expect(attempts.size).toBeGreaterThanOrEqual(5);
+    expect(outcomes.size).toBeGreaterThanOrEqual(8);
+    expect(outcomes.has("1/2")).toBe(true);
+    expect([...outcomes].some((outcome) => outcome !== "1/2")).toBe(true);
+  });
+
   it("keeps cards uncommon over a deterministic sample", () => {
     let yellows = 0;
     let reds = 0;
@@ -284,6 +313,8 @@ describe("match-stat simulator", () => {
 
   it("generates realistic pass volume and avoids tiny xG for routine high scores", () => {
     const passTotals: number[] = [];
+    const passCompletionRates: number[] = [];
+    const tackleTotals: number[] = [];
     for (let index = 0; index < 300; index += 1) {
       const result = simulateMatch(
         players(VenueSide.HOME),
@@ -291,6 +322,11 @@ describe("match-stat simulator", () => {
         `distribution-${index}`,
       );
       passTotals.push(result.home_stats.passes, result.away_stats.passes);
+      passCompletionRates.push(
+        result.home_stats.accurate_passes / result.home_stats.passes,
+        result.away_stats.accurate_passes / result.away_stats.passes,
+      );
+      tackleTotals.push(result.home_stats.tackles, result.away_stats.tackles);
       for (const [team, goals] of [
         [result.home_stats, result.home_score],
         [result.away_stats, result.away_score],
@@ -305,6 +341,19 @@ describe("match-stat simulator", () => {
       passTotals.length;
     expect(averagePasses).toBeGreaterThan(470);
     expect(averagePasses).toBeLessThan(620);
+    const averagePassCompletion =
+      passCompletionRates.reduce((total, rate) => total + rate, 0) /
+      passCompletionRates.length;
+    expect(averagePassCompletion).toBeGreaterThan(0.76);
+    expect(averagePassCompletion).toBeLessThan(0.82);
+    const averageTackles =
+      tackleTotals.reduce((total, tackles) => total + tackles, 0) /
+      tackleTotals.length;
+    expect(averageTackles).toBeGreaterThan(8);
+    expect(averageTackles).toBeLessThan(16);
+    expect(tackleTotals.filter((tackles) => tackles > 18).length).toBeLessThan(
+      tackleTotals.length * 0.06,
+    );
   });
 
   it("supports varied edge cases without breaking invariants", () => {
@@ -369,7 +418,7 @@ describe("match-stat simulator", () => {
     let substituteContribution: ReturnType<typeof simulateMatch> | null = null;
     for (
       let index = 0;
-      index < 1800 && (!penaltyResult || !substituteContribution);
+      index < 400 && (!penaltyResult || !substituteContribution);
       index += 1
     ) {
       const result = simulateMatch(
@@ -414,5 +463,61 @@ describe("match-stat simulator", () => {
       )!;
       expect(scorer.penalty_scored).toBeGreaterThan(0);
     }
+  });
+
+  it("uses the first configured set-piece taker who is active", () => {
+    const home = players(VenueSide.HOME);
+    const away = players(VenueSide.AWAY);
+    const homeOrder = home
+      .filter((player) => player.football_position !== FootballPosition.GK)
+      .map((player) => player.player_registration_id)
+      .reverse();
+    const awayOrder = away
+      .filter((player) => player.football_position !== FootballPosition.GK)
+      .map((player) => player.player_registration_id)
+      .reverse();
+    let checkedPenalty = false;
+
+    for (let attempt = 1; attempt <= 250 && !checkedPenalty; attempt += 1) {
+      const result = simulateMatch(home, away, "configured-takers", attempt, {
+        home: {
+          penalty_taker_ids: homeOrder,
+          free_kick_taker_ids: homeOrder,
+        },
+        away: {
+          penalty_taker_ids: awayOrder,
+          free_kick_taker_ids: awayOrder,
+        },
+      });
+      const penalty = result.events.find((event) =>
+        [
+          MatchEventType.PENALTY_GOAL,
+          MatchEventType.PENALTY_MISS,
+          MatchEventType.PENALTY_SAVED,
+        ].includes(event.type),
+      );
+      if (!penalty) continue;
+
+      const order = penalty.side === VenueSide.HOME ? homeOrder : awayOrder;
+      const teamPlayers = penalty.side === VenueSide.HOME ? home : away;
+      const active = (playerId: string) => {
+        const player = teamPlayers.find(
+          (candidate) => candidate.player_registration_id === playerId,
+        )!;
+        const subIn = result.substitutions.find(
+          (sub) => sub.player_in_registration_id === playerId,
+        );
+        const subOut = result.substitutions.find(
+          (sub) => sub.player_out_registration_id === playerId,
+        );
+        const start = player.is_starter ? 0 : subIn?.minute;
+        const end = subOut?.minute ?? 90;
+        return start !== undefined && penalty.minute >= start && penalty.minute <= end;
+      };
+      expect(penalty.player_registration_id).toBe(order.find(active));
+      checkedPenalty = true;
+    }
+
+    expect(checkedPenalty).toBe(true);
   });
 });

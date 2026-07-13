@@ -31,6 +31,11 @@ import {
 } from "../domain/fixtures.js";
 import { getFormationSlots } from "../domain/lineup-builder.js";
 import {
+  crossedYellowThreshold,
+  disciplinePhaseForStage,
+  isStageInDisciplinePhase,
+} from "../domain/discipline.js";
+import {
   applyFinalResultToStandings,
   emptyStanding,
 } from "../domain/standings.js";
@@ -39,6 +44,7 @@ import {
   simulateMatch,
   validateSimulationConsistency,
   type SimPlayer,
+  type SimSetPieceTakers,
   type SimulationResult,
   type SimTeamStats,
 } from "../domain/simulator.js";
@@ -80,6 +86,8 @@ function formatAdminMatchdayFixture(fixture: any) {
   const awayTeamInfo = unwrapRelation(awayTeam?.teams);
   return {
     id: fixture.id,
+    homeTeamRegistrationId: homeTeam?.id ?? null,
+    awayTeamRegistrationId: awayTeam?.id ?? null,
     home: homeTeamInfo?.name ?? "Home team",
     away: awayTeamInfo?.name ?? "Away team",
     homeLogoUrl: homeTeamInfo?.logo_url ?? null,
@@ -148,17 +156,15 @@ async function loadCurrentMatchdayMatches(seasonId: string) {
   const storedActiveDate = season?.active_matchday_date ?? null;
   const legacyActiveDate = activeMatchdayNumber
     ? activeFixtures.find(
-      (fixture) =>
-        Number(fixture.matchday_number ?? fixture.round_no) ===
-        activeMatchdayNumber,
-    )?.kickoff_at
+        (fixture) =>
+          Number(fixture.matchday_number ?? fixture.round_no) ===
+          activeMatchdayNumber,
+      )?.kickoff_at
     : null;
   const activeDate = storedActiveDate ?? fixtureDateKey(legacyActiveDate);
   if (activeDate) {
     return activeFixtures
-      .filter(
-        (fixture) => fixtureDateKey(fixture.kickoff_at) === activeDate,
-      )
+      .filter((fixture) => fixtureDateKey(fixture.kickoff_at) === activeDate)
       .map(formatAdminMatchdayFixture);
   }
   const readyMatchday =
@@ -180,8 +186,8 @@ async function loadCurrentMatchdayMatches(seasonId: string) {
     null;
   const matchdayFixtures = firstMatchday
     ? activeFixtures.filter(
-      (fixture) => fixture.kickoff_at?.slice(0, 10) === firstMatchday,
-    )
+        (fixture) => fixture.kickoff_at?.slice(0, 10) === firstMatchday,
+      )
     : activeFixtures.slice(0, 8);
   return matchdayFixtures.map(formatAdminMatchdayFixture);
 }
@@ -213,11 +219,11 @@ async function notifyMatchdayManagers(
   const fixtureIds = rows.map((fixture) => fixture.id).filter(Boolean);
   const { data: existingMessages, error: existingError } = fixtureIds.length
     ? await supabaseAdmin
-      .from("manager_messages")
-      .select("fixture_id,team_registration_id,message")
-      .eq("season_id", seasonId)
-      .in("fixture_id", fixtureIds)
-      .ilike("message", "%Submit your lineup%")
+        .from("manager_messages")
+        .select("fixture_id,team_registration_id,message")
+        .eq("season_id", seasonId)
+        .in("fixture_id", fixtureIds)
+        .ilike("message", "%Submit your lineup%")
     : { data: [], error: null };
   if (existingError) throw existingError;
   const existingKeys = new Set(
@@ -239,10 +245,10 @@ async function notifyMatchdayManagers(
     );
     const kickoffText = fixture.kickoff_at
       ? new Date(fixture.kickoff_at).toLocaleString("en-US", {
-        dateStyle: "medium",
-        timeStyle: "short",
-        timeZone: "Asia/Dhaka",
-      })
+          dateStyle: "medium",
+          timeStyle: "short",
+          timeZone: "Asia/Dhaka",
+        })
       : "the scheduled match time";
     const pairings = [
       {
@@ -398,6 +404,7 @@ adminRouter.patch(
       "lineup_size",
       "substitute_limit",
       "lineup_submission_deadline_hours",
+      "yellow_card_suspension_threshold",
       "group_count",
       "teams_per_group",
       "qualifiers_per_group",
@@ -411,6 +418,7 @@ adminRouter.patch(
       "lineup_size",
       "substitute_limit",
       "lineup_submission_deadline_hours",
+      "yellow_card_suspension_threshold",
       "group_count",
       "teams_per_group",
       "qualifiers_per_group",
@@ -427,6 +435,17 @@ adminRouter.patch(
           : numberFields.has(key) && value !== null && value !== undefined
             ? Number(value)
             : value;
+    }
+    if (
+      updates.yellow_card_suspension_threshold !== undefined &&
+      (!Number.isInteger(updates.yellow_card_suspension_threshold) ||
+        Number(updates.yellow_card_suspension_threshold) < 2 ||
+        Number(updates.yellow_card_suspension_threshold) > 10)
+    ) {
+      throw new AppError(
+        400,
+        "Yellow-card suspension threshold must be an integer from 2 to 10",
+      );
     }
     if (Object.keys(updates).length === 0)
       throw new AppError(400, "No season settings provided");
@@ -585,35 +604,50 @@ adminRouter.get(
     const playerRegistrations = playerRegistrationsResult.data ?? [];
     const teamIds = teamRegistrations.map((team) => team.id);
     const playerIds = playerRegistrations.map((player) => player.id);
+    const fixtures = fixturesResult.data ?? [];
+    const fixtureIds = fixtures.map((fixture) => fixture.id);
 
     const [
       playerSeasonStatsResult,
       playerMatchStatsResult,
       teamMatchStatsResult,
+      penaltyEventsResult,
     ] = await Promise.all([
       playerIds.length
         ? supabaseAdmin
-          .from("player_season_stats")
-          .select("*")
-          .eq("season_id", seasonId)
-          .in("player_registration_id", playerIds)
+            .from("player_season_stats")
+            .select("*")
+            .eq("season_id", seasonId)
+            .in("player_registration_id", playerIds)
         : Promise.resolve({ data: [], error: null }),
       playerIds.length
         ? supabaseAdmin
-          .from("player_match_stats")
-          .select("*")
-          .in("player_registration_id", playerIds)
+            .from("player_match_stats")
+            .select("*")
+            .in("player_registration_id", playerIds)
         : Promise.resolve({ data: [], error: null }),
       teamIds.length
         ? supabaseAdmin
-          .from("team_match_stats")
-          .select("*")
-          .in("team_registration_id", teamIds)
+            .from("team_match_stats")
+            .select("*")
+            .in("team_registration_id", teamIds)
+        : Promise.resolve({ data: [], error: null }),
+      fixtureIds.length
+        ? supabaseAdmin
+            .from("match_events")
+            .select("fixture_id,side,type")
+            .in("fixture_id", fixtureIds)
+            .in("type", [
+              MatchEventType.PENALTY_GOAL,
+              MatchEventType.PENALTY_MISS,
+              MatchEventType.PENALTY_SAVED,
+            ])
         : Promise.resolve({ data: [], error: null }),
     ]);
     if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
     if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
     if (teamMatchStatsResult.error) throw teamMatchStatsResult.error;
+    if (penaltyEventsResult.error) throw penaltyEventsResult.error;
 
     const teamById = new Map(teamRegistrations.map((team) => [team.id, team]));
     const playerById = new Map(
@@ -692,7 +726,10 @@ adminRouter.get(
         standing,
       ]),
     );
-    const fixtures = fixturesResult.data ?? [];
+    const fixtureById = new Map(
+      fixtures.map((fixture) => [fixture.id, fixture]),
+    );
+    const penaltyEvents = penaltyEventsResult.data ?? [];
     const teamMatchStats = teamMatchStatsResult.data ?? [];
     const teamRows = teamRegistrations
       .filter((team) => team.status === RegistrationStatus.APPROVED)
@@ -762,7 +799,13 @@ adminRouter.get(
           ),
           tacklesPerMatch: perMatch(sumPlayers("tackles"), played),
           clearancesPerMatch: perMatch(sumPlayers("clearances"), played),
-          penaltiesConceded: 0,
+          penaltiesConceded: penaltyEvents.filter((event) => {
+            const fixture = fixtureById.get(event.fixture_id);
+            if (!fixture) return false;
+            return event.side === VenueSide.HOME
+              ? fixture.away_team_registration_id === team.id
+              : fixture.home_team_registration_id === team.id;
+          }).length,
           gkSavesPerMatch: perMatch(sumPlayers("saves"), played),
           foulsPerMatch: perMatch(sumTeam("fouls"), played),
           yellowCards: sumTeam("yellow_cards"),
@@ -787,7 +830,7 @@ adminRouter.get(
               "Rating",
               playerRows,
               "rating",
-              "decimal",
+              "rating",
             ),
           ],
         },
@@ -908,7 +951,6 @@ adminRouter.get(
               playerRows,
               "goalsConcededPer90",
               "decimal",
-              "asc",
             ),
           ],
         },
@@ -955,7 +997,7 @@ adminRouter.get(
               "Rating",
               teamRows,
               "rating",
-              "decimal",
+              "rating",
             ),
           ],
         },
@@ -1022,7 +1064,6 @@ adminRouter.get(
               teamRows,
               "goalsConcededPerMatch",
               "decimal",
-              "asc",
             ),
             makeTeamLeaderboard(
               "tackles_per_match",
@@ -1044,7 +1085,6 @@ adminRouter.get(
               teamRows,
               "penaltiesConceded",
               "number",
-              "asc",
             ),
             makeTeamLeaderboard(
               "gk_saves_per_match",
@@ -1064,7 +1104,6 @@ adminRouter.get(
               teamRows,
               "foulsPerMatch",
               "decimal",
-              "asc",
             ),
             makeTeamLeaderboard(
               "yellow_cards",
@@ -1072,7 +1111,6 @@ adminRouter.get(
               teamRows,
               "yellowCards",
               "number",
-              "asc",
             ),
             makeTeamLeaderboard(
               "red_cards",
@@ -1080,7 +1118,6 @@ adminRouter.get(
               teamRows,
               "redCards",
               "number",
-              "asc",
             ),
           ],
         },
@@ -1394,8 +1431,8 @@ adminRouter.patch(
       : null;
     const suspensionMatchesRemaining =
       req.body?.suspension_matches_remaining === undefined ||
-        req.body.suspension_matches_remaining === null ||
-        req.body.suspension_matches_remaining === ""
+      req.body.suspension_matches_remaining === null ||
+      req.body.suspension_matches_remaining === ""
         ? null
         : Number(req.body.suspension_matches_remaining);
     if (
@@ -1509,57 +1546,57 @@ adminRouter.patch(
     const row =
       generated.position === FootballPosition.GK
         ? {
-          player_registration_id: registration.id,
-          player_id: registration.player_id,
-          season_id: registration.season_id,
-          team_registration_id: registration.team_registration_id,
-          position: generated.position,
-          rating_tier: generated.rating_tier,
-          shooting: null,
-          passing: null,
-          dribbling: null,
-          defending: null,
-          pace: null,
-          stamina: null,
-          physical: generated.physical,
-          shot_stopping: generated.shot_stopping,
-          reflexes: generated.reflexes,
-          positioning: generated.positioning,
-          handling: generated.handling,
-          diving: generated.diving,
-          distribution: generated.distribution,
-          communication: generated.communication,
-          overall_rating: generated.overall_rating,
-          generated_by_admin_id: req.auth!.userId,
-          generated_at: new Date().toISOString(),
-          is_hidden_from_manager: true,
-        }
+            player_registration_id: registration.id,
+            player_id: registration.player_id,
+            season_id: registration.season_id,
+            team_registration_id: registration.team_registration_id,
+            position: generated.position,
+            rating_tier: generated.rating_tier,
+            shooting: null,
+            passing: null,
+            dribbling: null,
+            defending: null,
+            pace: null,
+            stamina: null,
+            physical: generated.physical,
+            shot_stopping: generated.shot_stopping,
+            reflexes: generated.reflexes,
+            positioning: generated.positioning,
+            handling: generated.handling,
+            diving: generated.diving,
+            distribution: generated.distribution,
+            communication: generated.communication,
+            overall_rating: generated.overall_rating,
+            generated_by_admin_id: req.auth!.userId,
+            generated_at: new Date().toISOString(),
+            is_hidden_from_manager: true,
+          }
         : {
-          player_registration_id: registration.id,
-          player_id: registration.player_id,
-          season_id: registration.season_id,
-          team_registration_id: registration.team_registration_id,
-          position: generated.position,
-          rating_tier: generated.rating_tier,
-          shooting: generated.shooting,
-          passing: generated.passing,
-          dribbling: generated.dribbling,
-          defending: generated.defending,
-          physical: generated.physical,
-          pace: generated.pace,
-          stamina: generated.stamina,
-          shot_stopping: null,
-          reflexes: null,
-          positioning: null,
-          handling: null,
-          diving: null,
-          distribution: null,
-          communication: null,
-          overall_rating: generated.overall_rating,
-          generated_by_admin_id: req.auth!.userId,
-          generated_at: new Date().toISOString(),
-          is_hidden_from_manager: true,
-        };
+            player_registration_id: registration.id,
+            player_id: registration.player_id,
+            season_id: registration.season_id,
+            team_registration_id: registration.team_registration_id,
+            position: generated.position,
+            rating_tier: generated.rating_tier,
+            shooting: generated.shooting,
+            passing: generated.passing,
+            dribbling: generated.dribbling,
+            defending: generated.defending,
+            physical: generated.physical,
+            pace: generated.pace,
+            stamina: generated.stamina,
+            shot_stopping: null,
+            reflexes: null,
+            positioning: null,
+            handling: null,
+            diving: null,
+            distribution: null,
+            communication: null,
+            overall_rating: generated.overall_rating,
+            generated_by_admin_id: req.auth!.userId,
+            generated_at: new Date().toISOString(),
+            is_hidden_from_manager: true,
+          };
     const { data: ability, error: abilityError } = await supabaseAdmin
       .from("player_abilities")
       .upsert(row, { onConflict: "player_registration_id" })
@@ -1643,8 +1680,8 @@ adminRouter.patch(
       merged.position === FootballPosition.GK ? gkValues : outfieldValues;
     const overall_rating = values.length
       ? Math.round(
-        values.reduce((sum, value) => sum + value, 0) / values.length,
-      )
+          values.reduce((sum, value) => sum + value, 0) / values.length,
+        )
       : merged.overall_rating;
     const { data, error } = await supabaseAdmin
       .from("player_abilities")
@@ -1992,11 +2029,11 @@ adminRouter.post(
     const fixtures = nextFixtures ?? [];
     const legacyActiveDate = activeMatchdayNumber
       ? fixtures.find(
-        (fixture) =>
-          !isFixtureCompleted(fixture) &&
-          Number(fixture.matchday_number ?? fixture.round_no) ===
-          activeMatchdayNumber,
-      )?.kickoff_at
+          (fixture) =>
+            !isFixtureCompleted(fixture) &&
+            Number(fixture.matchday_number ?? fixture.round_no) ===
+              activeMatchdayNumber,
+        )?.kickoff_at
       : null;
     const activeDate =
       season.active_matchday_date ?? fixtureDateKey(legacyActiveDate);
@@ -2306,16 +2343,27 @@ adminRouter.post(
         "Match cannot be simulated in its current status",
       );
     }
-    const homePlayers = await getConfirmedLineupPlayers(
-      input.fixture_id,
-      fixture.home_team_registration_id,
-      VenueSide.HOME,
-    );
-    const awayPlayers = await getConfirmedLineupPlayers(
-      input.fixture_id,
-      fixture.away_team_registration_id,
-      VenueSide.AWAY,
-    );
+    const [homePlayers, awayPlayers, homeSetPieceTakers, awaySetPieceTakers] =
+      await Promise.all([
+        getConfirmedLineupPlayers(
+          input.fixture_id,
+          fixture.home_team_registration_id,
+          VenueSide.HOME,
+        ),
+        getConfirmedLineupPlayers(
+          input.fixture_id,
+          fixture.away_team_registration_id,
+          VenueSide.AWAY,
+        ),
+        getConfirmedLineupSetPieceTakers(
+          input.fixture_id,
+          fixture.home_team_registration_id,
+        ),
+        getConfirmedLineupSetPieceTakers(
+          input.fixture_id,
+          fixture.away_team_registration_id,
+        ),
+      ]);
     const previousAttemptMatch =
       typeof fixture.simulation_seed === "string"
         ? fixture.simulation_seed.match(/:attempt-(\d+):/)
@@ -2331,6 +2379,7 @@ adminRouter.post(
       awayPlayers,
       fixture.id,
       simulationAttempt,
+      { home: homeSetPieceTakers, away: awaySetPieceTakers },
     );
     await persistSimulation(fixture.id, result);
     const { data, error } = await supabaseAdmin
@@ -2581,6 +2630,13 @@ async function recordPostMatchDisciplineAndInjuries(
     .eq("fixture_id", fixture.id)
     .gt("red_cards", 0);
   if (redCardError) throw redCardError;
+  await recordYellowCardAccumulation(
+    fixture,
+    adminId,
+    new Set(
+      (redCardStats ?? []).map((row) => String(row.player_registration_id)),
+    ),
+  );
   if (!redCardStats?.length) return;
 
   const suspensions = redCardStats.map((row: any) => {
@@ -2649,6 +2705,162 @@ async function recordPostMatchDisciplineAndInjuries(
   }
 }
 
+async function recordYellowCardAccumulation(
+  fixture: any,
+  adminId: string,
+  redCardPlayerIds: Set<string>,
+) {
+  const { data: season, error: seasonError } = await supabaseAdmin
+    .from("seasons")
+    .select("yellow_card_suspension_threshold")
+    .eq("id", fixture.season_id)
+    .single();
+  if (seasonError) throw seasonError;
+  const threshold = Number(season.yellow_card_suspension_threshold ?? 3);
+
+  const { data: currentRows, error: currentError } = await supabaseAdmin
+    .from("player_match_stats")
+    .select(
+      "player_registration_id,yellow_cards,player_season_registrations(id,team_registration_id,players(full_name),team_registrations(manager_id))",
+    )
+    .eq("fixture_id", fixture.id)
+    .gt("yellow_cards", 0);
+  if (currentError) throw currentError;
+  const eligibleCurrentRows = (currentRows ?? []).filter(
+    (row) => !redCardPlayerIds.has(String(row.player_registration_id)),
+  );
+  if (!eligibleCurrentRows.length) return;
+
+  const phase = disciplinePhaseForStage(String(fixture.stage ?? "LEAGUE"));
+  const { data: confirmedFixtures, error: fixturesError } = await supabaseAdmin
+    .from("fixtures")
+    .select("id,stage")
+    .eq("season_id", fixture.season_id)
+    .eq("result_confirmed", true)
+    .neq("id", fixture.id);
+  if (fixturesError) throw fixturesError;
+  const priorFixtureIds = (confirmedFixtures ?? [])
+    .filter((row) => isStageInDisciplinePhase(String(row.stage), phase))
+    .map((row) => String(row.id));
+
+  const playerIds = eligibleCurrentRows.map((row) =>
+    String(row.player_registration_id),
+  );
+  const priorTotals = new Map<string, number>();
+  if (priorFixtureIds.length) {
+    const { data: priorRows, error: priorError } = await supabaseAdmin
+      .from("player_match_stats")
+      .select("player_registration_id,yellow_cards")
+      .in("fixture_id", priorFixtureIds)
+      .in("player_registration_id", playerIds)
+      .gt("yellow_cards", 0);
+    if (priorError) throw priorError;
+    for (const row of priorRows ?? []) {
+      const id = String(row.player_registration_id);
+      priorTotals.set(
+        id,
+        (priorTotals.get(id) ?? 0) + Number(row.yellow_cards ?? 0),
+      );
+    }
+  }
+
+  const groupHasAnotherMatch = new Map<string, boolean>();
+  async function shouldSuspendTeam(teamRegistrationId: string) {
+    if (phase === "KNOCKOUT") return String(fixture.stage) !== "FINAL";
+    if (phase === "LEAGUE") return true;
+    if (groupHasAnotherMatch.has(teamRegistrationId)) {
+      return groupHasAnotherMatch.get(teamRegistrationId)!;
+    }
+    const { data, error } = await supabaseAdmin
+      .from("fixtures")
+      .select("id")
+      .eq("season_id", fixture.season_id)
+      .eq("stage", "GROUP")
+      .eq("result_confirmed", false)
+      .neq("id", fixture.id)
+      .or(
+        `home_team_registration_id.eq.${teamRegistrationId},away_team_registration_id.eq.${teamRegistrationId}`,
+      )
+      .limit(1);
+    if (error) throw error;
+    const hasAnother = Boolean(data?.length);
+    groupHasAnotherMatch.set(teamRegistrationId, hasAnother);
+    return hasAnother;
+  }
+
+  const suspended: Array<{
+    row: any;
+    registration: any;
+    total: number;
+  }> = [];
+  for (const row of eligibleCurrentRows) {
+    const id = String(row.player_registration_id);
+    const previous = priorTotals.get(id) ?? 0;
+    const added = Number(row.yellow_cards ?? 0);
+    if (!crossedYellowThreshold(previous, added, threshold)) continue;
+    const registration = unwrapRelation(row.player_season_registrations);
+    if (!registration?.team_registration_id) continue;
+    // Group yellows reset for the knockout phase. A threshold reached in the
+    // final group match therefore does not ban the player from that knockout.
+    if (!(await shouldSuspendTeam(registration.team_registration_id))) continue;
+    suspended.push({ row, registration, total: previous + added });
+  }
+  if (!suspended.length) return;
+
+  const suspensionRows = suspended.map(({ row, registration }) => ({
+    player_registration_id: row.player_registration_id,
+    team_registration_id: registration.team_registration_id,
+    season_id: fixture.season_id,
+    reason: "YELLOW_CARD_ACCUMULATION",
+    source_fixture_id: fixture.id,
+    matches_remaining: 1,
+    status: "ACTIVE",
+  }));
+  const { error: suspensionError } = await supabaseAdmin
+    .from("player_suspensions")
+    .insert(suspensionRows);
+  if (suspensionError) throw suspensionError;
+
+  const suspendedIds = suspended.map(({ row }) => row.player_registration_id);
+  const { error: updateError } = await supabaseAdmin
+    .from("player_season_registrations")
+    .update({
+      status: RegistrationStatus.APPROVED,
+      player_status: PlayerLifecycleStatus.SUSPENDED,
+      suspension_reason: `Suspended for one match after reaching ${threshold} yellow cards.`,
+      suspension_type: "NEXT_MATCHES",
+      suspension_matches_remaining: 1,
+      suspended_by: adminId,
+      suspended_at: new Date().toISOString(),
+    })
+    .in("id", suspendedIds);
+  if (updateError) throw updateError;
+
+  const messages = suspended
+    .map(({ row, registration }) => {
+      const manager = unwrapRelation(registration.team_registrations);
+      if (!manager?.manager_id) return null;
+      const player = unwrapRelation(registration.players);
+      return {
+        season_id: fixture.season_id,
+        manager_id: manager.manager_id,
+        team_registration_id: registration.team_registration_id,
+        player_registration_id: row.player_registration_id,
+        fixture_id: fixture.id,
+        related_type: "GENERAL_NOTICE",
+        message: `${player?.full_name ?? "A player"} is suspended for the next match after reaching ${threshold} yellow cards.`,
+        created_by: adminId,
+      };
+    })
+    .filter(Boolean);
+  if (messages.length) {
+    const { error } = await supabaseAdmin
+      .from("manager_messages")
+      .insert(messages);
+    if (error) throw error;
+  }
+}
+
 async function decrementMatchAbsences(fixture: any) {
   const teamIds = [
     fixture.home_team_registration_id,
@@ -2688,16 +2900,16 @@ async function decrementMatchAbsences(fixture: any) {
     const update =
       next === 0
         ? {
-          player_status: PlayerLifecycleStatus.ACTIVE,
-          suspension_reason: null,
-          suspension_type: null,
-          suspension_matches_remaining: null,
-          updated_at: new Date().toISOString(),
-        }
+            player_status: PlayerLifecycleStatus.ACTIVE,
+            suspension_reason: null,
+            suspension_type: null,
+            suspension_matches_remaining: null,
+            updated_at: new Date().toISOString(),
+          }
         : {
-          suspension_matches_remaining: next,
-          updated_at: new Date().toISOString(),
-        };
+            suspension_matches_remaining: next,
+            updated_at: new Date().toISOString(),
+          };
     const { error } = await supabaseAdmin
       .from("player_season_registrations")
       .update(update)
@@ -3129,6 +3341,37 @@ async function getConfirmedLineupPlayers(
   });
 }
 
+async function getConfirmedLineupSetPieceTakers(
+  fixtureId: string,
+  teamRegistrationId: string,
+): Promise<SimSetPieceTakers> {
+  const { data: lineup, error: lineupError } = await supabaseAdmin
+    .from("lineups")
+    .select("id")
+    .eq("fixture_id", fixtureId)
+    .eq("team_registration_id", teamRegistrationId)
+    .eq("status", "CONFIRMED")
+    .single();
+  if (lineupError) throw lineupError;
+
+  const { data, error } = await supabaseAdmin
+    .from("lineup_set_piece_takers")
+    .select("player_registration_id,set_piece_type,priority")
+    .eq("lineup_id", lineup.id)
+    .order("priority", { ascending: true });
+  if (error) throw error;
+
+  const rows = data ?? [];
+  return {
+    penalty_taker_ids: rows
+      .filter((row) => row.set_piece_type === "PENALTY")
+      .map((row) => row.player_registration_id),
+    free_kick_taker_ids: rows
+      .filter((row) => row.set_piece_type === "FREE_KICK")
+      .map((row) => row.player_registration_id),
+  };
+}
+
 async function persistSimulation(fixtureId: string, result: SimulationResult) {
   const fixture = await getFixture(fixtureId);
   await Promise.all([
@@ -3232,11 +3475,11 @@ function avg(values: number[]) {
   );
 }
 
-type LeaderboardDirection = "asc" | "desc";
-type LeaderboardFormat = "number" | "decimal" | "percent";
+type LeaderboardFormat = "number" | "decimal" | "percent" | "rating";
 
 function formatLeaderboardValue(value: number, format: LeaderboardFormat) {
   if (format === "percent") return `${Math.round(value)}%`;
+  if (format === "rating") return value.toFixed(1);
   if (format === "decimal") return value.toFixed(2).replace(/\.00$/, "");
   return String(Math.round(value));
 }
@@ -3255,18 +3498,13 @@ function makeLeaderboard<
   rows: T[],
   field: keyof T,
   format: LeaderboardFormat,
-  direction: LeaderboardDirection = "desc",
 ) {
   const entries = rows
     .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
     .filter(
       ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
     )
-    .sort((a, b) =>
-      direction === "asc"
-        ? a.numericValue - b.numericValue
-        : b.numericValue - a.numericValue,
-    )
+    .sort((a, b) => b.numericValue - a.numericValue)
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,
@@ -3294,18 +3532,13 @@ function makeTeamLeaderboard<
   rows: T[],
   field: keyof T,
   format: LeaderboardFormat,
-  direction: LeaderboardDirection = "desc",
 ) {
   const entries = rows
     .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
     .filter(
       ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
     )
-    .sort((a, b) =>
-      direction === "asc"
-        ? a.numericValue - b.numericValue
-        : b.numericValue - a.numericValue,
-    )
+    .sort((a, b) => b.numericValue - a.numericValue)
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,

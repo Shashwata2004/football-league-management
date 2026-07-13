@@ -142,6 +142,7 @@ interface PlayerRecord {
     suspension_matches_remaining?: number | null;
   } | null;
   league_rating?: number | null;
+  overall_rating?: number | null;
   players?: {
     full_name: string;
     date_of_birth?: string | null;
@@ -217,12 +218,27 @@ interface LineupBuilderPayload {
   formationSlots: FormationSlot[];
   approvedPlayers: PlayerRecord[];
   unavailablePlayers?: PlayerRecord[];
+  discipline?: {
+    phase: "LEAGUE" | "GROUP" | "KNOCKOUT";
+    yellow_card_suspension_threshold: number;
+    players: Array<{
+      player_registration_id: string;
+      full_name: string;
+      avatar_url?: string | null;
+      shirt_number?: number | null;
+      yellow_cards: number;
+      total_phase_yellow_cards: number;
+      suspended_for_accumulation?: boolean;
+    }>;
+  };
   benchSize: number;
   initialLineupMode: string;
   warnings: string[];
   initialLineup: {
     formation: string;
     playing_style: PlayingStyle;
+    penalty_taker_ids?: string[];
+    free_kick_taker_ids?: string[];
     players: LineupSelection[];
   };
 }
@@ -458,6 +474,68 @@ interface DashboardPayload {
   messages: MessageRecord[];
 }
 
+interface ManagerTheme {
+  primary: string;
+  secondary: string;
+  accent: string;
+}
+
+const defaultManagerTheme: ManagerTheme = {
+  primary: "#6D28D9",
+  secondary: "#111827",
+  accent: "#F59E0B",
+};
+
+const managerThemeStorageKey = "scoreline-manager-team-theme";
+
+function readCachedManagerTheme(): ManagerTheme {
+  if (typeof window === "undefined") return defaultManagerTheme;
+  try {
+    const cached = JSON.parse(
+      window.localStorage.getItem(managerThemeStorageKey) ?? "null",
+    ) as Partial<ManagerTheme> | null;
+    return {
+      primary: normalizeThemeColor(
+        cached?.primary,
+        defaultManagerTheme.primary,
+      ),
+      secondary: normalizeThemeColor(
+        cached?.secondary,
+        defaultManagerTheme.secondary,
+      ),
+      accent: normalizeThemeColor(cached?.accent, defaultManagerTheme.accent),
+    };
+  } catch {
+    return defaultManagerTheme;
+  }
+}
+
+function themeFromTeam(team: TeamRecord | null | undefined): ManagerTheme {
+  return {
+    primary: normalizeThemeColor(
+      team?.teams?.primary_color,
+      defaultManagerTheme.primary,
+    ),
+    secondary: normalizeThemeColor(
+      team?.teams?.secondary_color,
+      defaultManagerTheme.secondary,
+    ),
+    accent: normalizeThemeColor(
+      team?.teams?.accent_color,
+      defaultManagerTheme.accent,
+    ),
+  };
+}
+
+function normalizeThemeColor(
+  color: string | null | undefined,
+  fallback: string,
+): string {
+  return color && /^#[0-9a-f]{6}$/iu.test(color.trim())
+    ? color.trim().toUpperCase()
+    : fallback;
+}
+
 interface TeamViewPayload {
   team: TeamRecord;
   players: PlayerRecord[];
@@ -473,7 +551,7 @@ interface PlayerLeagueStatsPayload {
 
 interface PlayerProfilePayload extends PlayerLeagueStatsPayload {
   player: PlayerRecord;
-  ability: NonNullable<PlayerRecord["player_abilities"]>[number] | null;
+  overall_rating: number | null;
   league_rating: number | null;
 }
 
@@ -707,15 +785,59 @@ function availabilityLabel(player: PlayerRecord) {
 }
 
 function playerOverall(player: PlayerRecord) {
-  return one(player.player_abilities)?.overall_rating ?? null;
+  return (
+    player.overall_rating ??
+    one(player.player_abilities)?.overall_rating ??
+    null
+  );
+}
+
+function ratingTierFromOverall(overall?: number | null) {
+  if (overall === null || overall === undefined) return null;
+  if (overall >= 73) return "HIGH";
+  if (overall >= 55) return "MODERATE";
+  return "LOW";
 }
 
 function playerAbility(player: PlayerRecord) {
   return one(player.player_abilities);
 }
 
+function rankSetPieceTakers(
+  approvedPlayers: PlayerRecord[],
+  selectedPlayers: LineupSelection[],
+) {
+  const selectedIds = new Set(
+    selectedPlayers.map((player) => player.player_registration_id),
+  );
+  return approvedPlayers
+    .filter((player) => selectedIds.has(player.id))
+    .sort((a, b) => {
+      const shootingDifference =
+        Number(playerAbility(b)?.shooting ?? 0) -
+        Number(playerAbility(a)?.shooting ?? 0);
+      if (shootingDifference) return shootingDifference;
+      const overallDifference =
+        Number(playerOverall(b) ?? 0) - Number(playerOverall(a) ?? 0);
+      if (overallDifference) return overallDifference;
+      return a.id.localeCompare(b.id);
+    })
+    .map((player) => player.id);
+}
+
+function mergeTakerOrder(savedIds: string[] | undefined, rankedIds: string[]) {
+  const validIds = new Set(rankedIds);
+  const saved = (savedIds ?? []).filter(
+    (id, index, ids) => validIds.has(id) && ids.indexOf(id) === index,
+  );
+  return [...saved, ...rankedIds.filter((id) => !saved.includes(id))];
+}
+
 function playerRatingTier(player: PlayerRecord) {
-  return one(player.player_abilities)?.rating_tier ?? null;
+  return (
+    one(player.player_abilities)?.rating_tier ??
+    ratingTierFromOverall(playerOverall(player))
+  );
 }
 
 function naturalPlayerPosition(player: PlayerRecord): FootballPosition {
@@ -766,6 +888,35 @@ function overallCapsule(value?: number | null, tier?: string | null) {
       className={`inline-flex rounded-full px-3 py-1 text-xs font-black ring-1 ${cls}`}
     >
       {value}
+    </span>
+  );
+}
+
+function leagueRatingCapsule(
+  value: unknown,
+  options: { prefix?: string; fallback?: string } = {},
+) {
+  const numeric = Number(value);
+  const { prefix = "LG", fallback = "—" } = options;
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    !Number.isFinite(numeric)
+  ) {
+    return (
+      <span className="inline-flex h-6 shrink-0 items-center rounded-full bg-slate-100 px-2.5 text-[11px] font-black text-slate-500 ring-1 ring-slate-200">
+        {prefix ? `${prefix} ${fallback}` : fallback}
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`inline-flex h-6 shrink-0 items-center rounded-full px-2.5 text-[11px] font-black text-white shadow-sm ${managerRatingBadgeClass(numeric)}`}
+      title="Average league rating"
+    >
+      {prefix ? `${prefix} ` : ""}
+      {managerFormatRating(numeric)}
     </span>
   );
 }
@@ -885,6 +1036,9 @@ export default function ManagerDashboardPage() {
   } | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [managerTheme, setManagerTheme] = useState<ManagerTheme>(
+    readCachedManagerTheme,
+  );
   const [message, setMessage] = useState("");
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerRecord | null>(
     null,
@@ -964,6 +1118,8 @@ export default function ManagerDashboardPage() {
   async function changeTeam(teamId: string) {
     setSelectedTeamId(teamId);
     if (!teamId) return setTeamDetail(null);
+    const nextTeam = payload?.teams.find((team) => team.id === teamId);
+    if (nextTeam) setManagerTheme(themeFromTeam(nextTeam));
     const detail = await api<{
       players: PlayerRecord[];
       squad_summary: SquadSummary;
@@ -1113,13 +1269,27 @@ export default function ManagerDashboardPage() {
     );
   }, [payload, selectedTeamId]);
 
+  useEffect(() => {
+    if (!activeTeam) return;
+    const nextTheme = themeFromTeam(activeTeam);
+    setManagerTheme(nextTheme);
+    try {
+      window.localStorage.setItem(
+        managerThemeStorageKey,
+        JSON.stringify(nextTheme),
+      );
+    } catch {
+      // The in-memory palette still prevents loading-state theme resets.
+    }
+  }, [activeTeam]);
+
   const activeSeason = one(activeTeam?.seasons);
   const activeLeague = one(activeSeason?.leagues);
   const unreadMessages =
     payload?.messages.filter((item) => !item.read_at).length ?? 0;
-  const teamPrimary = activeTeam?.teams?.primary_color || "#6D28D9";
-  const teamSecondary = activeTeam?.teams?.secondary_color || "#111827";
-  const teamAccent = activeTeam?.teams?.accent_color || "#F59E0B";
+  const teamPrimary = managerTheme.primary;
+  const teamSecondary = managerTheme.secondary;
+  const teamAccent = managerTheme.accent;
   const teamText = getReadableTextColor(teamPrimary);
   const sidebarText = getReadableTextColor(teamSecondary);
   const sidebarUsesDarkText = sidebarText === "#111827";
@@ -1162,6 +1332,7 @@ export default function ManagerDashboardPage() {
 
   return (
     <div
+      suppressHydrationWarning
       className="min-h-screen bg-[#F8FAFC] text-slate-950"
       style={
         {
@@ -1275,6 +1446,11 @@ export default function ManagerDashboardPage() {
       {selectedPlayer ? (
         <PlayerDetailModal
           player={selectedPlayer}
+          theme={
+            teamView?.team.id === selectedPlayer.team_registration_id
+              ? themeFromTeam(teamView?.team)
+              : managerTheme
+          }
           onClose={() => setSelectedPlayer(null)}
           onDeleted={() => {
             setSelectedPlayer(null);
@@ -2057,6 +2233,8 @@ function SubmitLineupSection({
   const [playingStyle, setPlayingStyle] = useState<PlayingStyle>("BALANCED");
   const [slots, setSlots] = useState<FormationSlot[]>([]);
   const [lineupPlayers, setLineupPlayers] = useState<LineupSelection[]>([]);
+  const [penaltyTakerIds, setPenaltyTakerIds] = useState<string[]>([]);
+  const [freeKickTakerIds, setFreeKickTakerIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
@@ -2070,6 +2248,7 @@ function SubmitLineupSection({
   const [captainMenuSlotKey, setCaptainMenuSlotKey] = useState<string | null>(
     null,
   );
+  const [showLeagueRatings, setShowLeagueRatings] = useState(false);
   const selectedMatch =
     upcomingFixtures.find((fixture) => fixture.id === matchId) ?? null;
   const playerMap = useMemo(
@@ -2121,11 +2300,21 @@ function SubmitLineupSection({
   }, [activeTeam?.id, matchId]);
 
   function applyBuilder(payload: LineupBuilderPayload) {
+    const rankedTakers = rankSetPieceTakers(
+      payload.approvedPlayers,
+      payload.initialLineup.players,
+    );
     setBuilder(payload);
     setFormation(payload.initialLineup.formation);
     setPlayingStyle(payload.initialLineup.playing_style);
     setSlots(payload.formationSlots);
     setLineupPlayers(payload.initialLineup.players);
+    setPenaltyTakerIds(
+      mergeTakerOrder(payload.initialLineup.penalty_taker_ids, rankedTakers),
+    );
+    setFreeKickTakerIds(
+      mergeTakerOrder(payload.initialLineup.free_kick_taker_ids, rankedTakers),
+    );
     setMessage(payload.warnings?.[0] ?? "");
   }
 
@@ -2168,6 +2357,12 @@ function SubmitLineupSection({
       setPlayingStyle(payload.lineup.playing_style);
       setSlots(payload.formationSlots);
       setLineupPlayers(payload.lineup.players);
+      const rankedTakers = rankSetPieceTakers(
+        builder.approvedPlayers,
+        payload.lineup.players,
+      );
+      setPenaltyTakerIds((current) => mergeTakerOrder(current, rankedTakers));
+      setFreeKickTakerIds((current) => mergeTakerOrder(current, rankedTakers));
       setMessage(
         nextFormation !== formation
           ? "Formation changed. Best-fit XI was recalculated."
@@ -2329,6 +2524,16 @@ function SubmitLineupSection({
     setMessage("");
   }
 
+  function makePrimaryTaker(
+    playerRegistrationId: string,
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+  ) {
+    setter((current) => [
+      playerRegistrationId,
+      ...current.filter((id) => id !== playerRegistrationId),
+    ]);
+  }
+
   async function submitLineup() {
     if (!activeTeam || !selectedMatch) return;
     if (lineupLocked) {
@@ -2365,6 +2570,8 @@ function SubmitLineupSection({
           formation,
           playing_style: playingStyle,
           captain_id: captainId,
+          penalty_taker_ids: penaltyTakerIds,
+          free_kick_taker_ids: freeKickTakerIds,
           players: lineupPlayers.map((item) => ({
             player_registration_id: item.player_registration_id,
             is_starter: item.is_starter,
@@ -2508,6 +2715,18 @@ function SubmitLineupSection({
               <span className="rounded-full bg-green-50 px-3 py-1 font-bold text-green-700">
                 Preference saved after formation/style changes
               </span>
+              <button
+                type="button"
+                aria-pressed={showLeagueRatings}
+                className={`rounded-full px-4 py-2 font-black ring-1 transition hover:-translate-y-0.5 ${
+                  showLeagueRatings
+                    ? "bg-sky-500 text-white ring-sky-600 shadow-md"
+                    : "bg-white text-slate-700 ring-slate-200 hover:ring-sky-300"
+                }`}
+                onClick={() => setShowLeagueRatings((current) => !current)}
+              >
+                {showLeagueRatings ? "Hide LG" : "Show LG"}
+              </button>
             </div>
             {message ? (
               <p className="mt-4 rounded-2xl bg-amber-50 p-3 text-sm font-bold text-amber-700">
@@ -2524,245 +2743,380 @@ function SubmitLineupSection({
             <LoadingState label="Preparing lineup builder..." />
           ) : null}
           {!loadingBuilder && builder ? (
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,760px)_420px]">
-              <div className="relative h-[820px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
-                <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
-                <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
-                <div className="absolute left-1/2 top-1/2 h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/5" />
-                <div className="absolute left-1/2 top-0 h-24 w-44 -translate-x-1/2 rounded-b-3xl border-x-[5px] border-b-[5px] border-white/10" />
-                <div className="absolute left-1/2 top-0 h-12 w-20 -translate-x-1/2 rounded-b-2xl border-x-[5px] border-b-[5px] border-white/10" />
-                <div className="absolute bottom-0 left-1/2 h-24 w-44 -translate-x-1/2 rounded-t-3xl border-x-[5px] border-t-[5px] border-white/10" />
-                <div className="absolute bottom-0 left-1/2 h-12 w-20 -translate-x-1/2 rounded-t-2xl border-x-[5px] border-t-[5px] border-white/10" />
-                <div className="absolute inset-y-0 left-[35%] w-1 bg-white/5" />
-                <div className="absolute inset-y-0 right-[35%] w-1 bg-white/5" />
-                {slots.map((slot) => {
-                  const selected = lineupPlayers.find(
-                    (item) => item.is_starter && item.slot_key === slot.slotKey,
-                  );
-                  const player = selected
-                    ? playerMap.get(selected.player_registration_id)
-                    : null;
-                  return (
-                    <div
-                      key={slot.slotKey}
-                      className={`absolute z-10 w-[112px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center transition ${draggedSlotKey && draggedSlotKey !== slot.slotKey ? "bg-white/10 ring-2 ring-white/25" : ""}`}
-                      style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
-                      onDragOver={(event) => event.preventDefault()}
-                      onDrop={(event) => handleSlotDrop(event, slot.slotKey)}
-                    >
-                      {player ? (
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          draggable
-                          className="group inline-flex flex-col items-center outline-none"
-                          onDragStart={(event) => {
-                            setDraggedSlotKey(slot.slotKey);
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData(
-                              "text/scoreline-slot",
-                              slot.slotKey,
-                            );
-                          }}
-                          onDragEnd={() => setDraggedSlotKey(null)}
-                          onClick={() =>
-                            setCaptainMenuSlotKey((current) =>
-                              current === slot.slotKey ? null : slot.slotKey,
-                            )
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ")
+            <>
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,760px)_420px]">
+                <div className="relative h-[820px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
+                  <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
+                  <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
+                  <div className="absolute left-1/2 top-1/2 h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/5" />
+                  <div className="absolute left-1/2 top-0 h-24 w-44 -translate-x-1/2 rounded-b-3xl border-x-[5px] border-b-[5px] border-white/10" />
+                  <div className="absolute left-1/2 top-0 h-12 w-20 -translate-x-1/2 rounded-b-2xl border-x-[5px] border-b-[5px] border-white/10" />
+                  <div className="absolute bottom-0 left-1/2 h-24 w-44 -translate-x-1/2 rounded-t-3xl border-x-[5px] border-t-[5px] border-white/10" />
+                  <div className="absolute bottom-0 left-1/2 h-12 w-20 -translate-x-1/2 rounded-t-2xl border-x-[5px] border-t-[5px] border-white/10" />
+                  <div className="absolute inset-y-0 left-[35%] w-1 bg-white/5" />
+                  <div className="absolute inset-y-0 right-[35%] w-1 bg-white/5" />
+                  {slots.map((slot) => {
+                    const selected = lineupPlayers.find(
+                      (item) =>
+                        item.is_starter && item.slot_key === slot.slotKey,
+                    );
+                    const player = selected
+                      ? playerMap.get(selected.player_registration_id)
+                      : null;
+                    return (
+                      <div
+                        key={slot.slotKey}
+                        className={`absolute z-10 w-[112px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center transition ${draggedSlotKey && draggedSlotKey !== slot.slotKey ? "bg-white/10 ring-2 ring-white/25" : ""}`}
+                        style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => handleSlotDrop(event, slot.slotKey)}
+                      >
+                        {player ? (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            draggable
+                            className="group relative inline-flex flex-col items-center outline-none"
+                            onDragStart={(event) => {
+                              setDraggedSlotKey(slot.slotKey);
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData(
+                                "text/scoreline-slot",
+                                slot.slotKey,
+                              );
+                            }}
+                            onDragEnd={() => setDraggedSlotKey(null)}
+                            onClick={() =>
                               setCaptainMenuSlotKey((current) =>
                                 current === slot.slotKey ? null : slot.slotKey,
-                              );
-                          }}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            void openAlternatives(slot);
-                          }}
-                        >
-                          <div
-                            className={`relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] bg-white shadow-md transition group-hover:brightness-110 ${fitBorderClass(selected?.fit_label)}`}
+                              )
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ")
+                                setCaptainMenuSlotKey((current) =>
+                                  current === slot.slotKey
+                                    ? null
+                                    : slot.slotKey,
+                                );
+                            }}
+                            onContextMenu={(event) => {
+                              event.preventDefault();
+                              void openAlternatives(slot);
+                            }}
                           >
-                            {player.players?.avatar_url ? (
-                              <img
-                                src={player.players.avatar_url}
-                                alt={player.players?.full_name ?? "Player"}
-                                className="h-[118%] w-full rounded-full object-cover object-top"
-                              />
-                            ) : (
-                              <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
-                                {initials(player.players?.full_name)}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
-                            {selected?.is_captain ? (
-                              <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-black lowercase leading-none text-slate-700 shadow">
-                                c
+                            <div
+                              className={`relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] bg-white shadow-md transition group-hover:brightness-110 ${fitBorderClass(selected?.fit_label)}`}
+                            >
+                              {player.players?.avatar_url ? (
+                                <img
+                                  src={player.players.avatar_url}
+                                  alt={player.players?.full_name ?? "Player"}
+                                  className="h-[118%] w-full rounded-full object-cover object-top"
+                                />
+                              ) : (
+                                <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
+                                  {initials(player.players?.full_name)}
+                                </span>
+                              )}
+                            </div>
+                            {showLeagueRatings &&
+                            player.league_rating !== null &&
+                            player.league_rating !== undefined ? (
+                              <span
+                                className={`absolute left-[calc(50%+12px)] top-0 z-20 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-black text-white shadow ${managerRatingBadgeClass(Number(player.league_rating))}`}
+                                title="Average league rating"
+                              >
+                                {Number(player.league_rating).toFixed(1)}
                               </span>
                             ) : null}
-                            <span className="min-w-0 truncate text-[13px] font-black text-white drop-shadow">
-                              {player.shirt_number
-                                ? `${player.shirt_number} `
-                                : ""}
-                              {player.players?.full_name ?? "Player"}
+                            <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
+                              {selected?.is_captain ? (
+                                <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-black lowercase leading-none text-slate-700 shadow">
+                                  c
+                                </span>
+                              ) : null}
+                              <span className="min-w-0 truncate text-[13px] font-black text-white drop-shadow">
+                                {player.shirt_number
+                                  ? `${player.shirt_number} `
+                                  : ""}
+                                {player.players?.full_name ?? "Player"}
+                              </span>
+                              <span
+                                className={`inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[10px] font-black ring-1 ${overallCapsuleClass(playerRatingTier(player))}`}
+                              >
+                                {playerOverall(player) ?? "N/A"}
+                              </span>
+                            </div>
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-white/70">
+                              {slot.displayRole}
+                            </p>
+                            {captainMenuSlotKey === slot.slotKey ? (
+                              <div
+                                className={`absolute left-1/2 z-30 w-40 -translate-x-1/2 rounded-2xl border border-white/20 bg-slate-950/90 p-2 text-white shadow-2xl backdrop-blur ${
+                                  slot.y > 72
+                                    ? "bottom-[calc(100%+0.35rem)]"
+                                    : "top-[calc(100%+0.35rem)]"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  className="w-full rounded-xl px-3 py-2 text-xs font-black transition hover:bg-white/15"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setCaptain(player.id);
+                                  }}
+                                >
+                                  {selected?.is_captain
+                                    ? "Captain selected"
+                                    : "Set captain"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="mt-1 w-full rounded-xl px-3 py-2 text-xs font-black transition hover:bg-white/15"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setCaptainMenuSlotKey(null);
+                                    onPlayerClick(player);
+                                  }}
+                                >
+                                  View player
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="group inline-flex flex-col items-center">
+                            <span className="relative grid h-14 w-14 place-items-center rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20 text-emerald-100 shadow-inner transition group-hover:scale-110 group-hover:border-white">
+                              <User size={28} className="opacity-40" />
                             </span>
-                            <span
-                              className={`inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[10px] font-black ring-1 ${overallCapsuleClass(playerRatingTier(player))}`}
-                            >
-                              {playerOverall(player) ?? "N/A"}
+                            <span className="mt-1 text-[11px] font-black uppercase tracking-wide text-white/80">
+                              {slot.displayRole}
                             </span>
                           </div>
-                          <p className="text-[10px] font-bold uppercase tracking-wide text-white/70">
-                            {slot.displayRole}
-                          </p>
-                          {captainMenuSlotKey === slot.slotKey ? (
-                            <div
-                              className={`absolute left-1/2 z-30 w-40 -translate-x-1/2 rounded-2xl border border-white/20 bg-slate-950/90 p-2 text-white shadow-2xl backdrop-blur ${
-                                slot.y > 72
-                                  ? "bottom-[calc(100%+0.35rem)]"
-                                  : "top-[calc(100%+0.35rem)]"
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                className="w-full rounded-xl px-3 py-2 text-xs font-black transition hover:bg-white/15"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setCaptain(player.id);
-                                }}
-                              >
-                                {selected?.is_captain
-                                  ? "Captain selected"
-                                  : "Set captain"}
-                              </button>
-                              <button
-                                type="button"
-                                className="mt-1 w-full rounded-xl px-3 py-2 text-xs font-black transition hover:bg-white/15"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setCaptainMenuSlotKey(null);
-                                  onPlayerClick(player);
-                                }}
-                              >
-                                View player
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <div className="group inline-flex flex-col items-center">
-                          <span className="relative grid h-14 w-14 place-items-center rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20 text-emerald-100 shadow-inner transition group-hover:scale-110 group-hover:border-white">
-                            <User size={28} className="opacity-40" />
-                          </span>
-                          <span className="mt-1 text-[11px] font-black uppercase tracking-wide text-white/80">
-                            {slot.displayRole}
-                          </span>
-                        </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div className="absolute bottom-4 left-4">
+                    <select
+                      className="max-w-[280px] rounded-full border border-white/15 bg-emerald-700/80 px-4 py-2 text-sm font-black text-white shadow outline-none transition hover:bg-emerald-800/90"
+                      value={formation}
+                      onChange={(event) => changeFormation(event.target.value)}
+                      aria-label="Select formation"
+                    >
+                      {Object.entries(builder.availableFormations).map(
+                        ([key, label]) => (
+                          <option
+                            key={key}
+                            value={key}
+                            className="bg-emerald-900 text-white"
+                          >
+                            {label}
+                          </option>
+                        ),
                       )}
-                    </div>
-                  );
-                })}
-                <div className="absolute bottom-4 left-4">
-                  <select
-                    className="max-w-[280px] rounded-full border border-white/15 bg-emerald-700/80 px-4 py-2 text-sm font-black text-white shadow outline-none transition hover:bg-emerald-800/90"
-                    value={formation}
-                    onChange={(event) => changeFormation(event.target.value)}
-                    aria-label="Select formation"
-                  >
-                    {Object.entries(builder.availableFormations).map(
-                      ([key, label]) => (
-                        <option
-                          key={key}
-                          value={key}
-                          className="bg-emerald-900 text-white"
-                        >
-                          {label}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </div>
-              </div>
-              <Panel title="Players">
-                <div className="space-y-3">
-                  <input
-                    className="manager-input"
-                    placeholder="Search players"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                  <select
-                    className="manager-input"
-                    value={positionFilter}
-                    onChange={(event) => setPositionFilter(event.target.value)}
-                  >
-                    {["ALL", ...positions].map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                  <div>
-                    <p className="font-black">
-                      Squad Selection · Bench {bench.length}
-                    </p>
-                    <div className="mt-2 max-h-[540px] space-y-2 overflow-auto pr-1">
-                      {filteredAvailable.map((player) => {
-                        return (
-                          <LineupPlayerRow
-                            key={player.id}
-                            player={player}
-                            label="Bench"
-                            onOpen={() => onPlayerClick(player)}
-                          />
-                        );
-                      })}
-                    </div>
+                    </select>
                   </div>
-                  {unavailablePlayers.length ? (
-                    <div className="rounded-3xl border border-red-100 bg-red-50 p-4">
-                      <p className="font-black text-red-700">
-                        Suspended / Injured
+                </div>
+                <Panel title="Players">
+                  <div className="space-y-3">
+                    <input
+                      className="manager-input"
+                      placeholder="Search players"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                    />
+                    <select
+                      className="manager-input"
+                      value={positionFilter}
+                      onChange={(event) =>
+                        setPositionFilter(event.target.value)
+                      }
+                    >
+                      {["ALL", ...positions].map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                    <div>
+                      <p className="font-black">
+                        Squad Selection · Bench {bench.length}
                       </p>
-                      <div className="mt-2 max-h-44 space-y-2 overflow-auto">
-                        {unavailablePlayers.map((player) => (
-                          <LineupPlayerRow
-                            key={player.id}
-                            player={player}
-                            label={availabilityLabel(player)}
-                            onOpen={() => onPlayerClick(player)}
-                          />
-                        ))}
+                      <div className="mt-2 max-h-[540px] space-y-2 overflow-auto pr-1">
+                        {filteredAvailable.map((player) => {
+                          return (
+                            <LineupPlayerRow
+                              key={player.id}
+                              player={player}
+                              label="Bench"
+                              onOpen={() => onPlayerClick(player)}
+                            />
+                          );
+                        })}
                       </div>
                     </div>
-                  ) : null}
-                  {!captainId ? (
-                    <p className="rounded-2xl bg-amber-50 p-3 text-sm font-bold text-amber-700">
-                      Left-click a starting player and choose Set captain before
-                      submitting.
-                    </p>
-                  ) : null}
-                  <button
-                    className="w-full rounded-2xl bg-[var(--team-primary)] px-5 py-4 text-sm font-black text-[var(--team-primary-text)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={
-                      lineupLocked ||
-                      submitting ||
-                      starters.length !== 11 ||
-                      !captainId
-                    }
-                    onClick={() => void submitLineup()}
-                  >
-                    {lineupLocked
-                      ? "Lineup Submitted"
-                      : submitting
-                        ? "Submitting..."
-                        : "Submit Lineup"}
-                  </button>
+                    {unavailablePlayers.length ? (
+                      <div className="rounded-3xl border border-red-100 bg-red-50 p-4">
+                        <p className="font-black text-red-700">
+                          Suspended / Injured
+                        </p>
+                        <div className="mt-2 max-h-44 space-y-2 overflow-auto">
+                          {unavailablePlayers.map((player) => (
+                            <LineupPlayerRow
+                              key={player.id}
+                              player={player}
+                              label={availabilityLabel(player)}
+                              onOpen={() => onPlayerClick(player)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {!captainId ? (
+                      <p className="rounded-2xl bg-amber-50 p-3 text-sm font-bold text-amber-700">
+                        Left-click a starting player and choose Set captain
+                        before submitting.
+                      </p>
+                    ) : null}
+                    <button
+                      className="w-full rounded-2xl bg-[var(--team-primary)] px-5 py-4 text-sm font-black text-[var(--team-primary-text)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={
+                        lineupLocked ||
+                        submitting ||
+                        starters.length !== 11 ||
+                        !captainId
+                      }
+                      onClick={() => void submitLineup()}
+                    >
+                      {lineupLocked
+                        ? "Lineup Submitted"
+                        : submitting
+                          ? "Submitting..."
+                          : "Submit Lineup"}
+                    </button>
+                    {builder.discipline?.players.length ? (
+                      <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-black text-amber-950">
+                            Yellow-card watch
+                          </p>
+                          <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-amber-700 ring-1 ring-amber-200">
+                            {builder.discipline.phase === "GROUP"
+                              ? "Resets after group stage"
+                              : `${builder.discipline.phase.toLowerCase()} phase`}
+                          </span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-2">
+                          {builder.discipline.players.map((item) => (
+                            <div
+                              key={item.player_registration_id}
+                              className="flex min-w-0 items-center gap-2 rounded-2xl bg-white p-2.5 shadow-sm ring-1 ring-amber-100"
+                            >
+                              <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-amber-100 text-xs font-black text-amber-800">
+                                {item.avatar_url ? (
+                                  <img
+                                    src={item.avatar_url}
+                                    alt={item.full_name}
+                                    className="h-[118%] w-full object-cover object-top"
+                                  />
+                                ) : (
+                                  initials(item.full_name)
+                                )}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-xs font-black text-slate-800">
+                                {item.shirt_number
+                                  ? `#${item.shirt_number} `
+                                  : ""}
+                                {item.full_name}
+                              </span>
+                              <span
+                                className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-black ${
+                                  item.suspended_for_accumulation
+                                    ? "bg-red-100 text-red-700"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {item.yellow_cards}/
+                                {
+                                  builder.discipline!
+                                    .yellow_card_suspension_threshold
+                                }
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="mt-3 text-xs font-bold leading-5 text-amber-800">
+                          Reaching the limit gives a one-match suspension. A
+                          card reaching the limit in the final group match does
+                          not carry into the knockout stage.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                </Panel>
+              </div>
+              <Panel title="Set-Piece Takers">
+                <p className="mb-4 text-sm text-slate-500">
+                  Players are initially ordered by shooting ability. If the
+                  first choice is no longer on the pitch, the simulator tries
+                  the next available player in this order.
+                </p>
+                <div className="grid grid-cols-1 gap-4">
+                  {(
+                    [
+                      {
+                        label: "Penalty taker",
+                        ids: penaltyTakerIds,
+                        setter: setPenaltyTakerIds,
+                      },
+                      {
+                        label: "Free-kick taker",
+                        ids: freeKickTakerIds,
+                        setter: setFreeKickTakerIds,
+                      },
+                    ] as const
+                  ).map(({ label, ids, setter }) => (
+                    <label
+                      key={label}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-black"
+                    >
+                      {label}
+                      <select
+                        className="manager-input mt-2 bg-white"
+                        value={ids[0] ?? ""}
+                        disabled={lineupLocked || ids.length === 0}
+                        onChange={(event) =>
+                          makePrimaryTaker(event.target.value, setter)
+                        }
+                      >
+                        {ids.map((id) => {
+                          const player = playerMap.get(id);
+                          return (
+                            <option key={id} value={id}>
+                              {player?.players?.full_name ?? "Player"} ·{" "}
+                              {player
+                                ? naturalPlayerPosition(player)
+                                : "Unknown"}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <span className="mt-3 block text-xs font-semibold leading-5 text-slate-500">
+                        Fallback order:{" "}
+                        {ids
+                          .slice(1, 5)
+                          .map(
+                            (id) =>
+                              playerMap.get(id)?.players?.full_name ?? "Player",
+                          )
+                          .join(" → ") || "No fallback"}
+                      </span>
+                    </label>
+                  ))}
                 </div>
               </Panel>
-            </div>
+            </>
           ) : null}
           {alternativesSlot ? (
             <div
@@ -2814,10 +3168,15 @@ function SubmitLineupSection({
                           <span className="block truncate font-black">
                             {item.player.players?.full_name}
                           </span>
-                          <span className="block text-xs font-bold text-slate-500">
-                            {item.natural_position} · {item.fitLabel} · OVR{" "}
-                            {playerOverall(item.player) ?? "N/A"} · LG{" "}
-                            {item.player.league_rating?.toFixed(2) ?? "—"}
+                          <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-bold text-slate-500">
+                            <span>
+                              {item.natural_position} · {item.fitLabel}
+                            </span>
+                            {overallCapsule(
+                              playerOverall(item.player),
+                              playerRatingTier(item.player),
+                            )}
+                            {leagueRatingCapsule(item.player.league_rating)}
                           </span>
                         </span>
                       </div>
@@ -2880,9 +3239,11 @@ function LineupPlayerRow({
             </span>
             {overallCapsule(playerOverall(player), playerRatingTier(player))}
           </span>
-          <span className="block text-xs font-bold text-slate-500">
-            {naturalPlayerPosition(player)} · #{player.shirt_number ?? "-"} · LG{" "}
-            {player.league_rating?.toFixed(2) ?? "—"}
+          <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-bold text-slate-500">
+            <span>
+              {naturalPlayerPosition(player)} · #{player.shirt_number ?? "-"}
+            </span>
+            {leagueRatingCapsule(player.league_rating)}
           </span>
         </span>
       </div>
@@ -4581,16 +4942,18 @@ function EditDraftPlayerModal({
 
 function PlayerDetailModal({
   player,
+  theme,
   onClose,
   onDeleted,
 }: {
   player: PlayerRecord;
+  theme: ManagerTheme;
   onClose: () => void;
   onDeleted: () => void;
 }) {
-  const [tab, setTab] = useState<
-    "League Stats" | "Hidden Ability" | "Personal Data"
-  >("League Stats");
+  const [tab, setTab] = useState<"League Stats" | "Personal Data">(
+    "League Stats",
+  );
   const [error, setError] = useState("");
   const [avatarUrl, setAvatarUrl] = useState(player.players?.avatar_url ?? "");
   const [savingAvatar, setSavingAvatar] = useState(false);
@@ -4604,7 +4967,6 @@ function PlayerDetailModal({
     player.status === RegistrationStatus.DRAFT ||
     player.status === RegistrationStatus.PENDING;
   const activePlayer = profilePayload?.player ?? player;
-  const activeAbility = profilePayload?.ability ?? playerAbility(player);
   const isGoalkeeper =
     (activePlayer.football_position ?? activePlayer.position) ===
     FootballPosition.GK;
@@ -4620,16 +4982,15 @@ function PlayerDetailModal({
     player.position ??
     "-";
   const activeOverall =
-    activeAbility?.overall_rating ??
+    profilePayload?.overall_rating ??
     playerOverall(activePlayer) ??
     playerOverall(player);
-  const activeTier =
-    activeAbility?.rating_tier ??
-    playerRatingTier(activePlayer) ??
-    playerRatingTier(player);
+  const activeTier = ratingTierFromOverall(activeOverall);
 
   useEffect(() => {
     let alive = true;
+    setError("");
+    setProfilePayload(null);
     setStatsLoading(true);
     api<PlayerProfilePayload>(`/manager/players/${player.id}/profile`)
       .then((payload) => {
@@ -4679,7 +5040,17 @@ function PlayerDetailModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 backdrop-blur">
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/50 p-4 backdrop-blur"
+      style={
+        {
+          "--team-primary": theme.primary,
+          "--team-secondary": theme.secondary,
+          "--team-accent": theme.accent,
+          "--team-primary-text": getReadableTextColor(theme.primary),
+        } as CSSProperties
+      }
+    >
       <div className="mx-auto my-6 max-h-[calc(100vh-3rem)] w-full max-w-3xl overflow-y-auto rounded-[2rem] bg-white shadow-2xl">
         <div className="bg-gradient-to-br from-[var(--team-primary)] to-[var(--team-secondary)] p-6 text-[var(--team-primary-text)]">
           <div className="flex items-start justify-between gap-4">
@@ -4701,9 +5072,7 @@ function PlayerDetailModal({
                   <span className="rounded-full bg-white/15 px-4 py-1.5 text-sm font-bold ring-1 ring-white/20">
                     #{activePlayer.shirt_number ?? "-"}
                   </span>
-                  <span className="rounded-full bg-white/15 px-4 py-1.5 text-sm font-bold ring-1 ring-white/20">
-                    LG {profilePayload?.league_rating?.toFixed(2) ?? "—"}
-                  </span>
+                  {leagueRatingCapsule(profilePayload?.league_rating)}
                 </div>
               </div>
             </div>
@@ -4732,7 +5101,7 @@ function PlayerDetailModal({
             </p>
           ) : null}
           <Tabs
-            values={["League Stats", "Hidden Ability", "Personal Data"]}
+            values={["League Stats", "Personal Data"]}
             value={tab}
             onChange={(value) => setTab(value as typeof tab)}
           />
@@ -4771,10 +5140,10 @@ function PlayerDetailModal({
               />
               <Detail
                 label="League Rating"
-                value={
-                  profilePayload?.league_rating?.toFixed(2) ??
-                  "No league rating yet"
-                }
+                value={leagueRatingCapsule(profilePayload?.league_rating, {
+                  prefix: "",
+                  fallback: "No league rating yet",
+                })}
               />
               <Detail
                 label="ID Type"
@@ -4824,24 +5193,6 @@ function PlayerDetailModal({
                   </p>
                 ) : null}
               </div>
-            </div>
-          ) : tab === "Hidden Ability" ? (
-            <div className="mt-5 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Detail label="Overall" value={activeOverall ?? "Not rated"} />
-                <Detail label="Rating Tier" value={activeTier ?? "Not rated"} />
-                <Detail
-                  label="League Rating"
-                  value={
-                    profilePayload?.league_rating?.toFixed(2) ??
-                    "No league rating yet"
-                  }
-                />
-              </div>
-              <AbilityScoresPanel
-                player={activePlayer}
-                ability={activeAbility ?? null}
-              />
             </div>
           ) : (
             <div className="mt-5 space-y-5">
@@ -4972,8 +5323,10 @@ function PlayerDetailModal({
                                     {statValue(row.yellow_cards)}Y /{" "}
                                     {statValue(row.red_cards)}R
                                   </td>
-                                  <td className="px-3 py-2 font-black text-[var(--team-primary)]">
-                                    {statValue(row.rating)}
+                                  <td className="px-3 py-2 font-black">
+                                    {leagueRatingCapsule(row.rating, {
+                                      prefix: "",
+                                    })}
                                   </td>
                                 </tr>
                               );
@@ -5162,9 +5515,23 @@ function PlayerStatsGrid({
             {section.title}
           </h3>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {section.items.map(([label, key]) => (
-              <Detail key={key} label={label} value={formatStat(stats, key)} />
-            ))}
+            {section.items.map(([label, key]) => {
+              const isRating =
+                key === "average_rating" ||
+                key === "best_match_rating" ||
+                key === "lowest_match_rating";
+              return (
+                <Detail
+                  key={key}
+                  label={label}
+                  value={
+                    isRating
+                      ? leagueRatingCapsule(stats?.[key], { prefix: "" })
+                      : formatStat(stats, key)
+                  }
+                />
+              );
+            })}
           </div>
         </section>
       ))}
@@ -5190,6 +5557,12 @@ function formatStat(
     return percentage(stats.accurate_passes, stats.total_passes);
   if (key === "dribble_success_rate")
     return percentage(stats.successful_dribbles, stats.dribbles_attempted);
+  if (
+    key === "average_rating" ||
+    key === "best_match_rating" ||
+    key === "lowest_match_rating"
+  )
+    return managerFormatRating(stats[key]);
   return statValue(stats[key]);
 }
 
@@ -5208,8 +5581,14 @@ function managerFormatNumber(value: unknown) {
   return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
 }
 
+function managerFormatRating(value: unknown, fallback = "0.0") {
+  if (value === null || value === undefined || value === "") return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(1) : fallback;
+}
+
 function managerRatingBadgeClass(value: number) {
-  if (value >= 7.9) return "bg-sky-500";
+  if (value > 7.9) return "bg-sky-500";
   if (value >= 7) return "bg-emerald-500";
   return "bg-orange-500";
 }
@@ -5287,7 +5666,10 @@ function managerBuildEventMeta(
     const minute = Number(sub.minute ?? 0);
     const outId = String(sub.player_out_registration_id ?? "");
     const inId = String(sub.player_in_registration_id ?? "");
-    if (outId) managerEnsureEventMeta(map, outId).subOutMinute = minute;
+    if (outId) {
+      const meta = managerEnsureEventMeta(map, outId);
+      if (!meta.red) meta.subOutMinute = minute;
+    }
     if (inId) managerEnsureEventMeta(map, inId).subInMinute = minute;
   }
   return map;
@@ -5613,6 +5995,7 @@ function TeamViewPage({
   const season = one(team?.seasons);
   const league = one(season?.leagues);
   const manager = one(team?.manager);
+  const viewedTheme = themeFromTeam(team);
   const approvedPlayers =
     detail?.players.filter(
       (player) =>
@@ -5621,7 +6004,17 @@ function TeamViewPage({
         player.player_status !== "SUSPENDED",
     ) ?? [];
   return (
-    <div className="space-y-6">
+    <div
+      className="space-y-6"
+      style={
+        {
+          "--team-primary": viewedTheme.primary,
+          "--team-secondary": viewedTheme.secondary,
+          "--team-accent": viewedTheme.accent,
+          "--team-primary-text": getReadableTextColor(viewedTheme.primary),
+        } as CSSProperties
+      }
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <PageTitle
           title={team?.teams?.name ?? "Team Details"}
@@ -6085,7 +6478,7 @@ function ManagerMatchLineupPitch({
                           <span
                             className={`absolute -right-1 -top-2 rounded-full px-2 py-0.5 text-[11px] font-black text-white shadow ${managerRatingBadgeClass(Number(stat.rating))}`}
                           >
-                            {managerFormatNumber(stat.rating)}
+                            {managerFormatRating(stat.rating)}
                             {player.player_registration_id ===
                             bestRatedPlayerId ? (
                               <Star
@@ -6161,7 +6554,7 @@ function ManagerMatchLineupPitch({
                           <span
                             className={`rounded-full px-2 py-0.5 text-[11px] font-black text-white ${managerRatingBadgeClass(Number(stat.rating))}`}
                           >
-                            {managerFormatNumber(stat.rating)}
+                            {managerFormatRating(stat.rating)}
                           </span>
                         ) : null}
                         <p className="truncate font-black">
@@ -6515,6 +6908,7 @@ function managerFormatTeamStat(
     return Number(stat[field] ?? 0)
       .toFixed(2)
       .replace(/\.00$/, "");
+  if (format === "rating") return managerFormatRating(stat[field]);
   return managerFormatNumber(stat[field]);
 }
 
@@ -6660,7 +7054,7 @@ function ManagerPlayerMatchStatModal({
               <span
                 className={`mx-auto -mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-black text-white shadow ${managerRatingBadgeClass(Number(stat.rating))}`}
               >
-                {managerFormatNumber(stat.rating)}
+                {managerFormatRating(stat.rating)}
               </span>
               <h3 className="mt-2 text-lg font-black">{name}</h3>
               <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
@@ -6704,7 +7098,9 @@ function ManagerPlayerMatchStatModal({
                   >
                     <span className="font-medium text-slate-700">{label}</span>
                     <span className="text-right font-black">
-                      {statValue(value)}
+                      {label === "Rating"
+                        ? managerFormatRating(value)
+                        : statValue(value)}
                     </span>
                   </div>
                 ))}
@@ -6735,12 +7131,13 @@ function TeamHero({
   league: League | null;
   summary: SquadSummary | null;
 }) {
+  const viewedTheme = themeFromTeam(team);
   return (
     <div
-      className="rounded-[2rem] p-6 text-white shadow-xl"
+      className="rounded-[2rem] p-6 shadow-xl"
       style={{
-        background:
-          "linear-gradient(135deg, var(--team-secondary), var(--team-primary))",
+        background: `linear-gradient(135deg, ${viewedTheme.primary}, ${viewedTheme.secondary})`,
+        color: getReadableTextColor(viewedTheme.primary),
       }}
     >
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -6753,7 +7150,7 @@ function TeamHero({
             <h2 className="text-3xl font-black">
               {team?.teams?.name ?? "No team"}
             </h2>
-            <p className="text-sm text-purple-100">
+            <p className="text-sm opacity-80">
               {league?.name ?? "League"} · {season?.name ?? "Season"}
             </p>
           </div>

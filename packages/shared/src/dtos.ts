@@ -46,6 +46,7 @@ export interface SeasonDto {
   lineup_size: number | null;
   substitute_limit: number | null;
   lineup_submission_deadline_hours: number | null;
+  yellow_card_suspension_threshold: number;
   group_count: number | null;
   teams_per_group: number | null;
   qualifiers_per_group: number | null;
