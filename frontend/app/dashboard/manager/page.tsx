@@ -9,6 +9,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Bell,
@@ -517,6 +518,20 @@ const menu: { label: Section; icon: ReactNode }[] = [
   { label: "Profile & Settings", icon: <User size={18} /> },
 ];
 
+const managerSectionPaths: Record<Exclude<Section, "Other Teams">, string> = {
+  Dashboard: "/dashboard/manager",
+  "My Team": "/dashboard/manager/my-team",
+  Players: "/dashboard/manager/players",
+  Fixtures: "/dashboard/manager/fixtures",
+  "Submit Lineup": "/dashboard/manager/submit-lineup",
+  Results: "/dashboard/manager/results",
+  Standings: "/dashboard/manager/standings",
+  "Player Stats": "/dashboard/manager/player-stats",
+  "Team Stats": "/dashboard/manager/team-stats",
+  Messages: "/dashboard/manager/messages",
+  "Profile & Settings": "/dashboard/manager/profile",
+};
+
 const positions = [
   FootballPosition.GK,
   FootballPosition.CB,
@@ -859,7 +874,9 @@ function TeamLogoName({
 }
 
 export default function ManagerDashboardPage() {
-  const [section, setSection] = useState<Section>(() => sectionFromPath());
+  const pathname = usePathname();
+  const router = useRouter();
+  const params = useParams<{ matchId?: string | string[] }>();
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
   const [leagues, setLeagues] = useState<League[]>([]);
   const [teamDetail, setTeamDetail] = useState<{
@@ -891,6 +908,22 @@ export default function ManagerDashboardPage() {
     useState<Set<string>>(() => new Set());
   const [hasPresentedAvailabilityNotice, setHasPresentedAvailabilityNotice] =
     useState(false);
+  const [matchBackOrigin, setMatchBackOrigin] = useState<string | null>(null);
+  const routeMatchId = pathname.startsWith("/dashboard/manager/results/")
+    ? Array.isArray(params.matchId)
+      ? params.matchId[0]
+      : params.matchId
+    : undefined;
+  const section: Section = selectedTeamViewId
+    ? "Other Teams"
+    : sectionFromPath(pathname);
+
+  function navigateSection(nextSection: Section) {
+    if (nextSection === "Other Teams") return;
+    setSelectedTeamViewId(null);
+    setTeamView(null);
+    router.push(managerSectionPaths[nextSection]);
+  }
 
   async function load() {
     setLoading(true);
@@ -943,7 +976,6 @@ export default function ManagerDashboardPage() {
 
   async function openTeamView(teamId: string) {
     setSelectedTeamViewId(teamId);
-    setSection("Other Teams");
     setTeamViewLoading(true);
     setMessage("");
     try {
@@ -967,7 +999,16 @@ export default function ManagerDashboardPage() {
     setTeamView(null);
   }
 
-  async function openMatchDetail(fixture: FixtureRecord) {
+  async function openMatchDetail(
+    fixture: FixtureRecord,
+    from?: "dashboard" | "results",
+  ) {
+    if (fixture.status === "FINAL" || from === "results") {
+      router.push(
+        `/dashboard/manager/results/${fixture.id}?from=${from ?? "results"}`,
+      );
+      return;
+    }
     setSelectedFixture(fixture);
     setMatchDetail(null);
     setMatchDetailLoading(true);
@@ -983,6 +1024,51 @@ export default function ManagerDashboardPage() {
       );
     } finally {
       setMatchDetailLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!routeMatchId) return;
+    let alive = true;
+    setSelectedFixture(null);
+    setMatchDetail(null);
+    setMatchDetailLoading(true);
+    setMessage("");
+    api<MatchDetailPayload>(`/manager/matches/${routeMatchId}/detail`)
+      .then((detail) => {
+        if (!alive) return;
+        setMatchDetail(detail);
+        setSelectedFixture(detail.fixture);
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : "Failed to open match detail",
+        );
+      })
+      .finally(() => {
+        if (alive) setMatchDetailLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [routeMatchId]);
+
+  useEffect(() => {
+    setMatchBackOrigin(new URLSearchParams(window.location.search).get("from"));
+  }, [pathname]);
+  const matchBackToDashboard = matchBackOrigin === "dashboard";
+  function closeMatchDetail() {
+    setSelectedFixture(null);
+    setMatchDetail(null);
+    if (routeMatchId) {
+      router.push(
+        matchBackToDashboard
+          ? "/dashboard/manager"
+          : "/dashboard/manager/results",
+      );
     }
   }
 
@@ -1096,7 +1182,7 @@ export default function ManagerDashboardPage() {
         activeTeam={activeTeam}
         section={section}
         unreadMessages={unreadMessages}
-        onSection={setSection}
+        onSection={navigateSection}
       />
       <main className="min-h-screen lg:pl-72">
         <ManagerTopbar
@@ -1124,12 +1210,18 @@ export default function ManagerDashboardPage() {
               detail={matchDetail}
               loading={matchDetailLoading}
               activeTeamId={activeTeam?.id}
-              onClose={() => {
-                setSelectedFixture(null);
-                setMatchDetail(null);
-              }}
+              backLabel={
+                routeMatchId
+                  ? matchBackToDashboard
+                    ? "Back to Dashboard"
+                    : "Back to Results"
+                  : "Back"
+              }
+              onClose={closeMatchDetail}
               onTeamClick={(teamId) => void openTeamView(teamId)}
             />
+          ) : routeMatchId ? (
+            <LoadingState label="Loading match detail..." />
           ) : (
             <SectionView
               section={section}
@@ -1158,9 +1250,11 @@ export default function ManagerDashboardPage() {
               onGenerate={() => setGenerateOpen(true)}
               onPlayerClick={setSelectedPlayer}
               onTeamClick={(teamId) => void openTeamView(teamId)}
-              onOpenMatch={(fixture) => void openMatchDetail(fixture)}
+              onOpenMatch={(fixture, from) =>
+                void openMatchDetail(fixture, from)
+              }
               onCloseTeamView={closeTeamView}
-              onSectionChange={setSection}
+              onSectionChange={navigateSection}
             />
           )}
         </div>
@@ -1198,9 +1292,7 @@ export default function ManagerDashboardPage() {
   );
 }
 
-function sectionFromPath(): Section {
-  if (typeof window === "undefined") return "Dashboard";
-  const path = window.location.pathname;
+function sectionFromPath(path: string): Section {
   if (path.includes("/my-team")) return "My Team";
   if (path.includes("/players")) return "Players";
   if (path.includes("/fixtures")) return "Fixtures";
@@ -1369,7 +1461,7 @@ function SectionView(props: {
   onGenerate: () => void;
   onPlayerClick: (player: PlayerRecord) => void;
   onTeamClick: (teamId: string) => void;
-  onOpenMatch: (fixture: FixtureRecord) => void;
+  onOpenMatch: (fixture: FixtureRecord, from?: "dashboard" | "results") => void;
   onCloseTeamView: () => void;
   onSectionChange: (section: Section) => void;
 }) {
@@ -1469,7 +1561,7 @@ function DashboardSection({
             <ResultMini
               fixture={latestResult}
               activeTeamId={activeTeam?.id}
-              onOpen={onOpenMatch}
+              onOpen={(fixture) => onOpenMatch(fixture, "dashboard")}
             />
           ) : (
             <EmptyState label="No results yet. Results will appear after matches are confirmed." />
@@ -1940,6 +2032,7 @@ function FixturesSection({
           detail={detail}
           loading={detailLoading}
           activeTeamId={activeTeam?.id}
+          backLabel="Back to Fixtures"
           onClose={() => setSelectedFixture(null)}
           onTeamClick={onTeamClick}
         />
@@ -2829,7 +2922,7 @@ function ResultsSection({
         showHomeAway={!isManagerGroupKnockoutFormat(activeSeason?.format)}
         emptyLabel="No results yet. Results will appear after matches are confirmed."
         onTeamClick={onTeamClick}
-        onOpen={onOpenMatch}
+        onOpen={(fixture) => onOpenMatch(fixture, "results")}
       />
     </div>
   );
@@ -5627,6 +5720,7 @@ function MatchDetailModal({
   detail,
   loading,
   activeTeamId,
+  backLabel,
   onClose,
   onTeamClick,
 }: {
@@ -5634,6 +5728,7 @@ function MatchDetailModal({
   detail: unknown;
   loading: boolean;
   activeTeamId?: string | undefined;
+  backLabel: string;
   onClose: () => void;
   onTeamClick?: ((teamId: string) => void) | undefined;
 }) {
@@ -5647,6 +5742,22 @@ function MatchDetailModal({
       stat,
     ]),
   );
+  // Map each player to the position they actually played in the match (the
+  // lineup slot's display_role, e.g. "AM"). Bench players carry "SUB", so we
+  // fall back to their natural position.
+  const roleByPlayer = new Map<string, string>();
+  for (const lineup of payload?.lineups ?? []) {
+    for (const lineupPlayer of lineup.lineup_players ?? []) {
+      const natural =
+        lineupPlayer.player_season_registrations?.football_position ??
+        lineupPlayer.football_position ??
+        lineupPlayer.player_natural_position ??
+        null;
+      let role = lineupPlayer.display_role ?? null;
+      if (!role || role === "SUB") role = natural;
+      if (role) roleByPlayer.set(lineupPlayer.player_registration_id, role);
+    }
+  }
   const metaByPlayer = managerBuildEventMeta(
     payload?.events ?? [],
     payload?.substitutions ?? [],
@@ -5724,7 +5835,7 @@ function MatchDetailModal({
         onClick={onClose}
         className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50"
       >
-        ← Back to results
+        ← {backLabel}
       </button>
       <div className="w-full rounded-[2rem] bg-white p-6 shadow-sm ring-1 ring-slate-200">
         <div className="flex items-start justify-between gap-4">
@@ -5737,13 +5848,6 @@ function MatchDetailModal({
               {formatDate(fixture.kickoff_at)} · {fixture.stage}
             </p>
           </div>
-          <button
-            type="button"
-            className="rounded-full bg-slate-100 px-5 py-3 font-bold transition hover:bg-slate-200"
-            onClick={onClose}
-          >
-            Back
-          </button>
         </div>
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-slate-50 p-4">
           <div>
@@ -5870,6 +5974,8 @@ function MatchDetailModal({
               <ManagerMatchTeamStatsPanel
                 home={homeTeam?.name ?? "Home"}
                 away={awayTeam?.name ?? "Away"}
+                homeTeamRegistrationId={detailFixture.home_team_registration_id}
+                awayTeamRegistrationId={detailFixture.away_team_registration_id}
                 homeColor={homeTeam?.primary_color}
                 awayColor={awayTeam?.primary_color}
                 stats={payload.team_stats}
@@ -5882,6 +5988,7 @@ function MatchDetailModal({
         {selectedStat ? (
           <ManagerPlayerMatchStatModal
             stat={selectedStat}
+            role={roleByPlayer.get(selectedStat.player_registration_id)}
             onClose={() => setSelectedStat(null)}
           />
         ) : null}
@@ -5958,6 +6065,7 @@ function ManagerMatchLineupPitch({
                       type="button"
                       className="inline-flex flex-col items-center outline-none transition hover:-translate-y-0.5"
                       onClick={() => (stat ? onPlayerStat(stat) : undefined)}
+                      title="View match stats"
                     >
                       <div className="relative h-14 w-14">
                         <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
@@ -6197,17 +6305,28 @@ function ManagerLineupEventIcons({
 function ManagerMatchTeamStatsPanel({
   home,
   away,
+  homeTeamRegistrationId,
+  awayTeamRegistrationId,
   homeColor,
   awayColor,
   stats,
 }: {
   home: string;
   away: string;
+  homeTeamRegistrationId: string;
+  awayTeamRegistrationId: string;
   homeColor?: string | null | undefined;
   awayColor?: string | null | undefined;
   stats: MatchDetailTeamStat[];
 }) {
-  const [first, second] = stats;
+  const first =
+    stats.find(
+      (stat) => stat.team_registration_id === homeTeamRegistrationId,
+    ) ?? stats[0];
+  const second =
+    stats.find(
+      (stat) => stat.team_registration_id === awayTeamRegistrationId,
+    ) ?? stats.find((stat) => stat.id !== first?.id);
   if (!first || !second) return null;
   const leftColor = managerSafeColor(homeColor, "#C4003A");
   const rightColor = managerSafeColor(awayColor, "#0F172A");
@@ -6287,11 +6406,12 @@ function ManagerMatchTeamStatsPanel({
         <p className="text-center text-sm font-semibold">Ball possession</p>
         <div className="mt-5 flex h-10 overflow-hidden rounded-full bg-white text-sm font-black">
           <div
-            className="grid place-items-center text-white"
+            className="grid place-items-center"
             style={{
               width: `${firstPossession}%`,
               minWidth: firstPossession ? 56 : 0,
               background: leftColor,
+              color: getReadableTextColor(leftColor),
             }}
           >
             {firstPossession}%
@@ -6301,8 +6421,8 @@ function ManagerMatchTeamStatsPanel({
             style={{
               width: `${secondPossession}%`,
               minWidth: secondPossession ? 56 : 0,
-              background: rightColor === "#0F172A" ? "#FFFFFF" : rightColor,
-              color: rightColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+              background: rightColor,
+              color: getReadableTextColor(rightColor),
             }}
           >
             {secondPossession}%
@@ -6359,8 +6479,11 @@ function ManagerStatComparisonRow({
     <div className="grid grid-cols-[86px_1fr_86px] items-center gap-3 text-sm">
       <div className="justify-self-start">
         <span
-          className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black text-white"
-          style={{ background: homeWins ? homeColor : "transparent" }}
+          className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black"
+          style={{
+            background: homeWins ? homeColor : "transparent",
+            color: homeWins ? getReadableTextColor(homeColor) : "#FFFFFF",
+          }}
         >
           {homeValue}
         </span>
@@ -6370,12 +6493,8 @@ function ManagerStatComparisonRow({
         <span
           className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black"
           style={{
-            background: awayWins
-              ? awayColor === "#0F172A"
-                ? "#FFFFFF"
-                : awayColor
-              : "transparent",
-            color: awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+            background: awayWins ? awayColor : "transparent",
+            color: awayWins ? getReadableTextColor(awayColor) : "#FFFFFF",
           }}
         >
           {awayValue}
@@ -6401,88 +6520,204 @@ function managerFormatTeamStat(
 
 function ManagerPlayerMatchStatModal({
   stat,
+  role,
   onClose,
 }: {
   stat: MatchDetailPlayerStat;
+  role?: string | null | undefined;
   onClose: () => void;
 }) {
   const player = stat.player_season_registrations;
   const name = player?.players?.full_name ?? "Player";
-  const isGoalkeeper =
-    (stat.position_played ?? player?.football_position) === "GK";
-  const items: Array<[string, unknown]> = isGoalkeeper
+  const position =
+    role ??
+    stat.position_played ??
+    player?.football_position ??
+    player?.position ??
+    "POS";
+  const isGoalkeeper = position === "GK";
+  const defensiveContribution =
+    Number(stat.tackles ?? 0) +
+    Number(stat.interceptions ?? 0) +
+    Number(stat.clearances ?? 0) +
+    Number(stat.blocks ?? 0);
+  const sections: Array<{
+    title: string;
+    items: Array<[string, unknown]>;
+  }> = isGoalkeeper
     ? [
-        ["Minutes Played", stat.minutes],
-        ["Saves", stat.saves],
-        ["Goals Conceded", stat.goals_conceded],
-        ["Accurate Passes", stat.accurate_passes],
-        ["Accurate Long Balls", stat.accurate_long_balls],
-        ["Diving Saves", stat.diving_saves],
-        ["Saves Inside Box", stat.saves_inside_box],
-        ["Clearances", stat.clearances],
-        ["Yellow Cards", stat.yellow_cards],
-        ["Red Cards", stat.red_cards],
-        ["Rating", stat.rating],
+        {
+          title: "Top stats",
+          items: [
+            ["Minutes played", stat.minutes],
+            ["Rating", stat.rating],
+            ["Saves", stat.saves],
+            ["Goals conceded", stat.goals_conceded],
+          ],
+        },
+        {
+          title: "Distribution",
+          items: [
+            [
+              "Accurate passes",
+              `${managerFormatNumber(stat.accurate_passes)}/${managerFormatNumber(stat.passes)} (${percentage(stat.accurate_passes, stat.passes)})`,
+            ],
+            ["Accurate long balls", stat.accurate_long_balls],
+          ],
+        },
+        {
+          title: "Goalkeeping",
+          items: [
+            ["Diving saves", stat.diving_saves],
+            ["Saves inside box", stat.saves_inside_box],
+            ["Clearances", stat.clearances],
+          ],
+        },
+        {
+          title: "Discipline",
+          items: [
+            ["Yellow cards", stat.yellow_cards],
+            ["Red cards", stat.red_cards],
+          ],
+        },
       ]
     : [
-        ["Minutes Played", stat.minutes],
-        ["Position Played", stat.position_played],
-        ["Goals", stat.goals],
-        ["Assists", stat.assists],
-        ["Shots", stat.shots],
-        ["Shots on Target", stat.shots_on_target],
-        ["Shot Accuracy", percentage(stat.shots_on_target, stat.shots)],
-        ["Chances Created", stat.chances_created],
-        ["Big Chances Created", stat.big_chances_created],
-        ["Big Chances Missed", stat.big_chances_missed],
-        [
-          "Accurate Passes",
-          `${managerFormatNumber(stat.accurate_passes)}/${managerFormatNumber(stat.passes)} (${percentage(stat.accurate_passes, stat.passes)})`,
-        ],
-        [
-          "Successful Dribbles",
-          `${managerFormatNumber(stat.successful_dribbles)}/${managerFormatNumber(stat.dribbles_attempted)} (${percentage(stat.successful_dribbles, stat.dribbles_attempted)})`,
-        ],
-        ["Dribbled Past", stat.dribbled_past],
-        ["Dispossessed", stat.dispossessed],
-        ["Tackles", stat.tackles],
-        ["Interceptions", stat.interceptions],
-        ["Clearances", stat.clearances],
-        ["Blocks", stat.blocks],
-        ["Fouls Committed", stat.fouls_committed],
-        ["Yellow Cards", stat.yellow_cards],
-        ["Red Cards", stat.red_cards],
-        ["Rating", stat.rating],
+        {
+          title: "Top stats",
+          items: [
+            ["Minutes played", stat.minutes],
+            ["Position played", position],
+            ["Rating", stat.rating],
+            ["Goals", stat.goals],
+            ["Assists", stat.assists],
+          ],
+        },
+        {
+          title: "Attack",
+          items: [
+            ["Shots", stat.shots],
+            ["Shots on target", stat.shots_on_target],
+            ["Shot accuracy", percentage(stat.shots_on_target, stat.shots)],
+            ["Chances created", stat.chances_created],
+            ["Big chances created", stat.big_chances_created],
+            ["Big chances missed", stat.big_chances_missed],
+          ],
+        },
+        {
+          title: "Passing + dribbling",
+          items: [
+            ["Total passes", stat.passes],
+            [
+              "Accurate passes",
+              `${managerFormatNumber(stat.accurate_passes)}/${managerFormatNumber(stat.passes)} (${percentage(stat.accurate_passes, stat.passes)})`,
+            ],
+            ["Dribbles attempted", stat.dribbles_attempted],
+            [
+              "Successful dribbles",
+              `${managerFormatNumber(stat.successful_dribbles)}/${managerFormatNumber(stat.dribbles_attempted)} (${percentage(stat.successful_dribbles, stat.dribbles_attempted)})`,
+            ],
+            ["Dispossessed", stat.dispossessed],
+          ],
+        },
+        {
+          title: "Defense",
+          items: [
+            ["Defensive contribution", defensiveContribution],
+            ["Tackles", stat.tackles],
+            ["Interceptions", stat.interceptions],
+            ["Clearances", stat.clearances],
+            ["Blocks", stat.blocks],
+            ["Dribbled past", stat.dribbled_past],
+          ],
+        },
+        {
+          title: "Discipline",
+          items: [
+            ["Fouls committed", stat.fouls_committed],
+            ["Yellow cards", stat.yellow_cards],
+            ["Red cards", stat.red_cards],
+          ],
+        },
       ];
   return (
     <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm">
-      <div className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Avatar name={name} src={player?.players?.avatar_url} />
-            <div>
-              <h3 className="text-2xl font-black">{name}</h3>
-              <p className="font-semibold text-slate-500">
-                #{player?.shirt_number ?? "-"} ·{" "}
-                {stat.position_played ??
-                  player?.football_position ??
-                  player?.position ??
-                  "POS"}
-              </p>
+      <div className="max-h-[88vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white shadow-2xl">
+        <div className="bg-gradient-to-b from-emerald-200 to-white p-6">
+          <div className="flex items-start justify-between gap-4">
+            <span className="h-10 w-10" aria-hidden="true" />
+            <div className="text-center">
+              <div className="relative mx-auto grid h-20 w-20 place-items-center overflow-hidden rounded-full border-4 border-white bg-white text-xl font-black text-indigo-700 shadow">
+                {player?.players?.avatar_url ? (
+                  <img
+                    src={player.players.avatar_url}
+                    alt={name}
+                    className="h-[120%] w-full object-cover object-top"
+                  />
+                ) : (
+                  initials(name)
+                )}
+              </div>
+              <span
+                className={`mx-auto -mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-black text-white shadow ${managerRatingBadgeClass(Number(stat.rating))}`}
+              >
+                {managerFormatNumber(stat.rating)}
+              </span>
+              <h3 className="mt-2 text-lg font-black">{name}</h3>
+              <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <p className="font-black">{position}</p>
+                  <p className="text-slate-500">Position</p>
+                </div>
+                <div>
+                  <p className="font-black">
+                    {player?.shirt_number ? `#${player.shirt_number}` : "-"}
+                  </p>
+                  <p className="text-slate-500">Number</p>
+                </div>
+                <div>
+                  <p className="font-black">
+                    {managerFormatNumber(stat.minutes)}
+                  </p>
+                  <p className="text-slate-500">Minutes</p>
+                </div>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow transition hover:bg-white"
+              aria-label="Close"
+            >
+              ×
+            </button>
           </div>
+        </div>
+        <div className="space-y-6 p-6">
+          {sections.map((section) => (
+            <section key={section.title}>
+              <h4 className="mb-3 text-lg font-black">{section.title}</h4>
+              <div className="divide-y divide-slate-100">
+                {section.items.map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="flex items-center justify-between gap-4 py-2.5 text-sm"
+                  >
+                    <span className="font-medium text-slate-700">{label}</span>
+                    <span className="text-right font-black">
+                      {statValue(value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+            className="sticky bottom-0 w-full rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:bg-emerald-700"
           >
-            Close
+            Done
           </button>
-        </div>
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {items.map(([label, value]) => (
-            <Detail key={label} label={label} value={statValue(value)} />
-          ))}
         </div>
       </div>
     </div>

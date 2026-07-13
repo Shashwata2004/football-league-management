@@ -312,7 +312,6 @@ create table if not exists public.teams (
   name text not null,
   short_name text not null,
   logo_url text,
-  city text,
   primary_color text,
   secondary_color text,
   accent_color text,

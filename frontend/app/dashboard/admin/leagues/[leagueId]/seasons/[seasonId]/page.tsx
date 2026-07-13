@@ -11,6 +11,8 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCheck,
   Eye,
   FileText,
@@ -384,7 +386,6 @@ type TeamRegistrationApiRow = {
     name?: string | null;
     short_name?: string | null;
     logo_url?: string | null;
-    city?: string | null;
     primary_color?: string | null;
     secondary_color?: string | null;
     accent_color?: string | null;
@@ -1664,8 +1665,10 @@ export default function AdminLeagueSeasonDashboard() {
     action: PlayerLifecycleAction;
     player: AdminPlayer;
   } | null>(null);
-  const [selectedLineupPlayer, setSelectedLineupPlayer] =
-    useState<AdminPlayer | null>(null);
+  const [selectedLineupPlayer, setSelectedLineupPlayer] = useState<{
+    teamId: string;
+    playerId: string;
+  } | null>(null);
   const [error, setError] = useState("");
 
   async function loadDashboardData() {
@@ -2032,20 +2035,27 @@ export default function AdminLeagueSeasonDashboard() {
       { id: "knockout", label: "Knockout Bracket", icon: GitBranch },
     ] as Array<{ id: TabId; label: string; icon: typeof Users }>;
   }, [isGroupKnockout, shouldShowGroupDivision]);
-  const allAdminPlayers = useMemo(
-    () =>
-      adminData.teams.flatMap((team) => [
-        ...team.players,
-        ...team.suspendedPlayers,
-      ]),
-    [adminData.teams],
-  );
-
-  function openLineupPlayer(player: MatchDetailLineupPlayer) {
-    const adminPlayer = allAdminPlayers.find(
-      (item) => item.id === player.player_registration_id,
-    );
-    if (adminPlayer) setSelectedLineupPlayer(adminPlayer);
+  function openLineupPlayer(
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) {
+    // Prefer the authoritative team id from the lineup context. Fall back to a
+    // roster lookup only when it is not supplied.
+    const owningTeam =
+      (teamRegistrationId
+        ? adminData.teams.find((team) => team.id === teamRegistrationId)
+        : null) ??
+      adminData.teams.find((team) =>
+        [...team.players, ...team.suspendedPlayers].some(
+          (item) => item.id === player.player_registration_id,
+        ),
+      );
+    if (owningTeam) {
+      setSelectedLineupPlayer({
+        teamId: owningTeam.id,
+        playerId: player.player_registration_id,
+      });
+    }
   }
 
   useEffect(() => {
@@ -2268,10 +2278,14 @@ export default function AdminLeagueSeasonDashboard() {
               onConfirm={confirmMatchResult}
               onJumpToMatchday={jumpToMatchday}
               onLoadMatchday={loadCurrentMatchday}
+              onPlayerProfile={openLineupPlayer}
             />
           ) : null}
           {activeTab === "completed-matches" ? (
-            <CompletedMatchesView matches={adminData.completedMatches} />
+            <CompletedMatchesView
+              matches={adminData.completedMatches}
+              onPlayerProfile={openLineupPlayer}
+            />
           ) : null}
           {activeTab === "standings" && !isGroupKnockout ? (
             <StandingsView groupMode={false} teams={adminData.standings} />
@@ -2314,8 +2328,10 @@ export default function AdminLeagueSeasonDashboard() {
         />
       ) : null}
       {selectedLineupPlayer ? (
-        <PlayerRequestDetailModal
-          player={selectedLineupPlayer}
+        <LineupPlayerModal
+          selection={selectedLineupPlayer}
+          teams={adminData.teams}
+          onNavigate={(next) => setSelectedLineupPlayer(next)}
           onClose={() => setSelectedLineupPlayer(null)}
         />
       ) : null}
@@ -4936,6 +4952,203 @@ function PlayerRequestDetailModal({
   );
 }
 
+function LineupPlayerModal({
+  selection,
+  teams,
+  onNavigate,
+  onClose,
+}: {
+  selection: { teamId: string; playerId: string };
+  teams: AdminTeam[];
+  onNavigate: (next: { teamId: string; playerId: string }) => void;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"stats" | "ability" | "personal">("stats");
+
+  const team = teams.find((item) => item.id === selection.teamId) ?? null;
+  // Navigation is scoped to this team only, so the arrows never jump to
+  // another team's players. Suspended players are included so every squad
+  // member reachable from a lineup can be paged through.
+  const teamPlayers = team ? [...team.players, ...team.suspendedPlayers] : [];
+  const currentIndex = teamPlayers.findIndex(
+    (item) => item.id === selection.playerId,
+  );
+  const player = currentIndex >= 0 ? teamPlayers[currentIndex] : null;
+
+  if (!team || !player) return null;
+
+  const total = teamPlayers.length;
+  const goTo = (offset: number) => {
+    if (total <= 1) return;
+    const nextIndex = (currentIndex + offset + total) % total;
+    const nextPlayer = teamPlayers[nextIndex];
+    if (nextPlayer) {
+      onNavigate({ teamId: team.id, playerId: nextPlayer.id });
+    }
+  };
+
+  const gradient = `linear-gradient(135deg, ${team.primaryColor ?? "#6D28D9"} 0%, ${team.secondaryColor ?? "#0B1626"} 100%)`;
+
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm">
+      <div className="max-h-[86vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+        <div
+          className="flex items-start justify-between gap-4 p-6 text-white"
+          style={{ background: gradient }}
+        >
+          <div className="flex min-w-0 items-center gap-4">
+            <button
+              type="button"
+              onClick={() => goTo(-1)}
+              disabled={total <= 1}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/15 text-white transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Previous player"
+              title="Previous player (same team)"
+            >
+              <ChevronLeft size={20} />
+            </button>
+            <PlayerAvatar player={player} />
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-[0.3em] text-white/80">
+                {team.name}
+              </p>
+              <h2 className="mt-1 truncate text-3xl font-black">
+                {player.fullName}
+              </h2>
+              <p className="text-sm font-semibold text-white/80">
+                #{player.jerseyNumber} · {player.footballPosition} ·{" "}
+                {player.playerStatus}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => goTo(1)}
+              disabled={total <= 1}
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/15 text-white transition hover:bg-white/25 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Next player"
+              title="Next player (same team)"
+            >
+              <ChevronRight size={20} />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl bg-white/90 px-5 py-3 text-sm font-black text-slate-900 transition hover:bg-white"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6">
+          <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-50 p-2 md:w-[520px]">
+            <TabButton active={tab === "stats"} onClick={() => setTab("stats")}>
+              League Stats
+            </TabButton>
+            <TabButton
+              active={tab === "ability"}
+              onClick={() => setTab("ability")}
+            >
+              Hidden Ability
+            </TabButton>
+            <TabButton
+              active={tab === "personal"}
+              onClick={() => setTab("personal")}
+            >
+              Personal Data
+            </TabButton>
+          </div>
+
+          <div className="mt-5">
+            {tab === "stats" ? <PlayerLeagueStats player={player} /> : null}
+
+            {tab === "ability" ? (
+              <div className="rounded-xl border border-slate-200 p-4">
+                <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                  Hidden Ability Scores
+                </p>
+                {player.abilityDetails.length > 0 ? (
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    {player.abilityDetails.map((ability) => (
+                      <AbilityDetailCard
+                        key={ability.label}
+                        ability={ability}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-slate-500">
+                    No ability scores generated yet.
+                  </p>
+                )}
+              </div>
+            ) : null}
+
+            {tab === "personal" ? (
+              <div className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <DetailRow label="Player Code" value={player.code} />
+                  <DetailRow label="Full Name" value={player.fullName} />
+                  <DetailRow label="Date of Birth" value={player.dateOfBirth} />
+                  <DetailRow label="Age" value={String(player.age)} />
+                  <DetailRow label="ID Type" value={player.idType} />
+                  <DetailRow label="Masked ID Number" value={player.maskedId} />
+                  <DetailRow
+                    label="Jersey Number"
+                    value={String(player.jerseyNumber)}
+                  />
+                  <DetailRow
+                    label="Position"
+                    value={`${player.footballPosition} (${player.position})`}
+                  />
+                  <DetailRow
+                    label="Preferred Foot"
+                    value={player.preferredFoot}
+                  />
+                  <DetailRow
+                    label="Approval Status"
+                    value={player.approvalStatus}
+                  />
+                  <DetailRow
+                    label="Player Status"
+                    value={player.playerStatus}
+                  />
+                  <DetailRow
+                    label="Registration Date"
+                    value={player.registrationDate}
+                  />
+                  <DetailRow
+                    label="Submitted By Manager"
+                    value={player.submittedByManager}
+                  />
+                  <DetailRow
+                    label="Admin Approval Date"
+                    value={player.adminApprovalDate}
+                  />
+                  <DetailRow
+                    label="Ability Rating"
+                    value={player.abilityRating}
+                  />
+                </div>
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                    Admin Message
+                  </p>
+                  <p className="mt-2 text-sm text-slate-700">
+                    {player.adminMessage}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlayerLifecycleModal({
   action,
   player,
@@ -5132,7 +5345,10 @@ function LineupConfirmationsView({
     status: "APPROVED" | "REJECTED",
     reason?: string,
   ) => Promise<void>;
-  onPlayerClick: (player: MatchDetailLineupPlayer) => void;
+  onPlayerClick: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
 }) {
   const [lineups, setLineups] = useState<AdminPendingLineupRow[]>([]);
   const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(
@@ -5387,7 +5603,10 @@ function AdminLineupPitch({
     status: "APPROVED" | "REJECTED",
   ) => Promise<void>;
   submittingId: string | null;
-  onPlayerClick?: (player: MatchDetailLineupPlayer) => void;
+  onPlayerClick?: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
   showActions?: boolean;
   statsByPlayer?: Map<string, MatchDetailPlayerStat>;
   eventMetaByPlayer?: Map<string, PlayerEventMeta>;
@@ -5453,7 +5672,9 @@ function AdminLineupPitch({
                     <button
                       type="button"
                       className="inline-flex flex-col items-center outline-none transition hover:-translate-y-0.5"
-                      onClick={() => onPlayerClick?.(player)}
+                      onClick={() =>
+                        onPlayerClick?.(player, lineup?.team_registration_id)
+                      }
                     >
                       <div className="relative h-14 w-14 shrink-0">
                         <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
@@ -5530,7 +5751,9 @@ function AdminLineupPitch({
                     key={player.id}
                     type="button"
                     className="flex w-full items-center gap-3 rounded-xl bg-white p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-50"
-                    onClick={() => onPlayerClick?.(player)}
+                    onClick={() =>
+                      onPlayerClick?.(player, lineup?.team_registration_id)
+                    }
                   >
                     <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-100 font-black text-indigo-700">
                       {registration?.players?.avatar_url ? (
@@ -5606,6 +5829,7 @@ function MatchesReadyView({
   onConfirm,
   onJumpToMatchday,
   onLoadMatchday,
+  onPlayerProfile,
 }: {
   matches: ReadyMatchRow[];
   onSimulate: (fixtureId: string) => Promise<void>;
@@ -5615,6 +5839,10 @@ function MatchesReadyView({
     matches?: ReadyMatchRow[];
   }>;
   onLoadMatchday: () => Promise<{ matches?: ReadyMatchRow[] }>;
+  onPlayerProfile: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
 }) {
   const [selectedMatch, setSelectedMatch] = useState<ReadyMatchRow | null>(
     null,
@@ -5708,6 +5936,14 @@ function MatchesReadyView({
   }
 
   if (selectedMatch) {
+    const matchRoleMap = buildMatchRoleMap(detail);
+    const orderedStats = buildOrderedStats(detail);
+    const statNavIndex = selectedStat
+      ? orderedStats.findIndex(
+          (item) =>
+            item.player_registration_id === selectedStat.player_registration_id,
+        )
+      : -1;
     return (
       <div>
         {error ? (
@@ -5729,10 +5965,22 @@ function MatchesReadyView({
           onSimulate={() => void simulate(selectedMatch)}
           onConfirm={() => void confirmSelectedMatch()}
           onPlayerStat={setSelectedStat}
+          onPlayerProfile={onPlayerProfile}
         />
         {selectedStat ? (
           <PlayerMatchStatModal
             stat={selectedStat}
+            role={matchRoleMap.get(selectedStat.player_registration_id)}
+            onPrev={
+              statNavIndex > 0
+                ? () => setSelectedStat(orderedStats[statNavIndex - 1] ?? null)
+                : undefined
+            }
+            onNext={
+              statNavIndex >= 0 && statNavIndex < orderedStats.length - 1
+                ? () => setSelectedStat(orderedStats[statNavIndex + 1] ?? null)
+                : undefined
+            }
             onClose={() => setSelectedStat(null)}
           />
         ) : null}
@@ -5871,7 +6119,16 @@ function MatchesReadyView({
   );
 }
 
-function CompletedMatchesView({ matches }: { matches: CompletedMatchRow[] }) {
+function CompletedMatchesView({
+  matches,
+  onPlayerProfile,
+}: {
+  matches: CompletedMatchRow[];
+  onPlayerProfile: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
+}) {
   const [selectedMatch, setSelectedMatch] = useState<CompletedMatchRow | null>(
     null,
   );
@@ -5901,6 +6158,14 @@ function CompletedMatchesView({ matches }: { matches: CompletedMatchRow[] }) {
   }
 
   if (selectedMatch) {
+    const matchRoleMap = buildMatchRoleMap(detail);
+    const orderedStats = buildOrderedStats(detail);
+    const statNavIndex = selectedStat
+      ? orderedStats.findIndex(
+          (item) =>
+            item.player_registration_id === selectedStat.player_registration_id,
+        )
+      : -1;
     const detailMatch: ReadyMatchRow = {
       id: selectedMatch.id,
       home: selectedMatch.home,
@@ -5937,10 +6202,22 @@ function CompletedMatchesView({ matches }: { matches: CompletedMatchRow[] }) {
           onSimulate={() => undefined}
           onConfirm={() => undefined}
           onPlayerStat={setSelectedStat}
+          onPlayerProfile={onPlayerProfile}
         />
         {selectedStat ? (
           <PlayerMatchStatModal
             stat={selectedStat}
+            role={matchRoleMap.get(selectedStat.player_registration_id)}
+            onPrev={
+              statNavIndex > 0
+                ? () => setSelectedStat(orderedStats[statNavIndex - 1] ?? null)
+                : undefined
+            }
+            onNext={
+              statNavIndex >= 0 && statNavIndex < orderedStats.length - 1
+                ? () => setSelectedStat(orderedStats[statNavIndex + 1] ?? null)
+                : undefined
+            }
             onClose={() => setSelectedStat(null)}
           />
         ) : null}
@@ -5994,6 +6271,7 @@ function MatchDetailPage({
   onSimulate,
   onConfirm,
   onPlayerStat,
+  onPlayerProfile,
 }: {
   match: ReadyMatchRow;
   detail: MatchDetailResponse | null;
@@ -6004,6 +6282,10 @@ function MatchDetailPage({
   onSimulate: () => void;
   onConfirm: () => void;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+  onPlayerProfile: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"lineup" | "stats">("lineup");
   const statsByPlayer = new Map(
@@ -6115,6 +6397,7 @@ function MatchDetailPage({
                 eventMetaByPlayer={eventMetaByPlayer}
                 bestRatedPlayerId={bestRatedPlayerId}
                 onPlayerStat={onPlayerStat}
+                onPlayerProfile={onPlayerProfile}
               />
             ) : detail?.team_stats?.length ? (
               <MatchTeamStatsPanel
@@ -6278,6 +6561,7 @@ function AdminCombinedMatchPitch({
   eventMetaByPlayer,
   bestRatedPlayerId,
   onPlayerStat,
+  onPlayerProfile,
 }: {
   match: ReadyMatchRow;
   homeLineup: MatchDetailLineup | null;
@@ -6286,6 +6570,10 @@ function AdminCombinedMatchPitch({
   eventMetaByPlayer: Map<string, PlayerEventMeta>;
   bestRatedPlayerId: string | null;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+  onPlayerProfile: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
 }) {
   const homeRating = averageLineupRating(homeLineup, statsByPlayer);
   const awayRating = averageLineupRating(awayLineup, statsByPlayer);
@@ -6333,6 +6621,7 @@ function AdminCombinedMatchPitch({
           eventMetaByPlayer={eventMetaByPlayer}
           bestRatedPlayerId={bestRatedPlayerId}
           onPlayerStat={onPlayerStat}
+          onPlayerProfile={onPlayerProfile}
         />
         <AdminLineupSideNodes
           lineup={awayLineup}
@@ -6341,24 +6630,29 @@ function AdminCombinedMatchPitch({
           eventMetaByPlayer={eventMetaByPlayer}
           bestRatedPlayerId={bestRatedPlayerId}
           onPlayerStat={onPlayerStat}
+          onPlayerProfile={onPlayerProfile}
         />
       </div>
       <div className="grid gap-5 bg-white p-5 text-slate-950 lg:grid-cols-2">
         <MatchBenchColumn
           title={`${match.home} substitutes`}
           players={homeBench}
+          teamRegistrationId={homeLineup?.team_registration_id}
           statsByPlayer={statsByPlayer}
           eventMetaByPlayer={eventMetaByPlayer}
           bestRatedPlayerId={bestRatedPlayerId}
           onPlayerStat={onPlayerStat}
+          onPlayerProfile={onPlayerProfile}
         />
         <MatchBenchColumn
           title={`${match.away} substitutes`}
           players={awayBench}
+          teamRegistrationId={awayLineup?.team_registration_id}
           statsByPlayer={statsByPlayer}
           eventMetaByPlayer={eventMetaByPlayer}
           bestRatedPlayerId={bestRatedPlayerId}
           onPlayerStat={onPlayerStat}
+          onPlayerProfile={onPlayerProfile}
         />
       </div>
     </div>
@@ -6372,6 +6666,7 @@ function AdminLineupSideNodes({
   eventMetaByPlayer,
   bestRatedPlayerId,
   onPlayerStat,
+  onPlayerProfile,
 }: {
   lineup: MatchDetailLineup | null;
   side: "HOME" | "AWAY";
@@ -6379,6 +6674,10 @@ function AdminLineupSideNodes({
   eventMetaByPlayer: Map<string, PlayerEventMeta>;
   bestRatedPlayerId: string | null;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+  onPlayerProfile: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
 }) {
   const slots = lineup?.formation_slots ?? [];
   const playerBySlot = new Map(
@@ -6399,6 +6698,7 @@ function AdminLineupSideNodes({
           <AdminMatchPlayerNode
             key={`${side}-${slot.slotKey}`}
             player={player}
+            teamRegistrationId={lineup?.team_registration_id}
             x={x}
             y={y}
             displayRole={slot.displayRole}
@@ -6406,6 +6706,7 @@ function AdminLineupSideNodes({
             {...(meta ? { meta } : {})}
             isBest={player.player_registration_id === bestRatedPlayerId}
             onPlayerStat={onPlayerStat}
+            onPlayerProfile={onPlayerProfile}
           />
         );
       })}
@@ -6415,6 +6716,7 @@ function AdminLineupSideNodes({
 
 function AdminMatchPlayerNode({
   player,
+  teamRegistrationId,
   x,
   y,
   displayRole,
@@ -6422,8 +6724,10 @@ function AdminMatchPlayerNode({
   meta,
   isBest,
   onPlayerStat,
+  onPlayerProfile,
 }: {
   player: MatchDetailLineupPlayer;
+  teamRegistrationId?: string | undefined;
   x: number;
   y: number;
   displayRole: string;
@@ -6431,17 +6735,28 @@ function AdminMatchPlayerNode({
   meta?: PlayerEventMeta;
   isBest: boolean;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+  onPlayerProfile: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
 }) {
   const registration = player.player_season_registrations;
   const name = registration?.players?.full_name ?? "Player";
   return (
     <button
       type="button"
-      disabled={!stat}
       onClick={() => (stat ? onPlayerStat(stat) : undefined)}
-      className="absolute z-10 w-[118px] -translate-x-1/2 -translate-y-1/2 text-center outline-none transition hover:-translate-y-[54%] disabled:cursor-default"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onPlayerProfile(player, teamRegistrationId);
+      }}
+      className="absolute z-10 w-[118px] -translate-x-1/2 -translate-y-1/2 text-center outline-none transition hover:-translate-y-[54%]"
       style={{ left: `${x}%`, top: `${y}%` }}
-      title={stat ? "View match stats" : "Match stats appear after simulation"}
+      title={
+        stat
+          ? "Left click: match stats · Right click: player profile"
+          : "Right click for player profile"
+      }
     >
       <div className="relative mx-auto h-14 w-14">
         <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
@@ -6494,17 +6809,24 @@ function AdminMatchPlayerNode({
 function MatchBenchColumn({
   title,
   players,
+  teamRegistrationId,
   statsByPlayer,
   eventMetaByPlayer,
   bestRatedPlayerId,
   onPlayerStat,
+  onPlayerProfile,
 }: {
   title: string;
   players: MatchDetailLineupPlayer[];
+  teamRegistrationId?: string | undefined;
   statsByPlayer: Map<string, MatchDetailPlayerStat>;
   eventMetaByPlayer: Map<string, PlayerEventMeta>;
   bestRatedPlayerId: string | null;
   onPlayerStat: (stat: MatchDetailPlayerStat) => void;
+  onPlayerProfile: (
+    player: MatchDetailLineupPlayer,
+    teamRegistrationId?: string,
+  ) => void;
 }) {
   return (
     <div className="rounded-2xl border border-slate-200">
@@ -6522,9 +6844,12 @@ function MatchBenchColumn({
               <button
                 key={player.id}
                 type="button"
-                disabled={!stat}
                 onClick={() => (stat ? onPlayerStat(stat) : undefined)}
-                className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50 disabled:cursor-default"
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  onPlayerProfile(player, teamRegistrationId);
+                }}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-slate-50"
               >
                 <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-100 text-xs font-black text-indigo-700">
                   {registration?.players?.avatar_url ? (
@@ -6879,22 +7204,87 @@ function safeStatColor(value: string | null | undefined, fallback: string) {
   return color;
 }
 
+// Builds a map of player_registration_id -> the position a player actually
+// played in the match (the lineup slot's display_role, e.g. "AM"). Bench
+// players carry display_role "SUB", so we fall back to their natural position.
+function buildMatchRoleMap(
+  detail: MatchDetailResponse | null,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const lineup of detail?.lineups ?? []) {
+    for (const player of lineup.lineup_players ?? []) {
+      const natural =
+        player.player_season_registrations?.football_position ??
+        player.football_position ??
+        player.player_natural_position ??
+        null;
+      let role = player.display_role ?? null;
+      if (!role || role === "SUB") role = natural;
+      if (role) map.set(player.player_registration_id, role);
+    }
+  }
+  return map;
+}
+
+// Ordered list of stat rows (home lineup order, then away) so the stat modal
+// can step through players with the prev/next header buttons.
+function buildOrderedStats(
+  detail: MatchDetailResponse | null,
+): MatchDetailPlayerStat[] {
+  const statsByPlayer = new Map(
+    (detail?.player_stats ?? []).map((stat) => [
+      stat.player_registration_id,
+      stat,
+    ]),
+  );
+  const ordered: MatchDetailPlayerStat[] = [];
+  const seen = new Set<string>();
+  const home =
+    detail?.lineups.find((lineup) => lineup.side === "HOME") ??
+    detail?.lineups[0];
+  const away =
+    detail?.lineups.find((lineup) => lineup.side === "AWAY") ??
+    detail?.lineups[1];
+  for (const lineup of [home, away]) {
+    for (const player of lineup?.lineup_players ?? []) {
+      const stat = statsByPlayer.get(player.player_registration_id);
+      if (stat && !seen.has(stat.player_registration_id)) {
+        ordered.push(stat);
+        seen.add(stat.player_registration_id);
+      }
+    }
+  }
+  for (const stat of detail?.player_stats ?? []) {
+    if (!seen.has(stat.player_registration_id)) {
+      ordered.push(stat);
+      seen.add(stat.player_registration_id);
+    }
+  }
+  return ordered;
+}
+
 function PlayerMatchStatModal({
   stat,
+  role,
+  onPrev,
+  onNext,
   onClose,
 }: {
   stat: MatchDetailPlayerStat;
+  role?: string | null | undefined;
+  onPrev?: (() => void) | undefined;
+  onNext?: (() => void) | undefined;
   onClose: () => void;
 }) {
   const player = stat.player_season_registrations;
-  const isGoalkeeper =
-    (stat.position_played ?? player?.football_position) === "GK";
-  const name = player?.players?.full_name ?? "Player";
   const position =
+    role ??
     stat.position_played ??
     player?.football_position ??
     player?.position ??
     "POS";
+  const isGoalkeeper = position === "GK";
+  const name = player?.players?.full_name ?? "Player";
   const defensiveContribution =
     Number(stat.tackles ?? 0) +
     Number(stat.interceptions ?? 0) +
@@ -7002,7 +7392,9 @@ function PlayerMatchStatModal({
           <div className="flex items-start justify-between gap-4">
             <button
               type="button"
-              className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow"
+              onClick={onPrev}
+              disabled={!onPrev}
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="Previous player"
             >
               ‹
@@ -7042,14 +7434,25 @@ function PlayerMatchStatModal({
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow"
-              aria-label="Close"
-            >
-              ×
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onNext}
+                disabled={!onNext}
+                className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Next player"
+              >
+                ›
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow transition hover:bg-white"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
           </div>
         </div>
         <div className="space-y-6 p-6">

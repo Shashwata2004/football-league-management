@@ -2516,7 +2516,7 @@ managerRouter.get(
     const { data: fixture, error: fixtureError } = await supabaseAdmin
       .from("fixtures")
       .select(
-        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url,primary_color)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url,primary_color))",
       )
       .eq("id", req.params.matchId)
       .single();

@@ -45,6 +45,10 @@ const sql = [
     resolve(process.cwd(), "../supabase/matchday-team-stats-flow.sql"),
     "utf8",
   ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/remove-empty-unused-columns.sql"),
+    "utf8",
+  ),
 ].join("\n\n");
 const client = new Client({
   connectionString,
