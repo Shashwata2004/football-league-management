@@ -348,7 +348,8 @@ create table if not exists public.team_registrations (
   removed_at timestamptz,
   removal_reason text,
   created_at timestamptz not null default now(),
-  unique (season_id, team_id)
+  unique (season_id, team_id),
+  constraint team_registrations_id_season_id_key unique (id, season_id)
 );
 
 alter table public.team_registrations add column if not exists removed_by uuid references public.profiles(id);
@@ -391,7 +392,7 @@ create table if not exists public.player_season_registrations (
   id uuid primary key default gen_random_uuid(),
   player_id uuid not null references public.players(id) on delete cascade,
   season_id uuid not null references public.seasons(id) on delete cascade,
-  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  team_registration_id uuid not null,
   player_code text,
   position public.player_position not null,
   football_position public.football_position,
@@ -425,6 +426,10 @@ create table if not exists public.player_season_registrations (
     (identity_mode = 'GENERATED' and is_generated = true)
     or identity_mode = 'VERIFIED'
   ),
+  constraint player_registrations_team_season_fkey
+    foreign key (team_registration_id, season_id)
+    references public.team_registrations(id, season_id)
+    on delete cascade,
   unique (season_id, player_id)
 );
 
@@ -576,7 +581,8 @@ create table if not exists public.fixtures (
   constraint fixture_distinct_teams check (home_team_registration_id <> away_team_registration_id),
   constraint fixture_non_negative_scores check (
     (home_score is null or home_score >= 0) and (away_score is null or away_score >= 0)
-  )
+  ),
+  constraint fixtures_id_season_id_key unique (id, season_id)
 );
 
 alter table public.fixtures add column if not exists league_id uuid references public.leagues(id) on delete cascade;
@@ -592,9 +598,9 @@ alter table public.fixtures alter column away_team_registration_id drop not null
 
 create table if not exists public.lineups (
   id uuid primary key default gen_random_uuid(),
-  fixture_id uuid not null references public.fixtures(id) on delete cascade,
-  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
-  season_id uuid references public.seasons(id) on delete cascade,
+  fixture_id uuid not null,
+  team_registration_id uuid not null,
+  season_id uuid not null references public.seasons(id) on delete cascade,
   manager_id uuid references public.profiles(id) on delete set null,
   side public.venue_side not null,
   formation text not null,
@@ -609,6 +615,14 @@ create table if not exists public.lineups (
   blocked_reason text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint lineups_fixture_season_fkey
+    foreign key (fixture_id, season_id)
+    references public.fixtures(id, season_id)
+    on delete cascade,
+  constraint lineups_team_season_fkey
+    foreign key (team_registration_id, season_id)
+    references public.team_registrations(id, season_id)
+    on delete cascade,
   unique (fixture_id, team_registration_id),
   unique (fixture_id, side)
 );
