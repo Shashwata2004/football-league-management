@@ -582,6 +582,28 @@ create table if not exists public.fixtures (
   constraint fixture_non_negative_scores check (
     (home_score is null or home_score >= 0) and (away_score is null or away_score >= 0)
   ),
+  constraint fixtures_winner_is_participant_check check (
+    winner_team_registration_id is null
+    or (
+      home_team_registration_id is not null
+      and winner_team_registration_id = home_team_registration_id
+    )
+    or (
+      away_team_registration_id is not null
+      and winner_team_registration_id = away_team_registration_id
+    )
+  ),
+  constraint fixtures_penalty_winner_is_participant_check check (
+    penalty_winner_team_registration_id is null
+    or (
+      home_team_registration_id is not null
+      and penalty_winner_team_registration_id = home_team_registration_id
+    )
+    or (
+      away_team_registration_id is not null
+      and penalty_winner_team_registration_id = away_team_registration_id
+    )
+  ),
   constraint fixtures_home_team_registration_id_fkey
     foreign key (home_team_registration_id, season_id)
     references public.team_registrations(id, season_id),

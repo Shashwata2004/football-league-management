@@ -52,6 +52,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-fixture-winner-integrity-constraints.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/manager-lineup-builder-flow.sql"),
     "utf8",
   ),
