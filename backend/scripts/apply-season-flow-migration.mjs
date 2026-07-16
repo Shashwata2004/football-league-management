@@ -106,6 +106,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-manager-preference-scope-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/matchday-team-stats-flow.sql"),
     "utf8",
   ),
