@@ -51,6 +51,11 @@ import {
   isStageInDisciplinePhase,
   yellowCardProgress,
 } from "../domain/discipline.js";
+import { totalExpectedGoals } from "../domain/team-statistics.js";
+import {
+  isLineupSubmissionOpen,
+  nextLineupFixture,
+} from "../domain/lineup-eligibility.js";
 
 export const managerRouter = Router();
 managerRouter.use(requireAuth, requireRole(UserRole.MANAGER, UserRole.ADMIN));
@@ -453,13 +458,7 @@ function makeStatsReport(
             "avgPossession",
             "percent",
           ),
-          makeTeamLeaderboard(
-            "rating",
-            "Rating",
-            teamRows,
-            "rating",
-            "rating",
-          ),
+          makeTeamLeaderboard("rating", "Rating", teamRows, "rating", "rating"),
         ],
       },
       {
@@ -470,6 +469,13 @@ function makeStatsReport(
             "Goals per Match",
             teamRows,
             "goalsPerMatch",
+            "decimal",
+          ),
+          makeTeamLeaderboard(
+            "expected_goals",
+            "Expected Goals (xG)",
+            teamRows,
+            "expectedGoals",
             "decimal",
           ),
           makeTeamLeaderboard(
@@ -691,6 +697,44 @@ async function loadManagerTeams(userId: string) {
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
+}
+
+async function assertNextLineupFixture(
+  teamRegistrationId: string,
+  seasonId: string,
+  fixtureId: string,
+  requireOpenSubmission = false,
+) {
+  const { data, error } = await supabaseAdmin
+    .from("fixtures")
+    .select("id,status,kickoff_at,matchday_number,round_no,created_at")
+    .eq("season_id", seasonId)
+    .or(
+      `home_team_registration_id.eq.${teamRegistrationId},away_team_registration_id.eq.${teamRegistrationId}`,
+    );
+  if (error) throw error;
+
+  const nextFixture = nextLineupFixture(data ?? []);
+  if (!nextFixture) {
+    throw new AppError(
+      409,
+      "No upcoming fixture is available for lineup submission.",
+    );
+  }
+  if (nextFixture.id !== fixtureId) {
+    throw new AppError(
+      409,
+      "You can only prepare or submit a lineup for your team's next fixture.",
+    );
+  }
+  if (requireOpenSubmission && !isLineupSubmissionOpen(nextFixture.status)) {
+    throw new AppError(
+      409,
+      "Lineup submission is closed while the current match is being processed. The following fixture unlocks after this match is finalized.",
+    );
+  }
+
+  return nextFixture;
 }
 
 async function assertManagerCanViewSeason(userId: string, seasonId: string) {
@@ -1305,6 +1349,11 @@ managerRouter.get(
         .or(
           `home_team_registration_id.eq.${activeTeam.id},away_team_registration_id.eq.${activeTeam.id}`,
         )
+        .neq("status", FixtureStatus.FINAL)
+        .neq("status", FixtureStatus.COMPLETED)
+        .neq("status", FixtureStatus.CANCELLED)
+        .neq("status", FixtureStatus.POSTPONED)
+        .neq("status", FixtureStatus.WAITING_FOR_TEAMS)
         .order("kickoff_at", { ascending: true, nullsFirst: false })
         .limit(8),
       supabaseAdmin
@@ -2608,6 +2657,7 @@ managerRouter.get(
         avgPossession: avg(teamStats.map((row) => Number(row.possession ?? 0))),
         rating: teamMatchRatings.length ? avg(teamMatchRatings) : 0,
         goalsPerMatch: perMatch(Number(standing?.goals_for ?? 0), played),
+        expectedGoals: totalExpectedGoals(teamStats),
         shotsOnTargetPerMatch: perMatch(sumTeam("shots_on_target"), played),
         bigChancesPerMatch: perMatch(sumTeam("big_chances"), played),
         bigChancesMissedPerMatch: perMatch(
@@ -2804,6 +2854,11 @@ managerRouter.get(
     const teamRegistration =
       teams.find((team) => team.id === teamRegistrationId) ??
       (await assertManagerOwnsTeam(req.auth!.userId, teamRegistrationId));
+    await assertNextLineupFixture(
+      teamRegistrationId,
+      fixture.season_id,
+      fixture.id,
+    );
     const season = relatedOne(teamRegistration.seasons);
     const preference = await loadManagerPreference(
       req.auth!.userId,
@@ -2977,10 +3032,9 @@ managerRouter.get(
       initialLineup: {
         formation,
         playing_style: playingStyle,
-        penalty_taker_ids: orderedSetPieceIds(
-          sourceLineup,
-          "PENALTY",
-        ).filter((id) => selectedIds.has(id)),
+        penalty_taker_ids: orderedSetPieceIds(sourceLineup, "PENALTY").filter(
+          (id) => selectedIds.has(id),
+        ),
         free_kick_taker_ids: orderedSetPieceIds(
           sourceLineup,
           "FREE_KICK",
@@ -3018,6 +3072,11 @@ managerRouter.post(
       ].includes(teamRegistration.id)
     )
       throw new AppError(400, "Team is not assigned to this fixture");
+    await assertNextLineupFixture(
+      teamRegistration.id,
+      fixture.season_id,
+      fixture.id,
+    );
     const season = relatedOne(teamRegistration.seasons);
     const availablePlayers = await loadAvailableLineupPlayers(
       teamRegistration.id,
@@ -3064,7 +3123,15 @@ managerRouter.get(
     const playingStyle = normalizedPlayingStyle(req.query.playingStyle);
     if (!teamId || !slotKey)
       throw new AppError(400, "teamId and slotKey are required");
-    await assertManagerOwnsTeam(req.auth!.userId, teamId);
+    const teamRegistration = await assertManagerOwnsTeam(
+      req.auth!.userId,
+      teamId,
+    );
+    await assertNextLineupFixture(
+      teamId,
+      teamRegistration.season_id,
+      routeParam(req.params.matchId, "matchId"),
+    );
     const slot = getFormationSlots(formation).find(
       (item) => item.slotKey === slotKey,
     );
@@ -3114,6 +3181,12 @@ managerRouter.post(
     ) {
       throw new AppError(400, "Team is not assigned to this fixture");
     }
+    await assertNextLineupFixture(
+      input.team_registration_id,
+      fixture.season_id,
+      fixture.id,
+      true,
+    );
     const expectedSide =
       fixture.home_team_registration_id === input.team_registration_id
         ? "HOME"
@@ -3385,6 +3458,12 @@ managerRouter.post(
     ) {
       throw new AppError(400, "Team is not assigned to this fixture");
     }
+    await assertNextLineupFixture(
+      input.team_registration_id,
+      fixture.season_id,
+      fixture.id,
+      true,
+    );
     const expectedSide =
       fixture.home_team_registration_id === input.team_registration_id
         ? "HOME"

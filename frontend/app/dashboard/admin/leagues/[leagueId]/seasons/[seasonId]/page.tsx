@@ -7764,7 +7764,7 @@ function TeamStatsView({
     <div>
       <PageTitle
         title="Team Stats"
-        subtitle="Team leaderboards update after confirmed match simulations. xG/xA are intentionally not tracked in this project."
+        subtitle="Team leaderboards update after confirmed match simulations. Team xG is the sum of each recorded match's xG."
       />
       <AdminStatsFilter
         value={teamFilter}

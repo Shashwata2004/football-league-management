@@ -2223,10 +2223,18 @@ function SubmitLineupSection({
   activeTeam,
   onPlayerClick,
 }: Parameters<typeof SectionView>[0]) {
-  const upcomingFixtures = fixtures.filter(
-    (fixture) => fixture.status !== "FINAL" && fixture.status !== "COMPLETED",
-  );
-  const [matchId, setMatchId] = useState(upcomingFixtures[0]?.id ?? "");
+  const selectedMatch =
+    fixtures.find(
+      (fixture) =>
+        ![
+          "FINAL",
+          "COMPLETED",
+          "CANCELLED",
+          "POSTPONED",
+          "WAITING_FOR_TEAMS",
+        ].includes(fixture.status),
+    ) ?? null;
+  const matchId = selectedMatch?.id ?? "";
   const [builder, setBuilder] = useState<LineupBuilderPayload | null>(null);
   const [loadingBuilder, setLoadingBuilder] = useState(false);
   const [formation, setFormation] = useState("4-3-3");
@@ -2249,8 +2257,6 @@ function SubmitLineupSection({
     null,
   );
   const [showLeagueRatings, setShowLeagueRatings] = useState(false);
-  const selectedMatch =
-    upcomingFixtures.find((fixture) => fixture.id === matchId) ?? null;
   const playerMap = useMemo(
     () =>
       new Map(
@@ -2288,10 +2294,6 @@ function SubmitLineupSection({
       : existingLineupStatus === "CONFIRMED"
         ? "Lineup confirmed by admin and locked for simulation."
         : "";
-
-  useEffect(() => {
-    if (!matchId && upcomingFixtures[0]?.id) setMatchId(upcomingFixtures[0].id);
-  }, [matchId, upcomingFixtures]);
 
   useEffect(() => {
     if (!activeTeam || !matchId) return;
@@ -2628,29 +2630,22 @@ function SubmitLineupSection({
     <div className="space-y-6">
       <PageTitle
         title="Submit Lineup"
-        subtitle="Select your formation, playing style, review your XI, and submit your match lineup."
+        subtitle="Prepare the lineup for your team's next match. The following fixture unlocks after this match is finalized."
       />
-      {upcomingFixtures.length === 0 ? (
+      {!selectedMatch ? (
         <EmptyState label="No upcoming fixture is available for lineup submission." />
       ) : null}
       {selectedMatch ? (
         <>
           <Panel title="Lineup Controls">
             <div className="grid gap-3 lg:grid-cols-5">
-              <label className="text-sm font-bold lg:col-span-2">
-                Match
-                <select
-                  className="manager-input mt-2"
-                  value={matchId}
-                  onChange={(event) => setMatchId(event.target.value)}
-                >
-                  {upcomingFixtures.map((fixture) => (
-                    <option key={fixture.id} value={fixture.id}>
-                      {matchLabel(fixture)} · {formatDate(fixture.kickoff_at)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="text-sm font-bold lg:col-span-2">
+                Next eligible match
+                <div className="manager-input mt-2 cursor-default bg-slate-50">
+                  {matchLabel(selectedMatch)} ·{" "}
+                  {formatDate(selectedMatch.kickoff_at)}
+                </div>
+              </div>
               <label className="text-sm font-bold">
                 Formation
                 <select

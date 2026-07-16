@@ -78,49 +78,15 @@ create table if not exists public.season_group_teams (
   unique (team_registration_id)
 );
 
-create table if not exists public.knockout_brackets (
-  id uuid primary key default gen_random_uuid(),
-  season_id uuid not null references public.seasons(id) on delete cascade,
-  name text not null default 'Main Bracket',
-  locked boolean not null default false,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (season_id, name)
-);
-
-create table if not exists public.knockout_matches (
-  id uuid primary key default gen_random_uuid(),
-  bracket_id uuid not null references public.knockout_brackets(id) on delete cascade,
-  fixture_id uuid references public.fixtures(id) on delete set null,
-  round_name text not null,
-  round_no integer not null,
-  match_no integer not null,
-  home_source text,
-  away_source text,
-  winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
-  extra_time_played boolean not null default false,
-  penalty_winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
-  penalties_home integer check (penalties_home is null or penalties_home >= 0),
-  penalties_away integer check (penalties_away is null or penalties_away >= 0),
-  status public.knockout_round_status not null default 'PENDING',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (bracket_id, round_no, match_no)
-);
-
 create index if not exists idx_seasons_phase on public.seasons(phase);
 create index if not exists idx_manager_messages_season on public.manager_messages(season_id, created_at desc);
 create index if not exists idx_manager_messages_manager_read on public.manager_messages(manager_id, read_at);
 create index if not exists idx_season_groups_season on public.season_groups(season_id);
 create index if not exists idx_group_teams_group on public.season_group_teams(group_id);
-create index if not exists idx_knockout_brackets_season on public.knockout_brackets(season_id);
-create index if not exists idx_knockout_matches_bracket_round on public.knockout_matches(bracket_id, round_no, match_no);
 
 alter table public.manager_messages enable row level security;
 alter table public.season_groups enable row level security;
 alter table public.season_group_teams enable row level security;
-alter table public.knockout_brackets enable row level security;
-alter table public.knockout_matches enable row level security;
 
 drop policy if exists "manager_messages_service_only" on public.manager_messages;
 create policy "manager_messages_service_only"
@@ -137,18 +103,6 @@ using (true);
 drop policy if exists "season_group_teams_public_read" on public.season_group_teams;
 create policy "season_group_teams_public_read"
 on public.season_group_teams for select
-to anon, authenticated
-using (true);
-
-drop policy if exists "knockout_brackets_public_read" on public.knockout_brackets;
-create policy "knockout_brackets_public_read"
-on public.knockout_brackets for select
-to anon, authenticated
-using (true);
-
-drop policy if exists "knockout_matches_public_read" on public.knockout_matches;
-create policy "knockout_matches_public_read"
-on public.knockout_matches for select
 to anon, authenticated
 using (true);
 

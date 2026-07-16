@@ -39,6 +39,7 @@ import {
   applyFinalResultToStandings,
   emptyStanding,
 } from "../domain/standings.js";
+import { totalExpectedGoals } from "../domain/team-statistics.js";
 import {
   generateAbilityScores,
   simulateMatch,
@@ -784,6 +785,7 @@ adminRouter.get(
           ),
           rating: teamMatchRatings.length ? avg(teamMatchRatings) : 0,
           goalsPerMatch: perMatch(Number(standing?.goals_for ?? 0), played),
+          expectedGoals: totalExpectedGoals(teamStats),
           shotsOnTargetPerMatch: perMatch(sumTeam("shots_on_target"), played),
           bigChancesPerMatch: perMatch(sumTeam("big_chances"), played),
           bigChancesMissedPerMatch: perMatch(
@@ -1009,6 +1011,13 @@ adminRouter.get(
               "Goals per Match",
               teamRows,
               "goalsPerMatch",
+              "decimal",
+            ),
+            makeTeamLeaderboard(
+              "expected_goals",
+              "Expected Goals (xG)",
+              teamRows,
+              "expectedGoals",
               "decimal",
             ),
             makeTeamLeaderboard(

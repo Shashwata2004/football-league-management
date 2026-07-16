@@ -42,6 +42,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-lineup-player-integrity-constraints.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/matchday-team-stats-flow.sql"),
     "utf8",
   ),
@@ -144,8 +151,6 @@ try {
         'manager_messages',
         'season_groups',
         'season_group_teams',
-        'knockout_brackets',
-        'knockout_matches',
         'player_abilities',
         'match_injuries',
         'match_substitutions',

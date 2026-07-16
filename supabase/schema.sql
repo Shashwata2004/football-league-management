@@ -519,6 +519,18 @@ create table if not exists public.player_abilities (
   updated_at timestamptz not null default now()
 );
 
+-- Fixtures reference season_groups, so the parent relation must exist first
+-- when this schema is installed on a clean database.
+create table if not exists public.season_groups (
+  id uuid primary key default gen_random_uuid(),
+  season_id uuid not null references public.seasons(id) on delete cascade,
+  name text not null,
+  locked boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (season_id, name)
+);
+
 create table if not exists public.fixtures (
   id uuid primary key default gen_random_uuid(),
   league_id uuid references public.leagues(id) on delete cascade,
@@ -549,6 +561,18 @@ create table if not exists public.fixtures (
   finalized_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint fixtures_valid_stage check (
+    stage in (
+      'LEAGUE',
+      'GROUP',
+      'ROUND_OF_64',
+      'ROUND_OF_32',
+      'ROUND_OF_16',
+      'QUARTER_FINAL',
+      'SEMI_FINAL',
+      'FINAL'
+    )
+  ),
   constraint fixture_distinct_teams check (home_team_registration_id <> away_team_registration_id),
   constraint fixture_non_negative_scores check (
     (home_score is null or home_score >= 0) and (away_score is null or away_score >= 0)
@@ -604,8 +628,22 @@ create table if not exists public.lineup_players (
   is_captain boolean not null default false,
   display_order integer,
   created_at timestamptz not null default now(),
+  constraint lineup_players_role_consistency check (
+    is_substitute = (not is_starter)
+  ),
+  constraint lineup_players_captain_must_start check (
+    not is_captain or is_starter
+  ),
   unique (lineup_id, player_registration_id)
 );
+
+create unique index if not exists lineup_players_one_captain_per_lineup_uidx
+  on public.lineup_players(lineup_id)
+  where is_captain;
+
+create unique index if not exists lineup_players_unique_starter_slot_uidx
+  on public.lineup_players(lineup_id, slot_key)
+  where is_starter and slot_key is not null;
 
 create table if not exists public.lineup_set_piece_takers (
   id uuid primary key default gen_random_uuid(),
@@ -860,15 +898,6 @@ alter table public.player_season_stats
     and (lowest_match_rating is null or lowest_match_rating between 5.5 and 9.5)
   );
 
-create table if not exists public.notifications (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.profiles(id) on delete cascade,
-  title text not null,
-  body text,
-  read_at timestamptz,
-  created_at timestamptz not null default now()
-);
-
 create table if not exists public.manager_messages (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references public.seasons(id) on delete cascade,
@@ -889,16 +918,6 @@ alter table public.manager_messages add column if not exists fixture_id uuid ref
 alter table public.manager_messages add column if not exists notification_key text;
 create unique index if not exists manager_messages_notification_key_uidx on public.manager_messages (notification_key);
 
-create table if not exists public.season_groups (
-  id uuid primary key default gen_random_uuid(),
-  season_id uuid not null references public.seasons(id) on delete cascade,
-  name text not null,
-  locked boolean not null default false,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (season_id, name)
-);
-
 create table if not exists public.season_group_teams (
   id uuid primary key default gen_random_uuid(),
   group_id uuid not null references public.season_groups(id) on delete cascade,
@@ -908,36 +927,6 @@ create table if not exists public.season_group_teams (
   created_at timestamptz not null default now(),
   unique (group_id, team_registration_id),
   unique (team_registration_id)
-);
-
-create table if not exists public.knockout_brackets (
-  id uuid primary key default gen_random_uuid(),
-  season_id uuid not null references public.seasons(id) on delete cascade,
-  name text not null default 'Main Bracket',
-  locked boolean not null default false,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (season_id, name)
-);
-
-create table if not exists public.knockout_matches (
-  id uuid primary key default gen_random_uuid(),
-  bracket_id uuid not null references public.knockout_brackets(id) on delete cascade,
-  fixture_id uuid references public.fixtures(id) on delete set null,
-  round_name text not null,
-  round_no integer not null,
-  match_no integer not null,
-  home_source text,
-  away_source text,
-  winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
-  extra_time_played boolean not null default false,
-  penalty_winner_team_registration_id uuid references public.team_registrations(id) on delete set null,
-  penalties_home integer check (penalties_home is null or penalties_home >= 0),
-  penalties_away integer check (penalties_away is null or penalties_away >= 0),
-  status public.knockout_round_status not null default 'PENDING',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (bracket_id, round_no, match_no)
 );
 
 alter table public.seasons
@@ -977,9 +966,6 @@ create index if not exists idx_manager_messages_player on public.manager_message
 create index if not exists idx_manager_messages_fixture on public.manager_messages(fixture_id);
 create index if not exists idx_season_groups_season on public.season_groups(season_id);
 create index if not exists idx_group_teams_group on public.season_group_teams(group_id);
-create index if not exists idx_knockout_brackets_season on public.knockout_brackets(season_id);
-create index if not exists idx_knockout_matches_bracket_round on public.knockout_matches(bracket_id, round_no, match_no);
-
 create or replace function app_private.handle_new_user()
 returns trigger
 language plpgsql
@@ -1028,19 +1014,15 @@ alter table public.player_match_stats enable row level security;
 alter table public.match_events enable row level security;
 alter table public.standings enable row level security;
 alter table public.player_season_stats enable row level security;
-alter table public.notifications enable row level security;
 alter table public.manager_messages enable row level security;
 alter table public.season_groups enable row level security;
 alter table public.season_group_teams enable row level security;
-alter table public.knockout_brackets enable row level security;
-alter table public.knockout_matches enable row level security;
 
 grant usage on schema public to anon, authenticated, service_role;
 revoke all on all tables in schema public from anon, authenticated;
-grant select on public.leagues, public.seasons, public.fixtures, public.standings, public.player_season_stats, public.season_groups, public.season_group_teams, public.knockout_brackets, public.knockout_matches to anon, authenticated;
+grant select on public.leagues, public.seasons, public.fixtures, public.standings, public.player_season_stats, public.season_groups, public.season_group_teams to anon, authenticated;
 grant select on public.profiles to authenticated;
 grant select, insert on public.role_requests to authenticated;
-grant select, update on public.notifications to authenticated;
 grant select, insert, update, delete on all tables in schema public to service_role;
 grant usage, select on all sequences in schema public to service_role;
 
@@ -1116,31 +1098,6 @@ create policy "season_group_teams_public_read"
 on public.season_group_teams for select
 to anon, authenticated
 using (true);
-
-drop policy if exists "knockout_brackets_public_read" on public.knockout_brackets;
-create policy "knockout_brackets_public_read"
-on public.knockout_brackets for select
-to anon, authenticated
-using (true);
-
-drop policy if exists "knockout_matches_public_read" on public.knockout_matches;
-create policy "knockout_matches_public_read"
-on public.knockout_matches for select
-to anon, authenticated
-using (true);
-
-drop policy if exists "notifications_select_self" on public.notifications;
-create policy "notifications_select_self"
-on public.notifications for select
-to authenticated
-using ((select auth.uid()) = user_id);
-
-drop policy if exists "notifications_update_self" on public.notifications;
-create policy "notifications_update_self"
-on public.notifications for update
-to authenticated
-using ((select auth.uid()) = user_id)
-with check ((select auth.uid()) = user_id);
 
 insert into storage.buckets (id, name, public)
 values ('identity-proofs', 'identity-proofs', false)
