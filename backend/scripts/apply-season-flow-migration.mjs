@@ -33,6 +33,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-team-registration-owner-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/advanced-simulation-flow.sql"),
     "utf8",
   ),
@@ -94,6 +101,20 @@ const sql = [
   readFileSync(
     resolve(
       process.cwd(),
+      "../supabase/add-lineup-fixture-scope-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-foreign-key-delete-behavior-consistency.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
       "../supabase/add-lineup-player-integrity-constraints.sql",
     ),
     "utf8",
@@ -109,6 +130,13 @@ const sql = [
     resolve(
       process.cwd(),
       "../supabase/add-manager-preference-scope-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-manager-message-scope-integrity.sql",
     ),
     "utf8",
   ),
@@ -133,6 +161,18 @@ const sql = [
       process.cwd(),
       "../supabase/add-substitution-injury-suspension-integrity.sql",
     ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/add-foreign-key-query-indexes.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/add-secure-reporting-views.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/harden-auth-trigger-function.sql"),
     "utf8",
   ),
   readFileSync(

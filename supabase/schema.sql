@@ -324,7 +324,8 @@ create table if not exists public.teams (
   gk_home_jersey_url text,
   gk_away_jersey_url text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint teams_id_manager_id_key unique (id, manager_id)
 );
 
 alter table public.teams add column if not exists logo_url text;
@@ -338,7 +339,7 @@ alter table public.teams add column if not exists gk_away_jersey_url text;
 create table if not exists public.team_registrations (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references public.seasons(id) on delete cascade,
-  team_id uuid not null references public.teams(id) on delete cascade,
+  team_id uuid not null,
   manager_id uuid not null references public.profiles(id),
   status public.request_status not null default 'PENDING',
   reviewed_by uuid references public.profiles(id),
@@ -349,12 +350,24 @@ create table if not exists public.team_registrations (
   removal_reason text,
   created_at timestamptz not null default now(),
   unique (season_id, team_id),
-  constraint team_registrations_id_season_id_key unique (id, season_id)
+  constraint team_registrations_team_manager_fkey
+    foreign key (team_id, manager_id)
+    references public.teams(id, manager_id)
+    on delete cascade,
+  constraint team_registrations_id_season_id_key unique (id, season_id),
+  constraint team_registrations_id_season_manager_key
+    unique (id, season_id, manager_id)
 );
 
 alter table public.team_registrations add column if not exists removed_by uuid references public.profiles(id);
 alter table public.team_registrations add column if not exists removed_at timestamptz;
 alter table public.team_registrations add column if not exists removal_reason text;
+
+create index if not exists team_registrations_team_manager_idx
+  on public.team_registrations(team_id, manager_id);
+
+create index if not exists team_registrations_manager_created_idx
+  on public.team_registrations(manager_id, created_at desc);
 
 create table if not exists public.players (
   id uuid primary key default gen_random_uuid(),
@@ -857,7 +870,7 @@ create table if not exists public.lineups (
   fixture_id uuid not null,
   team_registration_id uuid not null,
   season_id uuid not null references public.seasons(id) on delete cascade,
-  manager_id uuid references public.profiles(id) on delete set null,
+  manager_id uuid not null references public.profiles(id) on delete restrict,
   side public.venue_side not null,
   formation text not null,
   playing_style text not null default 'BALANCED',
@@ -875,13 +888,115 @@ create table if not exists public.lineups (
     foreign key (fixture_id, season_id)
     references public.fixtures(id, season_id)
     on delete cascade,
-  constraint lineups_team_season_fkey
-    foreign key (team_registration_id, season_id)
-    references public.team_registrations(id, season_id)
+  constraint lineups_team_season_manager_fkey
+    foreign key (team_registration_id, season_id, manager_id)
+    references public.team_registrations(id, season_id, manager_id)
     on delete cascade,
   unique (fixture_id, team_registration_id),
   unique (fixture_id, side)
 );
+
+create index if not exists lineups_team_season_manager_idx
+  on public.lineups(team_registration_id, season_id, manager_id);
+
+create or replace function app_private.enforce_lineup_fixture_side()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  fixture_season_id uuid;
+  expected_team_id uuid;
+begin
+  select
+    fixture.season_id,
+    case new.side
+      when 'HOME' then fixture.home_team_registration_id
+      when 'AWAY' then fixture.away_team_registration_id
+    end
+  into
+    fixture_season_id,
+    expected_team_id
+  from public.fixtures fixture
+  where fixture.id = new.fixture_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Lineup fixture does not exist.';
+  end if;
+
+  if new.season_id is distinct from fixture_season_id
+    or expected_team_id is null
+    or new.team_registration_id is distinct from expected_team_id then
+    raise exception using
+      errcode = '23514',
+      message = 'Lineup team and side must match the fixture home or away assignment.';
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.protect_fixture_lineup_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if exists (
+    select 1
+    from public.lineups lineup
+    where lineup.fixture_id = old.id
+      and (
+        lineup.season_id is distinct from new.season_id
+        or lineup.team_registration_id is distinct from case lineup.side
+          when 'HOME' then new.home_team_registration_id
+          when 'AWAY' then new.away_team_registration_id
+        end
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Fixture participants or season cannot invalidate submitted lineups.';
+  end if;
+
+  return new;
+end
+$function$;
+
+revoke all on function app_private.enforce_lineup_fixture_side()
+from public, anon, authenticated;
+
+revoke all on function app_private.protect_fixture_lineup_scope()
+from public, anon, authenticated;
+
+drop trigger if exists enforce_lineup_fixture_side
+on public.lineups;
+
+create trigger enforce_lineup_fixture_side
+before insert or update of
+  fixture_id,
+  team_registration_id,
+  season_id,
+  side
+on public.lineups
+for each row
+execute function app_private.enforce_lineup_fixture_side();
+
+drop trigger if exists protect_fixture_lineup_scope
+on public.fixtures;
+
+create trigger protect_fixture_lineup_scope
+before update of
+  season_id,
+  home_team_registration_id,
+  away_team_registration_id
+on public.fixtures
+for each row
+execute function app_private.protect_fixture_lineup_scope();
 
 create table if not exists public.lineup_players (
   id uuid primary key default gen_random_uuid(),
@@ -1710,13 +1825,264 @@ create table if not exists public.manager_messages (
   message text not null,
   created_by uuid references public.profiles(id),
   read_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint manager_messages_content_check check (
+    nullif(btrim(message), '') is not null
+    and (
+      notification_key is null
+      or nullif(btrim(notification_key), '') is not null
+    )
+  )
 );
 
 alter table public.manager_messages add column if not exists player_registration_id uuid references public.player_season_registrations(id) on delete set null;
 alter table public.manager_messages add column if not exists fixture_id uuid references public.fixtures(id) on delete set null;
 alter table public.manager_messages add column if not exists notification_key text;
 create unique index if not exists manager_messages_notification_key_uidx on public.manager_messages (notification_key);
+
+create index if not exists idx_manager_messages_team
+  on public.manager_messages(team_registration_id, created_at desc)
+  where team_registration_id is not null;
+
+create or replace function app_private.enforce_manager_message_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  team_manager_id uuid;
+  team_season_id uuid;
+  player_team_id uuid;
+  player_manager_id uuid;
+  player_season_id uuid;
+  fixture_season_id uuid;
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
+begin
+  if new.team_registration_id is not null then
+    select team_registration.manager_id, team_registration.season_id
+    into team_manager_id, team_season_id
+    from public.team_registrations team_registration
+    where team_registration.id = new.team_registration_id;
+
+    if not found then
+      raise exception using
+        errcode = '23503',
+        message = 'Manager message team registration does not exist.';
+    end if;
+
+    if new.manager_id is distinct from team_manager_id
+      or new.season_id is distinct from team_season_id then
+      raise exception using
+        errcode = '23514',
+        message = 'Manager message must match the team registration manager and season.';
+    end if;
+  end if;
+
+  if new.player_registration_id is not null then
+    select
+      player_registration.team_registration_id,
+      player_team.manager_id,
+      player_registration.season_id
+    into
+      player_team_id,
+      player_manager_id,
+      player_season_id
+    from public.player_season_registrations player_registration
+    join public.team_registrations player_team
+      on player_team.id = player_registration.team_registration_id
+    where player_registration.id = new.player_registration_id;
+
+    if not found then
+      raise exception using
+        errcode = '23503',
+        message = 'Manager message player registration does not exist.';
+    end if;
+
+    if new.manager_id is distinct from player_manager_id
+      or new.season_id is distinct from player_season_id
+      or (
+        new.team_registration_id is not null
+        and new.team_registration_id is distinct from player_team_id
+      ) then
+      raise exception using
+        errcode = '23514',
+        message = 'Manager message player must match its manager, team, and season scope.';
+    end if;
+  end if;
+
+  if new.fixture_id is not null then
+    select
+      fixture.season_id,
+      fixture.home_team_registration_id,
+      fixture.away_team_registration_id
+    into
+      fixture_season_id,
+      fixture_home_team_id,
+      fixture_away_team_id
+    from public.fixtures fixture
+    where fixture.id = new.fixture_id;
+
+    if not found then
+      raise exception using
+        errcode = '23503',
+        message = 'Manager message fixture does not exist.';
+    end if;
+
+    if new.season_id is distinct from fixture_season_id
+      or (
+        new.team_registration_id is not null
+        and new.team_registration_id is distinct from fixture_home_team_id
+        and new.team_registration_id is distinct from fixture_away_team_id
+      ) then
+      raise exception using
+        errcode = '23514',
+        message = 'Manager message fixture must match its team and season scope.';
+    end if;
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.protect_manager_message_team_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if exists (
+    select 1
+    from public.manager_messages manager_message
+    where manager_message.team_registration_id = old.id
+      and (
+        manager_message.manager_id is distinct from new.manager_id
+        or manager_message.season_id is distinct from new.season_id
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Team registration manager or season cannot invalidate manager messages.';
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.protect_manager_message_player_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if exists (
+    select 1
+    from public.manager_messages manager_message
+    where manager_message.player_registration_id = old.id
+      and (
+        manager_message.season_id is distinct from new.season_id
+        or (
+          manager_message.team_registration_id is not null
+          and manager_message.team_registration_id is distinct from new.team_registration_id
+        )
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Player registration team or season cannot invalidate manager messages.';
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.protect_manager_message_fixture_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if exists (
+    select 1
+    from public.manager_messages manager_message
+    where manager_message.fixture_id = old.id
+      and (
+        manager_message.season_id is distinct from new.season_id
+        or (
+          manager_message.team_registration_id is not null
+          and manager_message.team_registration_id is distinct from new.home_team_registration_id
+          and manager_message.team_registration_id is distinct from new.away_team_registration_id
+        )
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Fixture participants or season cannot invalidate manager messages.';
+  end if;
+
+  return new;
+end
+$function$;
+
+revoke all on function app_private.enforce_manager_message_scope()
+from public, anon, authenticated;
+
+revoke all on function app_private.protect_manager_message_team_scope()
+from public, anon, authenticated;
+
+revoke all on function app_private.protect_manager_message_player_scope()
+from public, anon, authenticated;
+
+revoke all on function app_private.protect_manager_message_fixture_scope()
+from public, anon, authenticated;
+
+drop trigger if exists enforce_manager_message_scope
+on public.manager_messages;
+
+create trigger enforce_manager_message_scope
+before insert or update of
+  season_id,
+  manager_id,
+  team_registration_id,
+  player_registration_id,
+  fixture_id
+on public.manager_messages
+for each row
+execute function app_private.enforce_manager_message_scope();
+
+drop trigger if exists protect_manager_message_team_scope
+on public.team_registrations;
+
+create trigger protect_manager_message_team_scope
+before update of manager_id, season_id
+on public.team_registrations
+for each row
+execute function app_private.protect_manager_message_team_scope();
+
+drop trigger if exists protect_manager_message_player_scope
+on public.player_season_registrations;
+
+create trigger protect_manager_message_player_scope
+before update of team_registration_id, season_id
+on public.player_season_registrations
+for each row
+execute function app_private.protect_manager_message_player_scope();
+
+drop trigger if exists protect_manager_message_fixture_scope
+on public.fixtures;
+
+create trigger protect_manager_message_fixture_scope
+before update of
+  season_id,
+  home_team_registration_id,
+  away_team_registration_id
+on public.fixtures
+for each row
+execute function app_private.protect_manager_message_fixture_scope();
 
 create table if not exists public.season_group_teams (
   id uuid primary key default gen_random_uuid(),
@@ -1777,6 +2143,321 @@ create index if not exists idx_manager_messages_player on public.manager_message
 create index if not exists idx_manager_messages_fixture on public.manager_messages(fixture_id);
 create index if not exists idx_season_groups_season on public.season_groups(season_id);
 create index if not exists idx_group_teams_group on public.season_group_teams(group_id);
+
+-- Foreign-key and high-use query indexes.
+create index if not exists lineup_players_player_registration_idx
+  on public.lineup_players(player_registration_id, lineup_id);
+create index if not exists player_registrations_created_by_manager_idx
+  on public.player_season_registrations(created_by_manager_id)
+  where created_by_manager_id is not null;
+create index if not exists player_registrations_player_idx
+  on public.player_season_registrations(player_id);
+create index if not exists player_registrations_removed_by_idx
+  on public.player_season_registrations(removed_by)
+  where removed_by is not null;
+create index if not exists player_registrations_reviewed_by_idx
+  on public.player_season_registrations(reviewed_by)
+  where reviewed_by is not null;
+create index if not exists player_registrations_suspended_by_idx
+  on public.player_season_registrations(suspended_by)
+  where suspended_by is not null;
+create index if not exists player_abilities_generated_by_admin_idx
+  on public.player_abilities(generated_by_admin_id)
+  where generated_by_admin_id is not null;
+create index if not exists player_abilities_team_season_idx
+  on public.player_abilities(team_registration_id, season_id);
+create index if not exists player_season_stats_player_season_idx
+  on public.player_season_stats(player_registration_id, season_id);
+create index if not exists match_substitutions_player_in_fixture_idx
+  on public.match_substitutions(player_in_registration_id, fixture_id);
+create index if not exists match_substitutions_player_out_fixture_idx
+  on public.match_substitutions(player_out_registration_id, fixture_id);
+create index if not exists match_substitutions_team_fixture_idx
+  on public.match_substitutions(team_registration_id, fixture_id);
+create index if not exists manager_messages_created_by_idx
+  on public.manager_messages(created_by)
+  where created_by is not null;
+create index if not exists manager_messages_manager_created_idx
+  on public.manager_messages(manager_id, created_at desc);
+create index if not exists lineups_manager_created_idx
+  on public.lineups(manager_id, created_at desc);
+create index if not exists lineups_reviewed_by_idx
+  on public.lineups(reviewed_by)
+  where reviewed_by is not null;
+create index if not exists lineups_season_created_idx
+  on public.lineups(season_id, created_at desc);
+create index if not exists fixtures_home_team_schedule_idx
+  on public.fixtures(home_team_registration_id, season_id, kickoff_at)
+  where home_team_registration_id is not null;
+create index if not exists fixtures_away_team_schedule_idx
+  on public.fixtures(away_team_registration_id, season_id, kickoff_at)
+  where away_team_registration_id is not null;
+create index if not exists fixtures_finalized_by_idx
+  on public.fixtures(finalized_by)
+  where finalized_by is not null;
+create index if not exists fixtures_league_season_idx
+  on public.fixtures(league_id, season_id)
+  where league_id is not null;
+create index if not exists fixtures_penalty_winner_idx
+  on public.fixtures(penalty_winner_team_registration_id)
+  where penalty_winner_team_registration_id is not null;
+create index if not exists fixtures_winner_idx
+  on public.fixtures(winner_team_registration_id)
+  where winner_team_registration_id is not null;
+create index if not exists manager_preferences_season_manager_idx
+  on public.manager_team_preferences(season_id, manager_id);
+create index if not exists standings_team_season_idx
+  on public.standings(team_registration_id, season_id);
+create index if not exists team_registrations_removed_by_idx
+  on public.team_registrations(removed_by)
+  where removed_by is not null;
+create index if not exists team_registrations_reviewed_by_idx
+  on public.team_registrations(reviewed_by)
+  where reviewed_by is not null;
+create index if not exists teams_manager_created_idx
+  on public.teams(manager_id, created_at desc);
+create index if not exists player_suspensions_season_status_idx
+  on public.player_suspensions(season_id, status);
+create index if not exists seasons_champion_team_idx
+  on public.seasons(champion_team_registration_id, id)
+  where champion_team_registration_id is not null;
+create index if not exists identity_proofs_player_idx
+  on public.identity_proofs(player_id);
+create index if not exists identity_proofs_submitted_by_idx
+  on public.identity_proofs(submitted_by);
+create index if not exists player_hidden_attributes_submitted_by_idx
+  on public.player_hidden_attributes(submitted_by);
+create index if not exists role_requests_decided_by_idx
+  on public.role_requests(decided_by)
+  where decided_by is not null;
+
+create or replace view public.season_standings_report
+with (security_invoker = true)
+as
+select
+  standing.id as standing_id,
+  standing.season_id,
+  season.league_id,
+  league.name as league_name,
+  season.name as season_name,
+  season.season_year,
+  standing.team_registration_id,
+  team.id as team_id,
+  team.name as team_name,
+  team.short_name as team_short_name,
+  team.logo_url as team_logo_url,
+  standing.played,
+  standing.won,
+  standing.drawn,
+  standing.lost,
+  standing.goals_for,
+  standing.goals_against,
+  standing.goal_difference,
+  standing.points,
+  standing.fair_play_score,
+  standing.admin_draw_rank,
+  row_number() over (
+    partition by standing.season_id
+    order by
+      standing.points desc,
+      standing.goal_difference desc,
+      standing.goals_for desc,
+      standing.fair_play_score,
+      standing.admin_draw_rank nulls last,
+      team.name
+  )::integer as position,
+  standing.updated_at
+from public.standings standing
+join public.seasons season
+  on season.id = standing.season_id
+join public.leagues league
+  on league.id = season.league_id
+join public.team_registrations team_registration
+  on team_registration.id = standing.team_registration_id
+ and team_registration.season_id = standing.season_id
+join public.teams team
+  on team.id = team_registration.team_id;
+
+create or replace view public.team_season_statistics_report
+with (security_invoker = true)
+as
+with match_totals as (
+  select
+    team_stat.team_registration_id,
+    fixture.season_id,
+    count(*)::integer as matches_with_statistics,
+    coalesce(sum(team_stat.expected_goals), 0::numeric) as total_expected_goals,
+    round(coalesce(avg(team_stat.expected_goals), 0::numeric), 2) as average_expected_goals,
+    round(coalesce(avg(team_stat.possession), 0::numeric), 2) as average_possession,
+    coalesce(sum(team_stat.shots), 0)::integer as total_shots,
+    coalesce(sum(team_stat.shots_on_target), 0)::integer as total_shots_on_target,
+    coalesce(sum(team_stat.shots_off_target), 0)::integer as total_shots_off_target,
+    coalesce(sum(team_stat.big_chances), 0)::integer as total_big_chances,
+    coalesce(sum(team_stat.big_chances_missed), 0)::integer as total_big_chances_missed,
+    coalesce(sum(team_stat.passes), 0)::integer as total_passes,
+    coalesce(sum(team_stat.accurate_passes), 0)::integer as total_accurate_passes,
+    coalesce(sum(team_stat.fouls), 0)::integer as total_fouls,
+    coalesce(sum(team_stat.yellow_cards), 0)::integer as total_yellow_cards,
+    coalesce(sum(team_stat.red_cards), 0)::integer as total_red_cards,
+    coalesce(sum(team_stat.corners), 0)::integer as total_corners,
+    coalesce(sum(team_stat.offsides), 0)::integer as total_offsides,
+    coalesce(sum(team_stat.hit_woodwork), 0)::integer as total_hit_woodwork,
+    coalesce(sum(team_stat.tackles), 0)::integer as total_tackles,
+    coalesce(sum(team_stat.interceptions), 0)::integer as total_interceptions,
+    coalesce(sum(team_stat.blocks), 0)::integer as total_blocks,
+    coalesce(sum(team_stat.clearances), 0)::integer as total_clearances,
+    coalesce(sum(team_stat.keeper_saves), 0)::integer as total_keeper_saves,
+    round(coalesce(avg(team_stat.rating), 0::numeric), 2) as average_team_rating
+  from public.team_match_stats team_stat
+  join public.fixtures fixture
+    on fixture.id = team_stat.fixture_id
+  group by team_stat.team_registration_id, fixture.season_id
+)
+select
+  team_registration.season_id,
+  season.league_id,
+  league.name as league_name,
+  season.name as season_name,
+  season.season_year,
+  team_registration.id as team_registration_id,
+  team.id as team_id,
+  team.name as team_name,
+  team.short_name as team_short_name,
+  team.logo_url as team_logo_url,
+  coalesce(match_totals.matches_with_statistics, 0) as matches_with_statistics,
+  coalesce(match_totals.total_expected_goals, 0::numeric) as total_expected_goals,
+  coalesce(match_totals.average_expected_goals, 0::numeric) as average_expected_goals,
+  coalesce(match_totals.average_possession, 0::numeric) as average_possession,
+  coalesce(match_totals.total_shots, 0) as total_shots,
+  coalesce(match_totals.total_shots_on_target, 0) as total_shots_on_target,
+  coalesce(match_totals.total_shots_off_target, 0) as total_shots_off_target,
+  coalesce(match_totals.total_big_chances, 0) as total_big_chances,
+  coalesce(match_totals.total_big_chances_missed, 0) as total_big_chances_missed,
+  coalesce(match_totals.total_passes, 0) as total_passes,
+  coalesce(match_totals.total_accurate_passes, 0) as total_accurate_passes,
+  coalesce(match_totals.total_fouls, 0) as total_fouls,
+  coalesce(match_totals.total_yellow_cards, 0) as total_yellow_cards,
+  coalesce(match_totals.total_red_cards, 0) as total_red_cards,
+  coalesce(match_totals.total_corners, 0) as total_corners,
+  coalesce(match_totals.total_offsides, 0) as total_offsides,
+  coalesce(match_totals.total_hit_woodwork, 0) as total_hit_woodwork,
+  coalesce(match_totals.total_tackles, 0) as total_tackles,
+  coalesce(match_totals.total_interceptions, 0) as total_interceptions,
+  coalesce(match_totals.total_blocks, 0) as total_blocks,
+  coalesce(match_totals.total_clearances, 0) as total_clearances,
+  coalesce(match_totals.total_keeper_saves, 0) as total_keeper_saves,
+  coalesce(match_totals.average_team_rating, 0::numeric) as average_team_rating,
+  coalesce(standing.played, 0) as played,
+  coalesce(standing.won, 0) as won,
+  coalesce(standing.drawn, 0) as drawn,
+  coalesce(standing.lost, 0) as lost,
+  coalesce(standing.goals_for, 0) as goals_for,
+  coalesce(standing.goals_against, 0) as goals_against,
+  coalesce(standing.goal_difference, 0) as goal_difference,
+  coalesce(standing.points, 0) as points
+from public.team_registrations team_registration
+join public.seasons season
+  on season.id = team_registration.season_id
+join public.leagues league
+  on league.id = season.league_id
+join public.teams team
+  on team.id = team_registration.team_id
+left join match_totals
+  on match_totals.team_registration_id = team_registration.id
+ and match_totals.season_id = team_registration.season_id
+left join public.standings standing
+  on standing.team_registration_id = team_registration.id
+ and standing.season_id = team_registration.season_id;
+
+create or replace view public.match_summary_report
+with (security_invoker = true)
+as
+select
+  fixture.id as fixture_id,
+  fixture.season_id,
+  fixture.league_id,
+  league.name as league_name,
+  season.name as season_name,
+  season.season_year,
+  fixture.stage,
+  fixture.round_no,
+  fixture.matchday_number,
+  fixture.group_name,
+  fixture.kickoff_at,
+  fixture.venue,
+  fixture.status,
+  fixture.result_confirmed,
+  fixture.home_team_registration_id,
+  home_team.name as home_team_name,
+  home_team.short_name as home_team_short_name,
+  home_team.logo_url as home_team_logo_url,
+  fixture.away_team_registration_id,
+  away_team.name as away_team_name,
+  away_team.short_name as away_team_short_name,
+  away_team.logo_url as away_team_logo_url,
+  fixture.home_score,
+  fixture.away_score,
+  fixture.extra_time_played,
+  fixture.penalties_home,
+  fixture.penalties_away,
+  fixture.winner_team_registration_id,
+  winner_team.name as winner_team_name,
+  fixture.penalty_winner_team_registration_id,
+  penalty_winner_team.name as penalty_winner_team_name,
+  home_stat.expected_goals as home_expected_goals,
+  away_stat.expected_goals as away_expected_goals,
+  home_stat.possession as home_possession,
+  away_stat.possession as away_possession,
+  home_stat.shots as home_shots,
+  away_stat.shots as away_shots,
+  home_stat.shots_on_target as home_shots_on_target,
+  away_stat.shots_on_target as away_shots_on_target,
+  home_stat.rating as home_team_rating,
+  away_stat.rating as away_team_rating,
+  fixture.finalized_at,
+  fixture.updated_at
+from public.fixtures fixture
+join public.seasons season
+  on season.id = fixture.season_id
+left join public.leagues league
+  on league.id = fixture.league_id
+left join public.team_registrations home_registration
+  on home_registration.id = fixture.home_team_registration_id
+left join public.teams home_team
+  on home_team.id = home_registration.team_id
+left join public.team_registrations away_registration
+  on away_registration.id = fixture.away_team_registration_id
+left join public.teams away_team
+  on away_team.id = away_registration.team_id
+left join public.team_registrations winner_registration
+  on winner_registration.id = fixture.winner_team_registration_id
+left join public.teams winner_team
+  on winner_team.id = winner_registration.team_id
+left join public.team_registrations penalty_winner_registration
+  on penalty_winner_registration.id = fixture.penalty_winner_team_registration_id
+left join public.teams penalty_winner_team
+  on penalty_winner_team.id = penalty_winner_registration.team_id
+left join public.team_match_stats home_stat
+  on home_stat.fixture_id = fixture.id
+ and home_stat.team_registration_id = fixture.home_team_registration_id
+left join public.team_match_stats away_stat
+  on away_stat.fixture_id = fixture.id
+ and away_stat.team_registration_id = fixture.away_team_registration_id;
+
+comment on view public.season_standings_report is
+  'Secure read-only standings report with team and season labels.';
+comment on view public.team_season_statistics_report is
+  'Secure read-only team season aggregates, including summed expected goals.';
+comment on view public.match_summary_report is
+  'Secure read-only fixture summary with participant labels and team match statistics.';
+
+revoke all on public.season_standings_report from public, anon, authenticated;
+revoke all on public.team_season_statistics_report from public, anon, authenticated;
+revoke all on public.match_summary_report from public, anon, authenticated;
+
+grant select on public.season_standings_report to service_role;
+grant select on public.team_season_statistics_report to service_role;
+grant select on public.match_summary_report to service_role;
 
 create or replace function app_private.enforce_season_group_team_consistency()
 returns trigger
@@ -2685,20 +3366,21 @@ create or replace function app_private.handle_new_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
-as $$
+set search_path = ''
+as $function$
 begin
   insert into public.profiles (id, email, full_name, role)
   values (
     new.id,
     coalesce(new.email, ''),
-    coalesce(new.raw_user_meta_data ->> 'full_name', null),
+    new.raw_user_meta_data ->> 'full_name',
     'USER'
   )
   on conflict (id) do nothing;
+
   return new;
-end;
-$$;
+end
+$function$;
 
 revoke all on function app_private.handle_new_user() from public, anon, authenticated;
 

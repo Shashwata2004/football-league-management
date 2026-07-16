@@ -15,7 +15,7 @@ create table if not exists public.manager_team_preferences (
 
 alter table public.lineups
   add column if not exists season_id uuid references public.seasons(id) on delete cascade,
-  add column if not exists manager_id uuid references public.profiles(id) on delete set null,
+  add column if not exists manager_id uuid references public.profiles(id) on delete restrict,
   add column if not exists playing_style text not null default 'BALANCED',
   add column if not exists captain_id uuid references public.player_season_registrations(id) on delete set null,
   add column if not exists submitted_at timestamptz,
