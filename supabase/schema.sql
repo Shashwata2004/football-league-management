@@ -1008,6 +1008,53 @@ create index if not exists idx_manager_messages_player on public.manager_message
 create index if not exists idx_manager_messages_fixture on public.manager_messages(fixture_id);
 create index if not exists idx_season_groups_season on public.season_groups(season_id);
 create index if not exists idx_group_teams_group on public.season_group_teams(group_id);
+
+create or replace function app_private.enforce_season_group_team_consistency()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  group_season_id uuid;
+  team_season_id uuid;
+begin
+  select season_id
+  into group_season_id
+  from public.season_groups
+  where id = new.group_id;
+
+  select season_id
+  into team_season_id
+  from public.team_registrations
+  where id = new.team_registration_id;
+
+  if group_season_id is not null
+    and team_season_id is not null
+    and group_season_id is distinct from team_season_id then
+    raise exception using
+      errcode = '23514',
+      constraint = 'season_group_teams_same_season_check',
+      message = 'A team registration can only be assigned to a group from the same season.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_season_group_team_consistency()
+from public, anon, authenticated;
+
+drop trigger if exists enforce_season_group_team_consistency
+on public.season_group_teams;
+
+create trigger enforce_season_group_team_consistency
+  before insert or update of group_id, team_registration_id
+  on public.season_group_teams
+  for each row
+  execute function app_private.enforce_season_group_team_consistency();
+
 create or replace function app_private.handle_new_user()
 returns trigger
 language plpgsql

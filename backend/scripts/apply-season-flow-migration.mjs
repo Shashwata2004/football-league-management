@@ -22,6 +22,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-group-assignment-season-consistency.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/team-player-dashboard-flow.sql"),
     "utf8",
   ),
