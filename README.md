@@ -45,10 +45,7 @@ The seed file creates the fixed admin account automatically.
 
 This project uses custom backend auth stored in PostgreSQL tables, not Supabase Auth signup. There is no Google OAuth requirement. For a classroom/demo setup, any fake email that contains `@` and ends with `.com` can be used.
 
-Seeded admin:
-
-- Email: `admin@scoreline.com`
-- Password: `1234`
+Admin credentials are intentionally not published in the repository. Obtain them from an authorized project maintainer.
 
 ## Verification
 

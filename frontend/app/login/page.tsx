@@ -15,7 +15,7 @@ const roles: { id: Role; label: string; sub: string; icon: ReactNode; loginEmail
     label: "Admin",
     sub: "League commissioner",
     icon: <Shield size={20} />,
-    loginEmail: "admin@scoreline.com",
+    loginEmail: "Enter your admin email",
     signupName: "Alex Rivera"
   },
   {
@@ -159,8 +159,8 @@ function AuthForm({
 }) {
   const item = activeRole(role);
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState(role === "admin" && view === "login" ? "admin@scoreline.com" : "");
-  const [password, setPassword] = useState(role === "admin" && view === "login" ? "1234" : "");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
