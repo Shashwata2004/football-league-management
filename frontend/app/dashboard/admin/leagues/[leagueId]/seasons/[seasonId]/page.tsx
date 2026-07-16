@@ -2280,6 +2280,7 @@ export default function AdminLeagueSeasonDashboard() {
               season={season}
               data={adminData}
               onNavigate={setActiveTab}
+              onSimulate={simulateReadyMatch}
             />
           ) : null}
           {activeTab === "teams" ? (
@@ -2409,16 +2410,36 @@ function DashboardView({
   season,
   data,
   onNavigate,
+  onSimulate,
 }: {
   league: LeagueDto;
   season: SeasonDto;
   data: AdminSeasonData;
   onNavigate: (tab: TabId) => void;
+  onSimulate: (fixtureId: string) => Promise<void>;
 }) {
   const tableTopper = data.standings[0] ?? null;
+  const [simulatingId, setSimulatingId] = useState<string | null>(null);
+  const [simulationError, setSimulationError] = useState("");
   const isLeagueTableFormat =
     season.format === SeasonFormat.SINGLE_ROUND_ROBIN ||
     season.format === SeasonFormat.DOUBLE_ROUND_ROBIN;
+
+  async function simulateFromDashboard(match: ReadyMatchRow) {
+    setSimulatingId(match.id);
+    setSimulationError("");
+    try {
+      await onSimulate(match.id);
+      onNavigate("matches-ready");
+    } catch (error) {
+      setSimulationError(
+        error instanceof Error ? error.message : "Could not simulate match.",
+      );
+    } finally {
+      setSimulatingId(null);
+    }
+  }
+
   return (
     <div>
       <PageTitle
@@ -2592,8 +2613,22 @@ function DashboardView({
           action="View all"
           onAction={() => onNavigate("matches-ready")}
         >
+          {simulationError ? (
+            <div
+              role="alert"
+              className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700"
+            >
+              {simulationError}
+            </div>
+          ) : null}
           {data.readyMatches[0] ? (
-            <ReadyMatchCard match={data.readyMatches[0]} />
+            <ReadyMatchCard
+              match={data.readyMatches[0]}
+              simulating={simulatingId === data.readyMatches[0].id}
+              onSimulate={() =>
+                void simulateFromDashboard(data.readyMatches[0]!)
+              }
+            />
           ) : (
             <EmptyState label="No matches are ready for simulation." />
           )}
@@ -8932,22 +8967,42 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-function ReadyMatchCard({ match }: { match: ReadyMatchRow }) {
+function ReadyMatchCard({
+  match,
+  simulating,
+  onSimulate,
+}: {
+  match: ReadyMatchRow;
+  simulating: boolean;
+  onSimulate: () => void;
+}) {
+  const canSimulate =
+    match.can_simulate ?? isSimulatableStatus(match.status);
   return (
     <div className="rounded-xl border border-slate-200 p-6 text-center">
       <div className="flex items-center justify-center gap-14">
-        <TeamCompact name={match.home} />
+        <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
         <span className="font-black">vs</span>
-        <TeamCompact name={match.away} />
+        <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
       </div>
       <p className="mt-7 text-sm text-slate-600">{match.kickoff}</p>
       <p className="mt-3 text-sm text-slate-600">{match.stage}</p>
-      <button className="group mt-6 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98]">
+      <button
+        type="button"
+        onClick={onSimulate}
+        disabled={!canSimulate || simulating}
+        title={
+          !canSimulate
+            ? "Simulation needs both lineups submitted and admin-confirmed."
+            : undefined
+        }
+        className="group mt-6 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow transition-all duration-200 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-xl hover:shadow-indigo-200 active:translate-y-0 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow"
+      >
         <PlayCircle
           className="transition-transform duration-200 group-hover:scale-110"
           size={17}
         />
-        Simulate Match
+        {simulating ? "Simulating..." : "Simulate Match"}
       </button>
     </div>
   );

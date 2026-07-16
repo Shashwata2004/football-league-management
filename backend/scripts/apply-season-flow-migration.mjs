@@ -45,6 +45,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-fixture-team-season-consistency.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/manager-lineup-builder-flow.sql"),
     "utf8",
   ),

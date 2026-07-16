@@ -545,8 +545,8 @@ create table if not exists public.fixtures (
   stage text not null default 'LEAGUE',
   group_id uuid references public.season_groups(id) on delete set null,
   group_name text,
-  home_team_registration_id uuid references public.team_registrations(id),
-  away_team_registration_id uuid references public.team_registrations(id),
+  home_team_registration_id uuid,
+  away_team_registration_id uuid,
   home_source text,
   away_source text,
   kickoff_at timestamptz,
@@ -582,6 +582,12 @@ create table if not exists public.fixtures (
   constraint fixture_non_negative_scores check (
     (home_score is null or home_score >= 0) and (away_score is null or away_score >= 0)
   ),
+  constraint fixtures_home_team_registration_id_fkey
+    foreign key (home_team_registration_id, season_id)
+    references public.team_registrations(id, season_id),
+  constraint fixtures_away_team_registration_id_fkey
+    foreign key (away_team_registration_id, season_id)
+    references public.team_registrations(id, season_id),
   constraint fixtures_id_season_id_key unique (id, season_id)
 );
 
