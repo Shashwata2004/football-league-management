@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { RoleRequestStatus, UserRole } from "@flms/shared";
+import { UserRole } from "@flms/shared";
 import { supabaseAdmin } from "../db/supabase.js";
 import { AppError, asyncHandler } from "../errors.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -96,22 +96,3 @@ async function ensureProfile(userId: string, email: string, role: UserRole, full
     .upsert({ id: userId, email, full_name: fullName ?? null, role }, { onConflict: "id" });
   if (error) throw error;
 }
-
-authRouter.post(
-  "/role-requests/manager",
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const { data, error } = await supabaseAdmin
-      .from("role_requests")
-      .insert({
-        user_id: req.auth!.userId,
-        requested_role: "MANAGER",
-        status: RoleRequestStatus.PENDING,
-        reason: req.body?.reason ?? null
-      })
-      .select("*")
-      .single();
-    if (error) throw error;
-    res.status(201).json({ role_request: data });
-  })
-);

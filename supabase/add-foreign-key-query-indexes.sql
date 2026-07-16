@@ -112,17 +112,4 @@ create index if not exists seasons_champion_team_idx
   on public.seasons(champion_team_registration_id, id)
   where champion_team_registration_id is not null;
 
-create index if not exists identity_proofs_player_idx
-  on public.identity_proofs(player_id);
-
-create index if not exists identity_proofs_submitted_by_idx
-  on public.identity_proofs(submitted_by);
-
-create index if not exists player_hidden_attributes_submitted_by_idx
-  on public.player_hidden_attributes(submitted_by);
-
-create index if not exists role_requests_decided_by_idx
-  on public.role_requests(decided_by)
-  where decided_by is not null;
-
 commit;

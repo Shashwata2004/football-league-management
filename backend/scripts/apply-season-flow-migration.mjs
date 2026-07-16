@@ -95,6 +95,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-lineup-player-shirt-number-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/add-lineup-season-consistency.sql"),
     "utf8",
   ),
@@ -108,6 +115,17 @@ const sql = [
   readFileSync(
     resolve(
       process.cwd(),
+      "../supabase/make-neutral-lineup-side-null.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/remove-lineup-side-column.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
       "../supabase/add-foreign-key-delete-behavior-consistency.sql",
     ),
     "utf8",
@@ -116,6 +134,13 @@ const sql = [
     resolve(
       process.cwd(),
       "../supabase/add-lineup-player-integrity-constraints.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/remove-redundant-lineup-substitute-column.sql",
     ),
     "utf8",
   ),
@@ -153,6 +178,13 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-match-event-related-player-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/add-player-season-stats-integrity.sql"),
     "utf8",
   ),
@@ -168,11 +200,55 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(process.cwd(), "../supabase/normalize-standings-tiebreak.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/normalize-standings-storage.sql"),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/add-secure-reporting-views.sql"),
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/remove-match-summary-report-venue.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/harden-auth-trigger-function.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/remove-unused-identity-proofs-feature.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/remove-unused-player-hidden-attributes-and-nationality.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/remove-player-registration-resubmission-flag.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/remove-unused-role-requests.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/enforce-generated-group-locks.sql"),
     "utf8",
   ),
   readFileSync(
@@ -239,7 +315,7 @@ try {
         or
         (table_name = 'lineup_players' and column_name in (
           'football_position', 'shirt_number', 'is_captain', 'slot_key',
-          'display_role', 'player_natural_position', 'is_substitute', 'display_order'
+          'display_role', 'player_natural_position', 'display_order'
         ))
         or
         (table_name = 'fixtures' and column_name in (

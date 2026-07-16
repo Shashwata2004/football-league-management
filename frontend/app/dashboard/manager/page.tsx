@@ -318,7 +318,6 @@ type MatchDetailLineupPlayer = {
 type MatchDetailLineup = {
   id: string;
   team_registration_id: string;
-  side: string;
   formation?: string | null;
   playing_style?: string | null;
   status?: string | null;
@@ -331,6 +330,19 @@ type MatchDetailLineup = {
   }> | null;
   lineup_players?: MatchDetailLineupPlayer[] | null;
 };
+
+function managerLineupForFixtureTeam(
+  lineups: MatchDetailLineup[] | null | undefined,
+  teamRegistrationId: string | null | undefined,
+) {
+  return (
+    lineups?.find(
+      (lineup) =>
+        teamRegistrationId != null &&
+        lineup.team_registration_id === teamRegistrationId,
+    ) ?? null
+  );
+}
 
 type MatchDetailTeamStat = {
   id: string;
@@ -427,6 +439,12 @@ interface StandingRecord {
   goals_against: number;
   goal_difference: number;
   points: number;
+  fair_play_score: number;
+  admin_draw_rank: number | null;
+  head_to_head_points?: number;
+  position?: number;
+  group_id?: string | null;
+  group_name?: string | null;
   team_registrations?: { id: string; teams?: TeamRecord["teams"] } | null;
 }
 
@@ -2566,10 +2584,6 @@ function SubmitLineupSection({
         method: "POST",
         body: JSON.stringify({
           team_registration_id: activeTeam.id,
-          side:
-            selectedMatch.home_team_registration_id === activeTeam.id
-              ? "HOME"
-              : "AWAY",
           formation,
           playing_style: playingStyle,
           captain_id: captainId,
@@ -3342,10 +3356,13 @@ function StandingsSection({
               })
               .sort(
                 (a, b) =>
-                  Number(b.standing?.points ?? 0) -
-                    Number(a.standing?.points ?? 0) ||
-                  Number(b.standing?.goal_difference ?? 0) -
-                    Number(a.standing?.goal_difference ?? 0),
+                  Number(a.standing?.position ?? Number.MAX_SAFE_INTEGER) -
+                    Number(
+                      b.standing?.position ?? Number.MAX_SAFE_INTEGER,
+                    ) ||
+                  String(a.team?.id ?? "").localeCompare(
+                    String(b.team?.id ?? ""),
+                  ),
               );
             return (
               <Panel key={group.id} title={group.name}>
@@ -3521,10 +3538,11 @@ function GroupConditionPanel({
             })
             .sort(
               (a, b) =>
-                Number(b.standing?.points ?? 0) -
-                  Number(a.standing?.points ?? 0) ||
-                Number(b.standing?.goal_difference ?? 0) -
-                  Number(a.standing?.goal_difference ?? 0),
+                Number(a.standing?.position ?? Number.MAX_SAFE_INTEGER) -
+                  Number(b.standing?.position ?? Number.MAX_SAFE_INTEGER) ||
+                String(a.team?.id ?? "").localeCompare(
+                  String(b.team?.id ?? ""),
+                ),
             );
           return (
             <div
@@ -5649,7 +5667,10 @@ function managerBuildEventMeta(
     const type = String(event.type ?? "");
     if (type === "GOAL" || type === "PENALTY_GOAL") meta.goals += 1;
     if (type === "OWN_GOAL") meta.ownGoals += 1;
-    if (event.related_player_registration_id) {
+    if (
+      (type === "GOAL" || type === "PENALTY_GOAL") &&
+      event.related_player_registration_id
+    ) {
       managerEnsureEventMeta(
         map,
         String(event.related_player_registration_id),
@@ -6155,15 +6176,15 @@ function MatchDetailModal({
     payload?.substitutions ?? [],
   );
   const bestRatedPlayerId = managerBestRatedPlayer(payload?.player_stats ?? []);
-  const homeLineup =
-    payload?.lineups.find((lineup) => lineup.side === "HOME") ??
-    payload?.lineups[0] ??
-    null;
-  const awayLineup =
-    payload?.lineups.find((lineup) => lineup.side === "AWAY") ??
-    payload?.lineups[1] ??
-    null;
   const detailFixture = payload?.fixture ?? fixture;
+  const homeLineup = managerLineupForFixtureTeam(
+    payload?.lineups,
+    detailFixture.home_team_registration_id,
+  );
+  const awayLineup = managerLineupForFixtureTeam(
+    payload?.lineups,
+    detailFixture.away_team_registration_id,
+  );
   const homeTeam = detailFixture.home_team?.teams ?? fixture.home_team?.teams;
   const awayTeam = detailFixture.away_team?.teams ?? fixture.away_team?.teams;
   const playerNames = new Map<string, string>();

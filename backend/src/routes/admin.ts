@@ -13,7 +13,6 @@ import {
   PlayerLifecycleStatus,
   RegistrationStatus,
   registrationDecisionSchema,
-  roleRequestDecisionSchema,
   SeasonFormat,
   simulateMatchSchema,
   updateSeasonScheduleSchema,
@@ -40,6 +39,7 @@ import {
   emptyStanding,
 } from "../domain/standings.js";
 import { totalExpectedGoals } from "../domain/team-statistics.js";
+import { loadSeasonStandings } from "../services/standings-report.js";
 import {
   generateAbilityScores,
   simulateMatch,
@@ -474,45 +474,6 @@ function isSchemaCacheColumnError(error: unknown) {
 }
 
 adminRouter.get(
-  "/role-requests",
-  asyncHandler(async (_req, res) => {
-    const { data, error } = await supabaseAdmin
-      .from("role_requests")
-      .select("*,profiles(email,full_name,role)")
-      .order("created_at", { ascending: false });
-    if (error) throw error;
-    res.json({ role_requests: data });
-  }),
-);
-
-adminRouter.patch(
-  "/role-requests/:id",
-  asyncHandler(async (req, res) => {
-    const input = roleRequestDecisionSchema.parse(req.body);
-    const { data: roleRequest, error: requestError } = await supabaseAdmin
-      .from("role_requests")
-      .update({
-        status: input.status,
-        decided_by: req.auth!.userId,
-        decided_at: new Date().toISOString(),
-        decision_reason: input.reason ?? null,
-      })
-      .eq("id", req.params.id)
-      .select("*")
-      .single();
-    if (requestError) throw requestError;
-    if (input.status === "APPROVED") {
-      const { error } = await supabaseAdmin
-        .from("profiles")
-        .update({ role: "MANAGER" })
-        .eq("id", roleRequest.user_id);
-      if (error) throw error;
-    }
-    res.json({ role_request: roleRequest });
-  }),
-);
-
-adminRouter.get(
   "/team-registrations",
   asyncHandler(async (_req, res) => {
     const { data, error } = await supabaseAdmin
@@ -560,7 +521,7 @@ adminRouter.get(
     const { data, error } = await supabaseAdmin
       .from("player_season_registrations")
       .select(
-        "*,players(full_name,date_of_birth,nationality,id_type,id_number_last4,avatar_url),team_registrations(status,teams(name)),player_abilities(*)",
+        "*,players(full_name,date_of_birth,id_type,id_number_last4,avatar_url),team_registrations(status,teams(name)),player_abilities(*)",
       )
       .order("created_at", { ascending: false });
     if (error) throw error;
@@ -588,7 +549,10 @@ adminRouter.get(
           "id,season_id,team_registration_id,position,football_position,shirt_number,players(full_name,avatar_url)",
         )
         .eq("season_id", seasonId),
-      supabaseAdmin.from("standings").select("*").eq("season_id", seasonId),
+      supabaseAdmin
+        .from("season_standings_report")
+        .select("*")
+        .eq("season_id", seasonId),
       supabaseAdmin
         .from("fixtures")
         .select(
@@ -1272,7 +1236,7 @@ adminRouter.post(
     const { data: updated, error: updatedError } = await supabaseAdmin
       .from("player_season_registrations")
       .select(
-        "*,players(full_name,date_of_birth,nationality,id_type,id_number_last4),team_registrations(status,teams(name)),player_abilities(*)",
+        "*,players(full_name,date_of_birth,id_type,id_number_last4),team_registrations(status,teams(name)),player_abilities(*)",
       )
       .in(
         "id",
@@ -1370,7 +1334,6 @@ adminRouter.patch(
   asyncHandler(async (req, res) => {
     const registrationId = routeParam(req.params.id, "Player registration id");
     const reason = requiredBodyText(req.body?.reason, "Rejection reason");
-    const allowResubmission = Boolean(req.body?.allow_resubmission);
     const registration = await getPlayerRegistrationForAction(registrationId);
     const { data, error } = await supabaseAdmin
       .from("player_season_registrations")
@@ -1378,7 +1341,6 @@ adminRouter.patch(
         status: RegistrationStatus.REJECTED,
         player_status: PlayerLifecycleStatus.REJECTED,
         rejection_reason: reason,
-        allow_resubmission: allowResubmission,
         reviewed_by: req.auth!.userId,
         reviewed_at: new Date().toISOString(),
       })
@@ -1768,20 +1730,6 @@ adminRouter.post(
 );
 
 adminRouter.get(
-  "/hidden-attributes",
-  asyncHandler(async (_req, res) => {
-    const { data, error } = await supabaseAdmin
-      .from("player_hidden_attributes")
-      .select(
-        "*,player_season_registrations(players(full_name),team_registrations(teams(name)))",
-      )
-      .order("created_at", { ascending: false });
-    if (error) throw error;
-    res.json({ hidden_attributes: data });
-  }),
-);
-
-adminRouter.get(
   "/seasons/:seasonId/groups",
   asyncHandler(async (req, res) => {
     const season = await loadFixtureSeason(
@@ -1875,6 +1823,12 @@ adminRouter.patch(
     if (flatTeamIds.some((teamId) => !approved.has(teamId)))
       throw new AppError(400, "Only approved teams can be assigned to groups.");
     let existingGroups = await loadSeasonGroups(season.id);
+    if (existingGroups.some((group) => group.locked)) {
+      throw new AppError(
+        400,
+        "Group assignments are locked because group fixtures have already been generated.",
+      );
+    }
     if (existingGroups.length === 0) {
       await recreateGroups(season.id, Number(season.group_count ?? 0));
       existingGroups = await loadSeasonGroups(season.id);
@@ -2142,7 +2096,7 @@ adminRouter.get(
     const { data, error } = await supabaseAdmin
       .from("lineups")
       .select(
-        "id,fixture_id,team_registration_id,side,formation,status,submitted_at,fixtures(id,kickoff_at,stage,status,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))),team_registrations(id,teams(name,short_name,logo_url))",
+        "id,fixture_id,team_registration_id,formation,status,submitted_at,fixtures(id,kickoff_at,stage,status,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))),team_registrations(id,teams(name,short_name,logo_url))",
       )
       .eq("season_id", seasonId)
       .eq("status", "PENDING")
@@ -2389,6 +2343,11 @@ adminRouter.post(
       fixture.id,
       simulationAttempt,
       { home: homeSetPieceTakers, away: awaySetPieceTakers },
+      {
+        // Group-stage and knockout fixtures are neutral. HOME/AWAY remain
+        // participant slots for deterministic lineup, score, and event mapping.
+        applyHomeAdvantage: fixture.stage === "LEAGUE",
+      },
     );
     await persistSimulation(fixture.id, result);
     const { data, error } = await supabaseAdmin
@@ -3302,7 +3261,7 @@ async function getConfirmedLineupPlayers(
   const { data, error } = await supabaseAdmin
     .from("lineup_players")
     .select(
-      "player_registration_id,is_starter,position,football_position,player_season_registrations(player_abilities(*),player_hidden_attributes(*))",
+      "player_registration_id,is_starter,position,football_position,player_season_registrations(player_abilities(*))",
     )
     .eq("lineup_id", lineup.id);
   if (error) throw error;
@@ -3313,13 +3272,10 @@ async function getConfirmedLineupPlayers(
     const ability = Array.isArray(reg?.player_abilities)
       ? reg.player_abilities[0]
       : reg?.player_abilities;
-    const attrs = Array.isArray(reg?.player_hidden_attributes)
-      ? reg.player_hidden_attributes[0]
-      : reg?.player_hidden_attributes;
-    if (!ability && !attrs)
+    if (!ability)
       throw new AppError(
         400,
-        "Every lineup player must have generated hidden abilities",
+        "Every lineup player must have generated player abilities",
       );
     return {
       player_registration_id: row.player_registration_id,
@@ -3330,22 +3286,21 @@ async function getConfirmedLineupPlayers(
         coarseToFootballPosition(row.position),
       side,
       is_starter: row.is_starter,
-      pace: ability?.pace ?? attrs?.pace ?? 40,
-      shooting: ability?.shooting ?? attrs?.shooting ?? 40,
-      passing:
-        ability?.passing ?? ability?.distribution ?? attrs?.passing ?? 40,
-      dribbling: ability?.dribbling ?? attrs?.dribbling ?? 40,
-      defending: ability?.defending ?? attrs?.defending ?? 40,
-      physical: ability?.physical ?? attrs?.physical ?? 40,
-      stamina: ability?.stamina ?? attrs?.physical ?? 40,
-      goalkeeping: ability?.shot_stopping ?? attrs?.goalkeeping ?? 40,
-      shot_stopping: ability?.shot_stopping ?? attrs?.goalkeeping ?? undefined,
-      reflexes: ability?.reflexes ?? attrs?.goalkeeping ?? undefined,
-      positioning: ability?.positioning ?? attrs?.goalkeeping ?? undefined,
-      handling: ability?.handling ?? attrs?.goalkeeping ?? undefined,
-      diving: ability?.diving ?? attrs?.goalkeeping ?? undefined,
-      distribution: ability?.distribution ?? attrs?.passing ?? undefined,
-      communication: ability?.communication ?? attrs?.physical ?? undefined,
+      pace: ability.pace ?? 40,
+      shooting: ability.shooting ?? 40,
+      passing: ability.passing ?? ability.distribution ?? 40,
+      dribbling: ability.dribbling ?? 40,
+      defending: ability.defending ?? 40,
+      physical: ability.physical ?? 40,
+      stamina: ability.stamina ?? ability.physical ?? 40,
+      goalkeeping: ability.shot_stopping ?? 40,
+      shot_stopping: ability.shot_stopping ?? undefined,
+      reflexes: ability.reflexes ?? undefined,
+      positioning: ability.positioning ?? undefined,
+      handling: ability.handling ?? undefined,
+      diving: ability.diving ?? undefined,
+      distribution: ability.distribution ?? undefined,
+      communication: ability.communication ?? undefined,
     };
   });
 }
@@ -3608,6 +3563,7 @@ async function loadSeasonGroups(seasonId: string): Promise<FixtureGroup[]> {
   return (data ?? []).map((group) => ({
     id: group.id,
     name: group.name,
+    locked: group.locked === true,
     teams: ((group.season_group_teams ?? []) as Array<Record<string, unknown>>)
       .sort((a, b) => Number(a.seed_no ?? 0) - Number(b.seed_no ?? 0))
       .map((groupTeam) => {
@@ -3635,6 +3591,12 @@ async function loadSeasonGroups(seasonId: string): Promise<FixtureGroup[]> {
 
 async function recreateGroups(seasonId: string, groupCount: number) {
   const existing = await loadSeasonGroups(seasonId);
+  if (existing.some((group) => group.locked)) {
+    throw new AppError(
+      400,
+      "Groups are locked because group fixtures have already been generated.",
+    );
+  }
   if (existing.length > 0) {
     const { error } = await supabaseAdmin
       .from("season_groups")
@@ -3729,23 +3691,20 @@ async function buildKnockoutPreview(season: Record<string, unknown>) {
     );
   }
   const groups = await loadSeasonGroups(String(season.id));
-  const { data: standings, error } = await supabaseAdmin
-    .from("standings")
-    .select("*")
-    .eq("season_id", String(season.id));
-  if (error) throw error;
+  const standings = await loadSeasonStandings(String(season.id));
   const standingByTeam = new Map(
-    (standings ?? []).map((row) => [row.team_registration_id, row]),
+    standings.map((row) => [row.team_registration_id, row]),
   );
   const qualifiersPerGroup = Number(season.qualifiers_per_group ?? 0);
   const qualifiers = groups.flatMap((group) => {
-    const ranked = [...group.teams].sort((a, b) =>
-      compareStanding(standingByTeam.get(a.id), standingByTeam.get(b.id)),
-    );
-    return ranked.slice(0, qualifiersPerGroup).map((team, index) => ({
+    const ranked = group.teams
+      .map((team) => standingByTeam.get(team.id))
+      .filter((row): row is NonNullable<typeof row> => Boolean(row))
+      .sort((a, b) => a.position - b.position);
+    return ranked.slice(0, qualifiersPerGroup).map((standing, index) => ({
       groupName: group.name,
       rank: index + 1,
-      team_registration_id: team.id,
+      team_registration_id: standing.team_registration_id,
     }));
   });
   assertPowerOfTwoQualifiers(qualifiers.length);
@@ -3757,20 +3716,6 @@ async function buildKnockoutPreview(season: Record<string, unknown>) {
     ),
     endDate: String(season.end_date ?? ""),
   });
-}
-
-function compareStanding(
-  a?: Record<string, unknown>,
-  b?: Record<string, unknown>,
-) {
-  const pointDiff = Number(b?.points ?? 0) - Number(a?.points ?? 0);
-  if (pointDiff) return pointDiff;
-  const gdDiff =
-    Number(b?.goal_difference ?? 0) - Number(a?.goal_difference ?? 0);
-  if (gdDiff) return gdDiff;
-  const gfDiff = Number(b?.goals_for ?? 0) - Number(a?.goals_for ?? 0);
-  if (gfDiff) return gfDiff;
-  return Number(a?.fair_play_score ?? 0) - Number(b?.fair_play_score ?? 0);
 }
 
 function nextDateAfterFixtures(
@@ -4028,21 +3973,36 @@ async function maybeSetChampion(seasonId: string) {
     .limit(1);
   if (unfinishedError) throw unfinishedError;
   if ((unfinished ?? []).length > 0) return;
-  const { data: standings, error } = await supabaseAdmin
-    .from("standings")
-    .select("*")
-    .eq("season_id", seasonId)
-    .order("points", { ascending: false })
-    .order("goal_difference", { ascending: false })
-    .order("goals_for", { ascending: false })
-    .order("fair_play_score", { ascending: true })
-    .limit(1);
-  if (error) throw error;
-  const champion = standings?.[0];
-  if (!champion) return;
-  const { error: seasonError } = await supabaseAdmin
+
+  const { data: season, error: seasonError } = await supabaseAdmin
     .from("seasons")
-    .update({ champion_team_registration_id: champion.team_registration_id })
-    .eq("id", seasonId);
+    .select("format")
+    .eq("id", seasonId)
+    .single();
   if (seasonError) throw seasonError;
+
+  let championTeamRegistrationId: string | null = null;
+  if (season.format === SeasonFormat.GROUP_STAGE_KNOCKOUT) {
+    const { data: finalFixture, error: finalError } = await supabaseAdmin
+      .from("fixtures")
+      .select("winner_team_registration_id")
+      .eq("season_id", seasonId)
+      .eq("stage", "FINAL")
+      .eq("result_confirmed", true)
+      .maybeSingle();
+    if (finalError) throw finalError;
+    championTeamRegistrationId =
+      finalFixture?.winner_team_registration_id ?? null;
+  } else {
+    const rankedStandings = await loadSeasonStandings(seasonId);
+    championTeamRegistrationId =
+      rankedStandings[0]?.team_registration_id ?? null;
+  }
+
+  if (!championTeamRegistrationId) return;
+  const { error: updateError } = await supabaseAdmin
+    .from("seasons")
+    .update({ champion_team_registration_id: championTeamRegistrationId })
+    .eq("id", seasonId);
+  if (updateError) throw updateError;
 }

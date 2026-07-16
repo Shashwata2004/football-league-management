@@ -6,6 +6,10 @@ import {
   VenueSide,
 } from "@flms/shared";
 import {
+  expectedGoalBaselines,
+  LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS,
+  matchEventRequiresRelatedPlayer,
+  NEUTRAL_EXPECTED_GOALS_BASELINE,
   OWN_GOAL_RATING_PENALTY,
   simulateMatch,
   type SimPlayer,
@@ -100,6 +104,39 @@ function assertTeamTotals(
 }
 
 describe("match-stat simulator", () => {
+  it("applies the scoring advantage only when explicitly enabled", () => {
+    const leagueBaselines = expectedGoalBaselines(true);
+    const neutralBaselines = expectedGoalBaselines(false);
+
+    expect(leagueBaselines.home).toBeCloseTo(
+      NEUTRAL_EXPECTED_GOALS_BASELINE +
+        LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS,
+    );
+    expect(leagueBaselines.away).toBeCloseTo(
+      NEUTRAL_EXPECTED_GOALS_BASELINE,
+    );
+    expect(neutralBaselines.home).toBeCloseTo(
+      NEUTRAL_EXPECTED_GOALS_BASELINE,
+    );
+    expect(neutralBaselines.away).toBeCloseTo(
+      NEUTRAL_EXPECTED_GOALS_BASELINE,
+    );
+  });
+
+  it("identifies event types that require a related player", () => {
+    expect(matchEventRequiresRelatedPlayer(MatchEventType.ASSIST)).toBe(true);
+    expect(matchEventRequiresRelatedPlayer(MatchEventType.SUBSTITUTION)).toBe(
+      true,
+    );
+    expect(
+      matchEventRequiresRelatedPlayer(MatchEventType.PENALTY_SAVED),
+    ).toBe(true);
+    expect(matchEventRequiresRelatedPlayer(MatchEventType.GOAL)).toBe(false);
+    expect(matchEventRequiresRelatedPlayer(MatchEventType.OWN_GOAL)).toBe(
+      false,
+    );
+  });
+
   it("is reproducible for the same seed and attempt", () => {
     const first = simulateMatch(
       players(VenueSide.HOME),
@@ -430,16 +467,21 @@ describe("match-stat simulator", () => {
       players(VenueSide.HOME, 56),
       players(VenueSide.AWAY, 82),
       "upset-2",
+      1,
+      {},
+      { applyHomeAdvantage: true },
     );
     expect(result.home_score).toBeGreaterThan(result.away_score);
   });
 
   it("records penalties and permits used substitutes to contribute", () => {
     let penaltyResult: ReturnType<typeof simulateMatch> | null = null;
+    let savedPenaltyResult: ReturnType<typeof simulateMatch> | null = null;
     let substituteContribution: ReturnType<typeof simulateMatch> | null = null;
     for (
       let index = 0;
-      index < 400 && (!penaltyResult || !substituteContribution);
+      index < 400 &&
+      (!penaltyResult || !savedPenaltyResult || !substituteContribution);
       index += 1
     ) {
       const result = simulateMatch(
@@ -456,6 +498,13 @@ describe("match-stat simulator", () => {
         )
       )
         penaltyResult = result;
+      if (
+        result.events.some(
+          (event) => event.type === MatchEventType.PENALTY_SAVED,
+        )
+      ) {
+        savedPenaltyResult = result;
+      }
       const incoming = new Set(
         result.substitutions.map((sub) => sub.player_in_registration_id),
       );
@@ -474,6 +523,7 @@ describe("match-stat simulator", () => {
         substituteContribution = result;
     }
     expect(penaltyResult).toBeTruthy();
+    expect(savedPenaltyResult).toBeTruthy();
     expect(substituteContribution).toBeTruthy();
     const penaltyGoals = penaltyResult!.events.filter(
       (event) => event.type === MatchEventType.PENALTY_GOAL,
@@ -484,6 +534,27 @@ describe("match-stat simulator", () => {
       )!;
       expect(scorer.penalty_scored).toBeGreaterThan(0);
     }
+    const savedPenalty = savedPenaltyResult!.events.find(
+      (event) => event.type === MatchEventType.PENALTY_SAVED,
+    )!;
+    const savedPenaltyOpponentIds =
+      savedPenalty.side === VenueSide.HOME
+        ? new Set(
+            players(VenueSide.AWAY).map(
+              (player) => player.player_registration_id,
+            ),
+          )
+        : new Set(
+            players(VenueSide.HOME).map(
+              (player) => player.player_registration_id,
+            ),
+          );
+    expect(savedPenalty.related_player_registration_id).toBeTruthy();
+    expect(
+      savedPenaltyOpponentIds.has(
+        savedPenalty.related_player_registration_id!,
+      ),
+    ).toBe(true);
   });
 
   it("attributes own goals to an active opponent and applies a major rating penalty", () => {

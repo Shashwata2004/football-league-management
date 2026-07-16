@@ -44,17 +44,12 @@ begin
   select count(*)
   into invalid_standings_totals
   from public.standings
-  where played < 0
-    or won < 0
+  where won < 0
     or drawn < 0
     or lost < 0
     or goals_for < 0
     or goals_against < 0
-    or points < 0
-    or fair_play_score < 0
-    or played <> won + drawn + lost
-    or goal_difference <> goals_for - goals_against
-    or points <> won * 3 + drawn
+    or fair_play_score > 0
     or (admin_draw_rank is not null and admin_draw_rank <= 0);
 
   if orphan_standings_teams > 0
@@ -179,33 +174,17 @@ begin
     alter table public.standings
       add constraint standings_non_negative_totals_check
       check (
-        played >= 0
-        and won >= 0
+        won >= 0
         and drawn >= 0
         and lost >= 0
         and goals_for >= 0
         and goals_against >= 0
-        and points >= 0
-        and fair_play_score >= 0
       )
       not valid;
   end if;
 
-  if not exists (
-    select 1
-    from pg_constraint
-    where conrelid = 'public.standings'::regclass
-      and conname = 'standings_record_consistency_check'
-  ) then
-    alter table public.standings
-      add constraint standings_record_consistency_check
-      check (
-        played = won + drawn + lost
-        and goal_difference = goals_for - goals_against
-        and points = won * 3 + drawn
-      )
-      not valid;
-  end if;
+  alter table public.standings
+    drop constraint if exists standings_record_consistency_check;
 
   if not exists (
     select 1
@@ -229,9 +208,6 @@ alter table public.seasons
 
 alter table public.standings
   validate constraint standings_non_negative_totals_check;
-
-alter table public.standings
-  validate constraint standings_record_consistency_check;
 
 alter table public.standings
   validate constraint standings_admin_draw_rank_check;

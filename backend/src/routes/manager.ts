@@ -4,7 +4,6 @@ import {
   FixtureStatus,
   FootballPosition,
   generateSquadSchema,
-  hiddenAttributesSchema,
   IdType,
   lineupSubmissionSchema,
   PlayerLifecycleStatus,
@@ -57,6 +56,11 @@ import {
   isLineupSubmissionOpen,
   nextLineupFixture,
 } from "../domain/lineup-eligibility.js";
+import {
+  loadSeasonStandings,
+  standingReportToApiRow,
+  type StandingReportRow,
+} from "../services/standings-report.js";
 
 export const managerRouter = Router();
 managerRouter.use(requireAuth, requireRole(UserRole.MANAGER, UserRole.ADMIN));
@@ -630,7 +634,7 @@ async function loadTeamPlayers(teamRegistrationId: string): Promise<any[]> {
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*)",
+      "id,player_id,season_id,team_registration_id,position,football_position,position_category,shirt_number,status,preferred_foot,player_status,player_code,identity_mode,is_generated,created_by_manager_id,created_at,updated_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*)",
     )
     .eq("team_registration_id", teamRegistrationId)
     .order("shirt_number", { ascending: true, nullsFirst: false });
@@ -794,7 +798,7 @@ async function assertManagerOwnsPlayerRegistration(
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,status,shirt_number,football_position,position_category,preferred_foot,player_status,identity_mode,is_generated,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*),team_registrations!inner(id,manager_id,season_id,team_id,teams(*),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
+      "id,player_id,season_id,team_registration_id,status,shirt_number,football_position,position_category,preferred_foot,player_status,identity_mode,is_generated,players(id,full_name,date_of_birth,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*),team_registrations!inner(id,manager_id,season_id,team_id,teams(*),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
     )
     .eq("id", playerRegistrationId)
     .single();
@@ -813,7 +817,7 @@ async function loadManagerVisiblePlayerRegistration(
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,status,shirt_number,position,football_position,position_category,preferred_foot,player_status,player_code,identity_mode,is_generated,created_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,nationality,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(overall_rating),team_registrations!inner(id,manager_id,season_id,team_id,teams(id,name,short_name,logo_url,primary_color,secondary_color,accent_color),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
+      "id,player_id,season_id,team_registration_id,status,shirt_number,position,football_position,position_category,preferred_foot,player_status,player_code,identity_mode,is_generated,created_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(overall_rating),team_registrations!inner(id,manager_id,season_id,team_id,teams(id,name,short_name,logo_url,primary_color,secondary_color,accent_color),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
     )
     .eq("id", playerRegistrationId)
     .single();
@@ -1185,7 +1189,6 @@ async function persistSubmittedLineup(
       {
         fixture_id: input.fixture_id,
         team_registration_id: input.team_registration_id,
-        side: input.side,
         season_id: seasonId,
         manager_id: managerId,
         formation: input.formation,
@@ -1227,7 +1230,6 @@ async function persistSubmittedLineup(
         lineup_id: stagedLineup.id,
         player_registration_id: player.player_registration_id,
         is_starter: player.is_starter,
-        is_substitute: !player.is_starter,
         position: player.position,
         football_position: player.player_natural_position ?? null,
         player_natural_position: player.player_natural_position ?? null,
@@ -1440,7 +1442,7 @@ managerRouter.get(
     const [
       { data: fixtures, error: fixturesError },
       { data: results, error: resultsError },
-      { data: standings, error: standingsError },
+      standings,
       { data: messages, error: messagesError },
     ] = await Promise.all([
       supabaseAdmin
@@ -1469,10 +1471,7 @@ managerRouter.get(
         .eq("status", FixtureStatus.FINAL)
         .order("finalized_at", { ascending: false, nullsFirst: false })
         .limit(5),
-      supabaseAdmin
-        .from("standings")
-        .select("*,team_registrations(id,teams(name,short_name,logo_url))")
-        .eq("season_id", activeTeam.season_id),
+      loadSeasonStandings(activeTeam.season_id),
       supabaseAdmin
         .from("manager_messages")
         .select(
@@ -1484,7 +1483,6 @@ managerRouter.get(
     ]);
     if (fixturesError) throw fixturesError;
     if (resultsError) throw resultsError;
-    if (standingsError) throw standingsError;
     if (messagesError) throw messagesError;
 
     const counts = statusCounts(players);
@@ -1507,7 +1505,7 @@ managerRouter.get(
       },
       fixtures: fixtures ?? [],
       results: results ?? [],
-      standings: standings ?? [],
+      standings,
       messages: messages ?? [],
     });
   }),
@@ -1931,7 +1929,6 @@ managerRouter.post(
             seasonYear,
             identitySequence,
           ),
-          nationality: "Bangladesh",
           id_type: idType,
           id_number_hash: generatedHash,
           id_number_last4: identityLast4(generatedIdentityNumber),
@@ -2098,7 +2095,6 @@ managerRouter.post(
         {
           full_name: input.full_name,
           date_of_birth: input.date_of_birth,
-          nationality: input.nationality ?? "Bangladesh",
           id_type: input.id_type,
           id_number_hash: idHash,
           id_number_last4: last4,
@@ -2142,19 +2138,6 @@ managerRouter.post(
       .single();
     if (codeError) throw codeError;
 
-    if (input.proof_storage_path) {
-      const { error: proofError } = await supabaseAdmin
-        .from("identity_proofs")
-        .insert({
-          player_id: player.id,
-          submitted_by: req.auth!.userId,
-          id_type: input.id_type,
-          id_number_hash: idHash,
-          id_number_last4: last4,
-          storage_path: input.proof_storage_path,
-        });
-      if (proofError) throw proofError;
-    }
     if (teamRegistration.status === RegistrationStatus.DRAFT) {
       const { error: teamStatusError } = await supabaseAdmin
         .from("team_registrations")
@@ -2514,15 +2497,8 @@ managerRouter.get(
         ? req.query.seasonId
         : relatedOne(teams[0]?.seasons)?.id;
     if (!seasonId) return res.json({ standings: [] });
-    const { data, error } = await supabaseAdmin
-      .from("standings")
-      .select("*,team_registrations(id,teams(name,short_name,logo_url))")
-      .eq("season_id", seasonId)
-      .order("points", { ascending: false })
-      .order("goal_difference", { ascending: false })
-      .order("goals_for", { ascending: false });
-    if (error) throw error;
-    res.json({ standings: data ?? [] });
+    const standings = await loadSeasonStandings(seasonId);
+    res.json({ standings });
   }),
 );
 
@@ -2551,7 +2527,10 @@ managerRouter.get(
           "id,season_id,team_registration_id,position,football_position,shirt_number,players(full_name,avatar_url)",
         )
         .eq("season_id", seasonId),
-      supabaseAdmin.from("standings").select("*").eq("season_id", seasonId),
+      supabaseAdmin
+        .from("season_standings_report")
+        .select("*")
+        .eq("season_id", seasonId),
       supabaseAdmin
         .from("fixtures")
         .select(
@@ -3289,12 +3268,6 @@ managerRouter.post(
       fixture.id,
       true,
     );
-    const expectedSide =
-      fixture.home_team_registration_id === input.team_registration_id
-        ? "HOME"
-        : "AWAY";
-    if (input.side !== expectedSide)
-      throw new AppError(400, "Lineup side does not match fixture assignment");
     const { data: existingLineup, error: existingLineupError } =
       await supabaseAdmin
         .from("lineups")
@@ -3395,7 +3368,6 @@ managerRouter.post(
         {
           full_name: input.full_name,
           date_of_birth: input.date_of_birth,
-          nationality: input.nationality ?? null,
           id_type: input.id_type,
           id_number_hash: idHash,
           id_number_last4: last4,
@@ -3420,19 +3392,6 @@ managerRouter.post(
       .single();
     if (error) throw error;
 
-    if (input.proof_storage_path) {
-      const { error: proofError } = await supabaseAdmin
-        .from("identity_proofs")
-        .insert({
-          player_id: player.id,
-          submitted_by: req.auth!.userId,
-          id_type: input.id_type,
-          id_number_hash: idHash,
-          id_number_last4: last4,
-          storage_path: input.proof_storage_path,
-        });
-      if (proofError) throw proofError;
-    }
     if (teamRegistration.status === RegistrationStatus.DRAFT) {
       const { error: teamStatusError } = await supabaseAdmin
         .from("team_registrations")
@@ -3445,50 +3404,6 @@ managerRouter.post(
     }
 
     res.status(201).json({ player_registration: registration });
-  }),
-);
-
-managerRouter.post(
-  "/hidden-attributes",
-  asyncHandler(async (req, res) => {
-    const input = hiddenAttributesSchema.parse(req.body);
-    const { data: playerReg, error: regError } = await supabaseAdmin
-      .from("player_season_registrations")
-      .select("id,team_registration_id,status")
-      .eq("id", input.player_registration_id)
-      .single();
-    if (regError) throw regError;
-    await assertManagerOwnsTeam(
-      req.auth!.userId,
-      playerReg.team_registration_id,
-    );
-    if (playerReg.status === "APPROVED") {
-      throw new AppError(
-        403,
-        "Hidden attributes can only be changed by managers before admin player approval",
-      );
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from("player_hidden_attributes")
-      .upsert(
-        {
-          player_registration_id: input.player_registration_id,
-          submitted_by: req.auth!.userId,
-          pace: input.pace,
-          shooting: input.shooting,
-          passing: input.passing,
-          dribbling: input.dribbling,
-          defending: input.defending,
-          physical: input.physical,
-          goalkeeping: input.goalkeeping,
-        },
-        { onConflict: "player_registration_id" },
-      )
-      .select("*")
-      .single();
-    if (error) throw error;
-    res.json({ hidden_attributes: data });
   }),
 );
 
@@ -3522,12 +3437,6 @@ managerRouter.post(
       fixture.id,
       true,
     );
-    const expectedSide =
-      fixture.home_team_registration_id === input.team_registration_id
-        ? "HOME"
-        : "AWAY";
-    if (input.side !== expectedSide)
-      throw new AppError(400, "Lineup side does not match fixture assignment");
     const { data: existingLineup, error: existingLineupError } =
       await supabaseAdmin
         .from("lineups")
@@ -3605,7 +3514,7 @@ managerRouter.get(
     if (ids.length === 0) return res.json({ standings: [], player_stats: [] });
 
     const { data: standings, error: standingsError } = await supabaseAdmin
-      .from("standings")
+      .from("season_standings_report")
       .select("*")
       .in("team_registration_id", ids);
     if (standingsError) throw standingsError;
@@ -3617,6 +3526,11 @@ managerRouter.get(
       )
       .in("player_season_registrations.team_registration_id", ids);
     if (playerError) throw playerError;
-    res.json({ standings, player_stats: players });
+    res.json({
+      standings: ((standings ?? []) as StandingReportRow[]).map(
+        standingReportToApiRow,
+      ),
+      player_stats: players,
+    });
   }),
 );

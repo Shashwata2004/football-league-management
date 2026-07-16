@@ -48,47 +48,51 @@ or stable business rule.
 10. Standings values obey standard football arithmetic:
     `played = won + drawn + lost`,
     `goal_difference = goals_for - goals_against`, and
-    `points = 3 * won + drawn`.
+    `points = 3 * won + drawn`. Fair-play starts at zero and card penalties
+    reduce the score, so `fair_play_score <= 0`.
 11. Copied scope and snapshot attributes are intentional operational
     denormalizations unless stated otherwise.
+
+The canonical standings order is identical for league and group-stage tables:
+higher points, higher goal difference, higher goals scored, higher head-to-head
+points among teams tied on those three totals, higher fair-play score, and then
+lower positive `admin_draw_rank`. Knockout results are excluded from group
+head-to-head calculations.
 
 ## 4. Candidate keys
 
 The following table lists the important minimal keys. Every base relation also
 has the surrogate key `id`, unless noted otherwise.
 
-| Relation | Additional candidate or conditional keys |
-| --- | --- |
-| `profiles` | None declared |
-| `app_users` | `email` |
-| `app_managers` | `email` |
-| `app_admins` | `email` |
-| `role_requests` | `(user_id, requested_role)` while `status = 'PENDING'` |
-| `leagues` | None declared |
-| `seasons` | None declared |
-| `teams` | None; `(id, manager_id)` is a referenced superkey, not a minimal candidate key |
-| `team_registrations` | `(season_id, team_id)` |
-| `players` | `id_number_hash` when non-null; `generated_identity_number` when non-null |
-| `identity_proofs` | None declared |
+| Relation                      | Additional candidate or conditional keys                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `profiles`                    | None declared                                                                                                            |
+| `app_users`                   | `email`                                                                                                                  |
+| `app_managers`                | `email`                                                                                                                  |
+| `app_admins`                  | `email`                                                                                                                  |
+| `leagues`                     | None declared                                                                                                            |
+| `seasons`                     | None declared                                                                                                            |
+| `teams`                       | None; `(id, manager_id)` is a referenced superkey, not a minimal candidate key                                           |
+| `team_registrations`          | `(season_id, team_id)`                                                                                                   |
+| `players`                     | `id_number_hash` when non-null; `generated_identity_number` when non-null                                                |
 | `player_season_registrations` | `(season_id, player_id)`; `player_code` when non-null; `(team_registration_id, shirt_number)` for an active squad member |
-| `player_hidden_attributes` | `player_registration_id` |
-| `player_abilities` | `player_registration_id` |
-| `season_groups` | `(season_id, name)` |
-| `fixtures` | None beyond `id`; `(id, season_id)` is a referenced superkey |
-| `lineups` | `(fixture_id, team_registration_id)` and `(fixture_id, side)` |
-| `lineup_players` | `(lineup_id, player_registration_id)`; `(lineup_id, slot_key)` for a starter with a slot |
-| `lineup_set_piece_takers` | `(lineup_id, set_piece_type, priority)` and `(lineup_id, set_piece_type, player_registration_id)` |
-| `manager_team_preferences` | `team_registration_id` under the enforced manager/season scope rule |
-| `team_match_stats` | `(fixture_id, team_registration_id)` |
-| `player_match_stats` | `(fixture_id, player_registration_id)` |
-| `match_events` | None declared |
-| `match_substitutions` | `(fixture_id, player_out_registration_id)` and `(fixture_id, player_in_registration_id)` |
-| `match_injuries` | `(fixture_id, player_registration_id)` |
-| `player_suspensions` | `player_registration_id` only for an active suspension |
-| `standings` | `team_registration_id` under the registration-season FD; physically declared as `(season_id, team_registration_id)` |
-| `player_season_stats` | `player_registration_id` under the registration-season FD; physically declared as `(season_id, player_registration_id)` |
-| `manager_messages` | `notification_key` when non-null |
-| `season_group_teams` | `team_registration_id`; also `(group_id, team_registration_id)` |
+| `player_abilities`            | `player_registration_id`                                                                                                 |
+| `season_groups`               | `(season_id, name)`                                                                                                      |
+| `fixtures`                    | None beyond `id`; `(id, season_id)` is a referenced superkey                                                             |
+| `lineups`                     | `(fixture_id, team_registration_id)`                                                                                     |
+| `lineup_players`              | `(lineup_id, player_registration_id)`; `(lineup_id, slot_key)` for a starter with a slot                                 |
+| `lineup_set_piece_takers`     | `(lineup_id, set_piece_type, priority)` and `(lineup_id, set_piece_type, player_registration_id)`                        |
+| `manager_team_preferences`    | `team_registration_id` under the enforced manager/season scope rule                                                      |
+| `team_match_stats`            | `(fixture_id, team_registration_id)`                                                                                     |
+| `player_match_stats`          | `(fixture_id, player_registration_id)`                                                                                   |
+| `match_events`                | None declared                                                                                                            |
+| `match_substitutions`         | `(fixture_id, player_out_registration_id)` and `(fixture_id, player_in_registration_id)`                                 |
+| `match_injuries`              | `(fixture_id, player_registration_id)`                                                                                   |
+| `player_suspensions`          | `player_registration_id` only for an active suspension                                                                   |
+| `standings`                   | `team_registration_id` under the registration-season FD; physically declared as `(season_id, team_registration_id)`      |
+| `player_season_stats`         | `player_registration_id` under the registration-season FD; physically declared as `(season_id, player_registration_id)`  |
+| `manager_messages`            | `notification_key` when non-null                                                                                         |
+| `season_group_teams`          | `team_registration_id`; also `(group_id, team_registration_id)`                                                          |
 
 ## 5. Non-trivial functional dependencies
 
@@ -112,16 +116,6 @@ app_admins:
   id -> email, full_name, password_hash, created_at, updated_at
   email -> id
 
-role_requests:
-  id -> user_id, requested_role, status, reason, decision_reason,
-        decided_by, decided_at, created_at
-```
-
-The pending-role partial unique index introduces the conditional FD:
-
-```text
-(user_id, requested_role) -> id, reason, created_at
-when status = 'PENDING'
 ```
 
 ### 5.2 Competition and team relations
@@ -154,6 +148,10 @@ season_group_teams:
   team_registration_id -> id
 ```
 
+`season_groups.locked` is an enforced lifecycle state. Creating a group-stage
+fixture automatically locks its group. Once locked, the group cannot be
+renamed, deleted, unlocked, or have its team assignments changed.
+
 For a group-stage/knockout season, the check constraint introduces this
 conditional derived FD:
 
@@ -167,14 +165,10 @@ when format = 'GROUP_STAGE_KNOCKOUT'
 
 ```text
 players:
-  id -> full_name, date_of_birth, nationality, identity attributes,
+  id -> full_name, date_of_birth, identity attributes,
         avatar_url, timestamps
   id_number_hash -> id                     when id_number_hash is non-null
   generated_identity_number -> id          when generated_identity_number is non-null
-
-identity_proofs:
-  id -> player_id, submitted_by, id_type, identity hash/last4,
-        storage_path, created_at
 
 player_season_registrations:
   id -> player_id, season_id, team_registration_id, player state,
@@ -183,10 +177,6 @@ player_season_registrations:
   (season_id, player_id) -> id
   team_registration_id -> season_id
   player_code -> id                         when player_code is non-null
-
-player_hidden_attributes:
-  id -> player_registration_id, submitted_by, hidden ratings, timestamps
-  player_registration_id -> id
 
 player_abilities:
   id -> player_registration_id, player_id, season_id,
@@ -209,21 +199,19 @@ fixtures:
   group_id -> season_id, group_name         when group_id is non-null
 
 lineups:
-  id -> fixture_id, team_registration_id, season_id, manager_id, side,
+  id -> fixture_id, team_registration_id, season_id, manager_id,
         formation, style, captain, workflow state, timestamps
   (fixture_id, team_registration_id) -> id
-  (fixture_id, side) -> id
   fixture_id -> season_id
   team_registration_id -> season_id, manager_id
-  (fixture_id, side) -> team_registration_id
 
 lineup_players:
   id -> lineup_id, player_registration_id, starter/substitute state,
         lineup position, snapshot/display attributes, timestamps
   (lineup_id, player_registration_id) -> id
   (lineup_id, slot_key) -> id               for a starter with a slot
-  is_starter -> is_substitute
-  player_registration_id -> shirt_number, player_natural_position
+  player_registration_id -> shirt_number
+  player_registration_id -> player_natural_position
                                                 if these are treated as copied values
 
 lineup_set_piece_takers:
@@ -239,10 +227,19 @@ manager_team_preferences:
   team_registration_id -> id
 ```
 
-The copied player fields do not create a dependency on the current
-registration when they are defined as historical lineup snapshots. However,
-`is_substitute = NOT is_starter` is always enforced, so the relation still
-contains one exact non-key derived dependency.
+`lineups` does not duplicate fixture-side information. The lineup is identified
+by `team_registration_id`; league HOME/AWAY labels are derived by comparing
+that ID with the fixture's home and away participant IDs.
+
+The database copies the authoritative registered shirt number when the lineup
+row is inserted, so every lineup contains the number worn for that submitted
+snapshot. Other copied player fields do not create a dependency on the current
+registration when they are defined as historical lineup snapshots.
+
+`slot_key` is conditionally mandatory: starters must have a tactical formation
+slot, while non-starters must have `NULL` because they are on the bench. This
+conditional nullability does not violate a normal form; it represents two
+valid role states enforced by a check constraint.
 
 ### 5.5 Match and statistics relations
 
@@ -281,13 +278,10 @@ player_suspensions:
   player_registration_id -> team_registration_id, season_id
 
 standings:
-  id -> season_id, team_registration_id, result totals,
-        fair-play state, rank, updated_at
+  id -> season_id, team_registration_id, won, drawn, lost,
+        goals_for, goals_against, fair_play_score, admin_draw_rank, updated_at
   team_registration_id -> season_id
   team_registration_id -> id
-  (won, drawn, lost) -> played
-  (goals_for, goals_against) -> goal_difference
-  (won, drawn) -> points
 
 player_season_stats:
   id -> season_id, player_registration_id, all season aggregates, updated_at
@@ -295,9 +289,9 @@ player_season_stats:
   player_registration_id -> id
 ```
 
-`team_match_stats.shots_off_target` and the three calculated standings fields
-are exact derived values because database check constraints enforce the
-equations.
+`team_match_stats.shots_off_target` remains an exact stored derived value.
+Standings arithmetic fields are no longer stored in the base relation; the
+canonical `season_standings_report` view calculates them.
 
 ### 5.6 Notification relation
 
@@ -370,13 +364,12 @@ team_registration_id -> id
 id -> won, drawn, lost, goals_for, goals_against,
       fair_play_score, admin_draw_rank, updated_at
 team_registration_id -> season_id
-(won, drawn, lost) -> played
-(goals_for, goals_against) -> goal_difference
-(won, drawn) -> points
 ```
 
-The calculated-value dependencies cannot be derived from the key dependencies,
-so they remain in the canonical cover.
+Both determinants are candidate keys under the enforced registration-season
+scope. The stored `standings` relation is therefore in BCNF. `played`,
+`goal_difference`, `points`, head-to-head points, and position belong only to
+the derived reporting view and do not affect the base relation’s normal form.
 
 ### 6.4 `team_match_stats`
 
@@ -420,7 +413,7 @@ For every non-trivial FD `X -> A`, `X` must be a superkey.
 
 ### 8.1 Proof of 1NF
 
-All 30 base relations are in 1NF:
+All 27 base relations are in 1NF:
 
 - columns use atomic PostgreSQL types such as UUID, text, integer, numeric,
   boolean, date, timestamp, and enum;
@@ -432,38 +425,35 @@ All 30 base relations are in 1NF:
 
 ### 8.2 Relation-by-relation result
 
-| Relation | Highest strict normal form | Reason |
-| --- | --- | --- |
-| `profiles` | BCNF | Only the primary key is an unconditional determinant |
-| `app_users` | BCNF | Both `id` and `email` are candidate keys |
-| `app_managers` | BCNF | Both `id` and `email` are candidate keys |
-| `app_admins` | BCNF | Both `id` and `email` are candidate keys |
-| `role_requests` | BCNF | The unconditional relation is key-determined; pending uniqueness is conditional |
-| `leagues` | BCNF | All non-trivial FDs have `id` as determinant |
-| `seasons` | 2NF | Conditional knockout arithmetic determines `total_knockout_teams` from non-key configuration fields |
-| `teams` | BCNF | `id` is the only minimal unconditional determinant |
-| `team_registrations` | 1NF | `team_id -> manager_id` is a partial dependency of candidate key `(season_id, team_id)` |
-| `players` | BCNF | `id` and each non-null unique identity are candidate keys |
-| `identity_proofs` | BCNF | All stored facts describe one proof identified by `id` |
-| `player_season_registrations` | 3NF, not BCNF | `team_registration_id -> season_id`; the dependent `season_id` is prime |
-| `player_hidden_attributes` | BCNF | `id` and `player_registration_id` are candidate keys |
-| `player_abilities` | BCNF | `id` and `player_registration_id` are candidate keys |
-| `season_groups` | BCNF | `id` and `(season_id, name)` are candidate keys |
-| `fixtures` | 2NF | `season_id -> league_id` and `group_id -> season_id, group_name` are non-key dependencies |
-| `lineups` | 1NF | Fixture and team-registration subsets determine copied season/manager scope |
-| `lineup_players` | 2NF as historical snapshot; otherwise 1NF | `is_starter -> is_substitute`; copied registration fields add partial dependencies unless defined as lineup-time snapshots |
-| `lineup_set_piece_takers` | BCNF | Every declared determinant is a candidate key |
-| `manager_team_preferences` | BCNF | The enforced scope makes `team_registration_id` a candidate key |
-| `team_match_stats` | 2NF | `(shots, shots_on_target) -> shots_off_target` is non-key to non-key |
-| `player_match_stats` | BCNF | `id` and `(fixture_id, player_registration_id)` are candidate keys |
-| `match_events` | BCNF | No stable non-key determinant is stored |
-| `match_substitutions` | 1NF | An individual player registration determines copied team scope within composite event keys |
-| `match_injuries` | 1NF | `player_registration_id -> team_registration_id` is partial to `(fixture_id, player_registration_id)` |
-| `player_suspensions` | 2NF | `player_registration_id -> team_registration_id, season_id` is transitive copied scope |
-| `standings` | 2NF | Non-key match totals determine `played`, `goal_difference`, and `points` |
-| `player_season_stats` | BCNF | Registration identifies its season and its one aggregate row |
-| `manager_messages` | 2NF | Optional subject identifiers determine copied manager/season/team scope |
-| `season_group_teams` | BCNF | `team_registration_id` and `id` are candidate keys |
+| Relation                      | Highest strict normal form                | Reason                                                                                                                     |
+| ----------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `profiles`                    | BCNF                                      | Only the primary key is an unconditional determinant                                                                       |
+| `app_users`                   | BCNF                                      | Both `id` and `email` are candidate keys                                                                                   |
+| `app_managers`                | BCNF                                      | Both `id` and `email` are candidate keys                                                                                   |
+| `app_admins`                  | BCNF                                      | Both `id` and `email` are candidate keys                                                                                   |
+| `leagues`                     | BCNF                                      | All non-trivial FDs have `id` as determinant                                                                               |
+| `seasons`                     | 2NF                                       | Conditional knockout arithmetic determines `total_knockout_teams` from non-key configuration fields                        |
+| `teams`                       | BCNF                                      | `id` is the only minimal unconditional determinant                                                                         |
+| `team_registrations`          | 1NF                                       | `team_id -> manager_id` is a partial dependency of candidate key `(season_id, team_id)`                                    |
+| `players`                     | BCNF                                      | `id` and each non-null unique identity are candidate keys                                                                  |
+| `player_season_registrations` | 3NF, not BCNF                             | `team_registration_id -> season_id`; the dependent `season_id` is prime                                                    |
+| `player_abilities`            | BCNF                                      | `id` and `player_registration_id` are candidate keys                                                                       |
+| `season_groups`               | BCNF                                      | `id` and `(season_id, name)` are candidate keys                                                                            |
+| `fixtures`                    | 2NF                                       | `season_id -> league_id` and `group_id -> season_id, group_name` are non-key dependencies                                  |
+| `lineups`                     | 1NF                                       | Fixture and team-registration subsets determine copied season/manager scope                                                |
+| `lineup_players`              | BCNF as historical snapshot; otherwise 1NF | Copied registration fields add partial dependencies unless defined as immutable lineup-time snapshots                      |
+| `lineup_set_piece_takers`     | BCNF                                      | Every declared determinant is a candidate key                                                                              |
+| `manager_team_preferences`    | BCNF                                      | The enforced scope makes `team_registration_id` a candidate key                                                            |
+| `team_match_stats`            | 2NF                                       | `(shots, shots_on_target) -> shots_off_target` is non-key to non-key                                                       |
+| `player_match_stats`          | BCNF                                      | `id` and `(fixture_id, player_registration_id)` are candidate keys                                                         |
+| `match_events`                | BCNF                                      | No stable non-key determinant is stored                                                                                    |
+| `match_substitutions`         | 1NF                                       | An individual player registration determines copied team scope within composite event keys                                 |
+| `match_injuries`              | 1NF                                       | `player_registration_id -> team_registration_id` is partial to `(fixture_id, player_registration_id)`                      |
+| `player_suspensions`          | 2NF                                       | `player_registration_id -> team_registration_id, season_id` is transitive copied scope                                     |
+| `standings`                   | BCNF                                      | Only base totals are stored; both `id` and the scoped team registration identify the row                                   |
+| `player_season_stats`         | BCNF                                      | Registration identifies its season and its one aggregate row                                                               |
+| `manager_messages`            | 2NF                                       | Optional subject identifiers determine copied manager/season/team scope                                                    |
+| `season_group_teams`          | BCNF                                      | `team_registration_id` and `id` are candidate keys                                                                         |
 
 ### 8.3 BCNF proof example
 
@@ -508,16 +498,16 @@ team_registration_id -> season_id
 `season_id` is a prime attribute because it belongs to candidate key
 `(season_id, player_id)`. The FD therefore satisfies the 3NF condition.
 
-### 8.5 3NF violation example
+### 8.5 Resolved standings normalization
 
-For:
+The previous design stored:
 
 ```text
 standings(..., won, drawn, lost, played,
           goals_for, goals_against, goal_difference, points, ...)
 ```
 
-the database enforces:
+which introduced:
 
 ```text
 (won, drawn, lost) -> played
@@ -525,27 +515,26 @@ the database enforces:
 (won, drawn) -> points
 ```
 
-None of these determinants is a superkey, and the dependent attributes are not
-prime. Therefore `standings` is not in 3NF or BCNF. It remains in 2NF because
-the violation is not a partial dependency on a composite candidate key.
+Those three dependent attributes have been removed from the physical table.
+They are calculated by `season_standings_report`, so the update anomaly no
+longer exists and the stored relation now satisfies BCNF.
 
 ## 9. Controlled denormalization and justification
 
 The schema is not honestly describable as “every table is in BCNF.” Several
 relations intentionally store derived or copied values:
 
-| Relation | Stored redundancy | Operational reason |
-| --- | --- | --- |
-| `team_registrations` | `manager_id` copied from the team | Ownership enforcement and direct manager filtering |
-| `seasons` | calculated knockout-team total | Configuration validation and administration UI |
-| `fixtures` | `league_id` and `group_name` copied from parents | Fast fixture filtering and stable display labels |
-| `lineups` | season, manager, side, and participant scope | Safe authorization and immutable submitted-lineup scope |
-| `lineup_players` | shirt/position display snapshots | Preserve the submitted lineup presentation |
-| `team_match_stats` | `shots_off_target` | Direct dashboard reporting with an enforced equation |
-| `match_substitutions` and `match_injuries` | copied team scope | Participant validation and efficient team match queries |
-| `player_suspensions` | copied team and season scope | Fast eligibility checks |
-| `standings` | played, goal difference, and points | Fast ordering and public table display |
-| `manager_messages` | copied subject scope | Secure, efficient manager inbox filtering |
+| Relation                                   | Stored redundancy                                | Operational reason                                      |
+| ------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------- |
+| `team_registrations`                       | `manager_id` copied from the team                | Ownership enforcement and direct manager filtering      |
+| `seasons`                                  | calculated knockout-team total                   | Configuration validation and administration UI          |
+| `fixtures`                                 | `league_id` and `group_name` copied from parents | Fast fixture filtering and stable display labels        |
+| `lineups`                                  | season, manager, and participant scope           | Safe authorization and immutable submitted-lineup scope |
+| `lineup_players`                           | shirt/position display snapshots                 | Preserve the submitted lineup presentation              |
+| `team_match_stats`                         | `shots_off_target`                               | Direct dashboard reporting with an enforced equation    |
+| `match_substitutions` and `match_injuries` | copied team scope                                | Participant validation and efficient team match queries |
+| `player_suspensions`                       | copied team and season scope                     | Fast eligibility checks                                 |
+| `manager_messages`                         | copied subject scope                             | Secure, efficient manager inbox filtering               |
 
 These are controlled because foreign keys, check constraints, and scope
 triggers prevent inconsistent values. Live-data validation found zero
@@ -553,8 +542,9 @@ violations for the tested copied and derived FDs.
 
 ## 10. Strict 3NF decomposition options
 
-These decompositions are academically cleaner, but applying them would require
-coordinated backend and frontend changes.
+The standings decomposition below has now been implemented. The remaining
+options are academically cleaner alternatives that would require coordinated
+backend and frontend changes.
 
 ### 10.1 Team registration
 
@@ -596,18 +586,7 @@ shots - shots_on_target AS shots_off_target
 
 in a reporting view.
 
-### 10.5 Lineup-player role state
-
-Store `is_starter` as the authoritative value and derive:
-
-```text
-NOT is_starter AS is_substitute
-```
-
-Keep shirt number and natural-position columns only when they are explicitly
-defined as historical snapshots.
-
-### 10.6 Standings
+### 10.5 Standings — implemented
 
 Store only base totals:
 
@@ -623,15 +602,16 @@ goals_for - goals_against AS goal_difference
 won * 3 + drawn AS points
 ```
 
-in a view.
+in the canonical `season_standings_report` view. All application standings
+reads now use that view, while match finalization updates only the base totals.
 
-### 10.7 Match absence records
+### 10.6 Match absence records
 
 Remove copied `team_registration_id` and `season_id` values where they can be
 derived from `player_registration_id`. Use joins and indexes for eligibility
 queries.
 
-### 10.8 Manager messages
+### 10.7 Manager messages
 
 For a fully normalized notification model, separate message content from
 subject links:
@@ -656,8 +636,9 @@ Use the following accurate conclusion:
 > it materially improves safe authorization, historical snapshots, and
 > high-frequency reporting.
 
-Do not claim that all 30 relations are in BCNF. The derived standings and team
-statistics attributes alone make that statement formally incorrect.
+Do not claim that every relation is in BCNF. The standings violation has been
+removed, but other controlled scope copies and `team_match_stats` derived
+attributes still prevent that statement.
 
 ## 12. Validation evidence
 
@@ -669,16 +650,16 @@ The following live-data dependency checks returned zero violations:
 - lineup season matches its fixture;
 - lineup season and manager match its team registration;
 - team-stat shots-off-target equation;
-- all three standings arithmetic equations;
+- standings view arithmetic matches its normalized base totals;
 - substitution players match the stored team;
 - injury player matches the stored team; and
 - suspension player matches the stored team and season.
 
 The live schema also contains:
 
-- 30 public base relations;
-- 30 primary keys;
-- 78 foreign keys;
-- 28 declared unique constraints, plus conditional unique indexes;
+- 27 public base relations;
+- 27 primary keys;
+- 72 foreign keys;
+- 26 declared unique constraints, plus conditional unique indexes;
 - 102 check constraints; and
 - zero invalid constraints or indexes.

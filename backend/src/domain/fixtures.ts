@@ -19,6 +19,7 @@ export interface FixtureTeam {
 export interface FixtureGroup {
   id: string;
   name: string;
+  locked: boolean;
   teams: FixtureTeam[];
 }
 

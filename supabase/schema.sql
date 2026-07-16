@@ -144,23 +144,6 @@ create table if not exists public.app_admins (
   updated_at timestamptz not null default now()
 );
 
-create table if not exists public.role_requests (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references public.profiles(id) on delete cascade,
-  requested_role public.user_role not null,
-  status public.request_status not null default 'PENDING',
-  reason text,
-  decision_reason text,
-  decided_by uuid references public.profiles(id),
-  decided_at timestamptz,
-  created_at timestamptz not null default now(),
-  constraint role_requests_manager_only check (requested_role = 'MANAGER')
-);
-
-create unique index if not exists role_requests_one_pending_manager
-  on public.role_requests(user_id, requested_role)
-  where status = 'PENDING';
-
 create table if not exists public.leagues (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -373,7 +356,6 @@ create table if not exists public.players (
   id uuid primary key default gen_random_uuid(),
   full_name text not null,
   date_of_birth date,
-  nationality text,
   id_type public.id_type,
   id_number_hash text unique,
   id_number_last4 text,
@@ -390,17 +372,6 @@ alter table public.players alter column id_type drop not null;
 alter table public.players alter column id_number_hash drop not null;
 alter table public.players alter column id_number_last4 drop not null;
 
-create table if not exists public.identity_proofs (
-  id uuid primary key default gen_random_uuid(),
-  player_id uuid not null references public.players(id) on delete cascade,
-  submitted_by uuid not null references public.profiles(id),
-  id_type public.id_type not null,
-  id_number_hash text not null,
-  id_number_last4 text not null,
-  storage_path text,
-  created_at timestamptz not null default now()
-);
-
 create table if not exists public.player_season_registrations (
   id uuid primary key default gen_random_uuid(),
   player_id uuid not null references public.players(id) on delete cascade,
@@ -410,7 +381,7 @@ create table if not exists public.player_season_registrations (
   position public.player_position not null,
   football_position public.football_position,
   position_category public.position_category,
-  shirt_number integer,
+  shirt_number integer not null,
   status public.request_status not null default 'PENDING',
   ability_rating public.player_ability_rating,
   preferred_foot public.preferred_foot not null default 'UNKNOWN',
@@ -431,7 +402,6 @@ create table if not exists public.player_season_registrations (
   suspension_type text,
   suspension_until date,
   suspension_matches_remaining integer,
-  allow_resubmission boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint shirt_number_range check (shirt_number is null or shirt_number between 1 and 99),
@@ -509,8 +479,6 @@ alter table public.player_season_registrations add column if not exists suspensi
 alter table public.player_season_registrations add column if not exists suspension_type text;
 alter table public.player_season_registrations add column if not exists suspension_until date;
 alter table public.player_season_registrations add column if not exists suspension_matches_remaining integer;
-alter table public.player_season_registrations add column if not exists allow_resubmission boolean not null default false;
-
 create unique index if not exists player_regs_unique_player_code
   on public.player_season_registrations(player_code)
   where player_code is not null;
@@ -526,21 +494,6 @@ create unique index if not exists player_regs_unique_active_squad_jersey
 create unique index if not exists players_unique_generated_identity_number
   on public.players(generated_identity_number)
   where generated_identity_number is not null;
-
-create table if not exists public.player_hidden_attributes (
-  id uuid primary key default gen_random_uuid(),
-  player_registration_id uuid not null unique references public.player_season_registrations(id) on delete cascade,
-  submitted_by uuid not null references public.profiles(id),
-  pace integer not null check (pace between 1 and 99),
-  shooting integer not null check (shooting between 1 and 99),
-  passing integer not null check (passing between 1 and 99),
-  dribbling integer not null check (dribbling between 1 and 99),
-  defending integer not null check (defending between 1 and 99),
-  physical integer not null check (physical between 1 and 99),
-  goalkeeping integer not null check (goalkeeping between 1 and 99),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
 
 create table if not exists public.player_abilities (
   id uuid primary key default gen_random_uuid(),
@@ -871,7 +824,6 @@ create table if not exists public.lineups (
   team_registration_id uuid not null,
   season_id uuid not null references public.seasons(id) on delete cascade,
   manager_id uuid not null references public.profiles(id) on delete restrict,
-  side public.venue_side not null,
   formation text not null,
   playing_style text not null default 'BALANCED',
   status public.lineup_status not null default 'PENDING',
@@ -892,14 +844,13 @@ create table if not exists public.lineups (
     foreign key (team_registration_id, season_id, manager_id)
     references public.team_registrations(id, season_id, manager_id)
     on delete cascade,
-  unique (fixture_id, team_registration_id),
-  unique (fixture_id, side)
+  unique (fixture_id, team_registration_id)
 );
 
 create index if not exists lineups_team_season_manager_idx
   on public.lineups(team_registration_id, season_id, manager_id);
 
-create or replace function app_private.enforce_lineup_fixture_side()
+create or replace function app_private.enforce_lineup_fixture_team()
 returns trigger
 language plpgsql
 security invoker
@@ -907,17 +858,17 @@ set search_path = ''
 as $function$
 declare
   fixture_season_id uuid;
-  expected_team_id uuid;
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
 begin
   select
     fixture.season_id,
-    case new.side
-      when 'HOME' then fixture.home_team_registration_id
-      when 'AWAY' then fixture.away_team_registration_id
-    end
+    fixture.home_team_registration_id,
+    fixture.away_team_registration_id
   into
     fixture_season_id,
-    expected_team_id
+    fixture_home_team_id,
+    fixture_away_team_id
   from public.fixtures fixture
   where fixture.id = new.fixture_id;
 
@@ -928,11 +879,13 @@ begin
   end if;
 
   if new.season_id is distinct from fixture_season_id
-    or expected_team_id is null
-    or new.team_registration_id is distinct from expected_team_id then
+    or (
+      new.team_registration_id is distinct from fixture_home_team_id
+      and new.team_registration_id is distinct from fixture_away_team_id
+    ) then
     raise exception using
       errcode = '23514',
-      message = 'Lineup team and side must match the fixture home or away assignment.';
+      message = 'Lineup team must be a participant in the same fixture season.';
   end if;
 
   return new;
@@ -952,10 +905,10 @@ begin
     where lineup.fixture_id = old.id
       and (
         lineup.season_id is distinct from new.season_id
-        or lineup.team_registration_id is distinct from case lineup.side
-          when 'HOME' then new.home_team_registration_id
-          when 'AWAY' then new.away_team_registration_id
-        end
+        or (
+          lineup.team_registration_id is distinct from new.home_team_registration_id
+          and lineup.team_registration_id is distinct from new.away_team_registration_id
+        )
       )
   ) then
     raise exception using
@@ -967,24 +920,23 @@ begin
 end
 $function$;
 
-revoke all on function app_private.enforce_lineup_fixture_side()
+revoke all on function app_private.enforce_lineup_fixture_team()
 from public, anon, authenticated;
 
 revoke all on function app_private.protect_fixture_lineup_scope()
 from public, anon, authenticated;
 
-drop trigger if exists enforce_lineup_fixture_side
+drop trigger if exists enforce_lineup_fixture_team
 on public.lineups;
 
-create trigger enforce_lineup_fixture_side
+create trigger enforce_lineup_fixture_team
 before insert or update of
   fixture_id,
   team_registration_id,
-  season_id,
-  side
+  season_id
 on public.lineups
 for each row
-execute function app_private.enforce_lineup_fixture_side();
+execute function app_private.enforce_lineup_fixture_team();
 
 drop trigger if exists protect_fixture_lineup_scope
 on public.fixtures;
@@ -1008,16 +960,19 @@ create table if not exists public.lineup_players (
   player_natural_position public.football_position,
   slot_key text,
   display_role text,
-  shirt_number integer,
-  is_substitute boolean not null default false,
+  shirt_number integer not null,
   is_captain boolean not null default false,
   display_order integer,
   created_at timestamptz not null default now(),
-  constraint lineup_players_role_consistency check (
-    is_substitute = (not is_starter)
+  constraint lineup_players_slot_role_consistency check (
+    (is_starter and slot_key is not null)
+    or (not is_starter and slot_key is null)
   ),
   constraint lineup_players_captain_must_start check (
     not is_captain or is_starter
+  ),
+  constraint lineup_players_shirt_number_range_check check (
+    shirt_number between 1 and 99
   ),
   unique (lineup_id, player_registration_id)
 );
@@ -1029,6 +984,50 @@ create unique index if not exists lineup_players_one_captain_per_lineup_uidx
 create unique index if not exists lineup_players_unique_starter_slot_uidx
   on public.lineup_players(lineup_id, slot_key)
   where is_starter and slot_key is not null;
+
+create or replace function app_private.set_lineup_player_shirt_number()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  registration_shirt_number integer;
+begin
+  select player_registration.shirt_number
+  into registration_shirt_number
+  from public.player_season_registrations player_registration
+  where player_registration.id = new.player_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Lineup player registration does not exist.';
+  end if;
+
+  if registration_shirt_number is null then
+    raise exception using
+      errcode = '23514',
+      message = 'A lineup player must have a registered shirt number.';
+  end if;
+
+  new.shirt_number := registration_shirt_number;
+  return new;
+end
+$function$;
+
+revoke all
+on function app_private.set_lineup_player_shirt_number()
+from public, anon, authenticated;
+
+drop trigger if exists set_lineup_player_shirt_number
+on public.lineup_players;
+
+create trigger set_lineup_player_shirt_number
+before insert or update of player_registration_id, shirt_number
+on public.lineup_players
+for each row
+execute function app_private.set_lineup_player_shirt_number();
 
 create table if not exists public.lineup_set_piece_takers (
   id uuid primary key default gen_random_uuid(),
@@ -1553,6 +1552,10 @@ create table if not exists public.match_events (
   constraint match_events_distinct_players_check check (
     related_player_registration_id is null
     or related_player_registration_id <> player_registration_id
+  ),
+  constraint match_events_required_related_player_check check (
+    type not in ('ASSIST', 'SUBSTITUTION', 'PENALTY_SAVED')
+    or related_player_registration_id is not null
   )
 );
 
@@ -1647,14 +1650,11 @@ create table if not exists public.standings (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references public.seasons(id) on delete cascade,
   team_registration_id uuid not null,
-  played integer not null default 0,
   won integer not null default 0,
   drawn integer not null default 0,
   lost integer not null default 0,
   goals_for integer not null default 0,
   goals_against integer not null default 0,
-  goal_difference integer not null default 0,
-  points integer not null default 0,
   fair_play_score integer not null default 0,
   admin_draw_rank integer,
   updated_at timestamptz not null default now(),
@@ -1663,19 +1663,14 @@ create table if not exists public.standings (
     references public.team_registrations(id, season_id)
     on delete cascade,
   constraint standings_non_negative_totals_check check (
-    played >= 0
-    and won >= 0
+    won >= 0
     and drawn >= 0
     and lost >= 0
     and goals_for >= 0
     and goals_against >= 0
-    and points >= 0
-    and fair_play_score >= 0
   ),
-  constraint standings_record_consistency_check check (
-    played = won + drawn + lost
-    and goal_difference = goals_for - goals_against
-    and points = won * 3 + drawn
+  constraint standings_fair_play_score_check check (
+    fair_play_score <= 0
   ),
   constraint standings_admin_draw_rank_check check (
     admin_draw_rank is null or admin_draw_rank > 0
@@ -2095,6 +2090,139 @@ create table if not exists public.season_group_teams (
   unique (team_registration_id)
 );
 
+create or replace function app_private.lock_group_after_fixture_generation()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if new.stage = 'GROUP' and new.group_id is not null then
+    update public.season_groups
+    set
+      locked = true,
+      updated_at = now()
+    where id = new.group_id
+      and locked = false;
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.protect_locked_group_assignment()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if (
+    tg_op = 'INSERT'
+    and exists (
+      select 1
+      from public.season_groups season_group
+      where season_group.id = new.group_id
+        and season_group.locked
+    )
+  ) or (
+    tg_op = 'DELETE'
+    and exists (
+      select 1
+      from public.season_groups season_group
+      where season_group.id = old.group_id
+        and season_group.locked
+    )
+  ) or (
+    tg_op = 'UPDATE'
+    and exists (
+      select 1
+      from public.season_groups season_group
+      where season_group.id in (old.group_id, new.group_id)
+        and season_group.locked
+    )
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Group assignments are locked because group fixtures have already been generated.';
+  end if;
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
+end
+$function$;
+
+create or replace function app_private.protect_locked_season_group()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if tg_op = 'DELETE' then
+    if old.locked then
+      raise exception using
+        errcode = '23514',
+        message = 'A group cannot be changed or unlocked after group fixtures are generated.';
+    end if;
+    return old;
+  end if;
+
+  if old.locked and (
+    new.locked = false
+    or new.season_id is distinct from old.season_id
+    or new.name is distinct from old.name
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'A group cannot be changed or unlocked after group fixtures are generated.';
+  end if;
+
+  return new;
+end
+$function$;
+
+revoke all
+on function app_private.lock_group_after_fixture_generation()
+from public, anon, authenticated;
+
+revoke all
+on function app_private.protect_locked_group_assignment()
+from public, anon, authenticated;
+
+revoke all
+on function app_private.protect_locked_season_group()
+from public, anon, authenticated;
+
+drop trigger if exists lock_group_after_fixture_generation
+on public.fixtures;
+
+create trigger lock_group_after_fixture_generation
+after insert or update of stage, group_id
+on public.fixtures
+for each row
+execute function app_private.lock_group_after_fixture_generation();
+
+drop trigger if exists protect_locked_group_assignment
+on public.season_group_teams;
+
+create trigger protect_locked_group_assignment
+before insert or update or delete
+on public.season_group_teams
+for each row
+execute function app_private.protect_locked_group_assignment();
+
+drop trigger if exists protect_locked_season_group
+on public.season_groups;
+
+create trigger protect_locked_season_group
+before update of season_id, name, locked or delete
+on public.season_groups
+for each row
+execute function app_private.protect_locked_season_group();
+
 alter table public.seasons
   drop constraint if exists seasons_champion_team_fk;
 
@@ -2135,7 +2263,15 @@ create index if not exists idx_match_events_player_registration
 create index if not exists idx_match_events_related_player_registration
   on public.match_events(related_player_registration_id, fixture_id)
   where related_player_registration_id is not null;
-create index if not exists idx_standings_season_sort on public.standings(season_id, points desc, goal_difference desc, goals_for desc, fair_play_score asc);
+create index if not exists idx_standings_season_sort
+  on public.standings(
+    season_id,
+    ((won * 3) + drawn) desc,
+    (goals_for - goals_against) desc,
+    goals_for desc,
+    fair_play_score desc,
+    admin_draw_rank asc
+  );
 create index if not exists idx_player_stats_season_goals on public.player_season_stats(season_id, goals desc);
 create index if not exists idx_manager_messages_season on public.manager_messages(season_id, created_at desc);
 create index if not exists idx_manager_messages_manager_read on public.manager_messages(manager_id, read_at);
@@ -2221,19 +2357,68 @@ create index if not exists player_suspensions_season_status_idx
 create index if not exists seasons_champion_team_idx
   on public.seasons(champion_team_registration_id, id)
   where champion_team_registration_id is not null;
-create index if not exists identity_proofs_player_idx
-  on public.identity_proofs(player_id);
-create index if not exists identity_proofs_submitted_by_idx
-  on public.identity_proofs(submitted_by);
-create index if not exists player_hidden_attributes_submitted_by_idx
-  on public.player_hidden_attributes(submitted_by);
-create index if not exists role_requests_decided_by_idx
-  on public.role_requests(decided_by)
-  where decided_by is not null;
-
 create or replace view public.season_standings_report
 with (security_invoker = true)
 as
+with base_standings as (
+  select
+    standing.*,
+    standing.won + standing.drawn + standing.lost as played,
+    standing.goals_for - standing.goals_against as goal_difference,
+    standing.won * 3 + standing.drawn as points
+  from public.standings standing
+),
+scoped_standings as (
+  select
+    standing.*,
+    group_team.group_id,
+    season_group.name as group_name
+  from base_standings standing
+  left join public.season_group_teams group_team
+    on group_team.team_registration_id = standing.team_registration_id
+  left join public.season_groups season_group
+    on season_group.id = group_team.group_id
+),
+head_to_head as (
+  select
+    standing.id as standing_id,
+    coalesce(
+      sum(
+        case
+          when fixture.home_team_registration_id = standing.team_registration_id
+            and fixture.home_score > fixture.away_score then 3
+          when fixture.away_team_registration_id = standing.team_registration_id
+            and fixture.away_score > fixture.home_score then 3
+          when fixture.home_score = fixture.away_score then 1
+          else 0
+        end
+      ),
+      0
+    )::integer as points
+  from scoped_standings standing
+  left join scoped_standings opponent
+    on opponent.season_id = standing.season_id
+   and opponent.team_registration_id <> standing.team_registration_id
+   and opponent.points = standing.points
+   and opponent.goal_difference = standing.goal_difference
+   and opponent.goals_for = standing.goals_for
+   and opponent.group_id is not distinct from standing.group_id
+  left join public.fixtures fixture
+    on fixture.season_id = standing.season_id
+   and fixture.result_confirmed = true
+   and fixture.stage in ('LEAGUE', 'GROUP')
+   and (
+     (
+       fixture.home_team_registration_id = standing.team_registration_id
+       and fixture.away_team_registration_id = opponent.team_registration_id
+     )
+     or (
+       fixture.away_team_registration_id = standing.team_registration_id
+       and fixture.home_team_registration_id = opponent.team_registration_id
+     )
+   )
+  group by standing.id
+)
 select
   standing.id as standing_id,
   standing.season_id,
@@ -2241,6 +2426,8 @@ select
   league.name as league_name,
   season.name as season_name,
   season.season_year,
+  standing.group_id,
+  standing.group_name,
   standing.team_registration_id,
   team.id as team_id,
   team.name as team_name,
@@ -2257,17 +2444,21 @@ select
   standing.fair_play_score,
   standing.admin_draw_rank,
   row_number() over (
-    partition by standing.season_id
+    partition by standing.season_id, standing.group_id
     order by
       standing.points desc,
       standing.goal_difference desc,
       standing.goals_for desc,
-      standing.fair_play_score,
+      head_to_head.points desc,
+      standing.fair_play_score desc,
       standing.admin_draw_rank nulls last,
-      team.name
+      standing.team_registration_id
   )::integer as position,
-  standing.updated_at
-from public.standings standing
+  standing.updated_at,
+  head_to_head.points as head_to_head_points
+from scoped_standings standing
+join head_to_head
+  on head_to_head.standing_id = standing.id
 join public.seasons season
   on season.id = standing.season_id
 join public.leagues league
@@ -2347,14 +2538,14 @@ select
   coalesce(match_totals.total_clearances, 0) as total_clearances,
   coalesce(match_totals.total_keeper_saves, 0) as total_keeper_saves,
   coalesce(match_totals.average_team_rating, 0::numeric) as average_team_rating,
-  coalesce(standing.played, 0) as played,
+  coalesce(standing.won + standing.drawn + standing.lost, 0) as played,
   coalesce(standing.won, 0) as won,
   coalesce(standing.drawn, 0) as drawn,
   coalesce(standing.lost, 0) as lost,
   coalesce(standing.goals_for, 0) as goals_for,
   coalesce(standing.goals_against, 0) as goals_against,
-  coalesce(standing.goal_difference, 0) as goal_difference,
-  coalesce(standing.points, 0) as points
+  coalesce(standing.goals_for - standing.goals_against, 0) as goal_difference,
+  coalesce(standing.won * 3 + standing.drawn, 0) as points
 from public.team_registrations team_registration
 join public.seasons season
   on season.id = team_registration.season_id
@@ -2369,7 +2560,9 @@ left join public.standings standing
   on standing.team_registration_id = team_registration.id
  and standing.season_id = team_registration.season_id;
 
-create or replace view public.match_summary_report
+drop view if exists public.match_summary_report;
+
+create view public.match_summary_report
 with (security_invoker = true)
 as
 select
@@ -2384,7 +2577,6 @@ select
   fixture.matchday_number,
   fixture.group_name,
   fixture.kickoff_at,
-  fixture.venue,
   fixture.status,
   fixture.result_confirmed,
   fixture.home_team_registration_id,
@@ -2445,7 +2637,7 @@ left join public.team_match_stats away_stat
  and away_stat.team_registration_id = fixture.away_team_registration_id;
 
 comment on view public.season_standings_report is
-  'Secure read-only standings report with team and season labels.';
+  'Canonical read-only standings model. Derived totals, tie-breaks, labels, and positions are calculated from normalized base relations.';
 comment on view public.team_season_statistics_report is
   'Secure read-only team season aggregates, including summed expected goals.';
 comment on view public.match_summary_report is
@@ -2454,6 +2646,9 @@ comment on view public.match_summary_report is
 revoke all on public.season_standings_report from public, anon, authenticated;
 revoke all on public.team_season_statistics_report from public, anon, authenticated;
 revoke all on public.match_summary_report from public, anon, authenticated;
+revoke all on public.season_standings_report from service_role;
+revoke all on public.team_season_statistics_report from service_role;
+revoke all on public.match_summary_report from service_role;
 
 grant select on public.season_standings_report to service_role;
 grant select on public.team_season_statistics_report to service_role;
@@ -2800,7 +2995,11 @@ begin
         and related_player_team_id is distinct from fixture_away_team_id
       )
       or (
-        new.type <> 'OWN_GOAL'
+        new.type = 'PENALTY_SAVED'
+        and related_player_team_id is not distinct from player_team_id
+      )
+      or (
+        new.type not in ('OWN_GOAL', 'PENALTY_SAVED')
         and related_player_team_id is distinct from player_team_id
       ) then
       raise exception using
@@ -2868,7 +3067,11 @@ begin
               and related_player.team_registration_id is distinct from new.away_team_registration_id
             )
             or (
-              event.type <> 'OWN_GOAL'
+              event.type = 'PENALTY_SAVED'
+              and related_player.team_registration_id is not distinct from player_registration.team_registration_id
+            )
+            or (
+              event.type not in ('OWN_GOAL', 'PENALTY_SAVED')
               and related_player.team_registration_id is distinct from player_registration.team_registration_id
             )
           )
@@ -2944,7 +3147,11 @@ begin
           and new.team_registration_id is distinct from fixture.away_team_registration_id
         )
         or (
-          event.type <> 'OWN_GOAL'
+          event.type = 'PENALTY_SAVED'
+          and new.team_registration_id is not distinct from event_player.team_registration_id
+        )
+        or (
+          event.type not in ('OWN_GOAL', 'PENALTY_SAVED')
           and new.team_registration_id is distinct from event_player.team_registration_id
         )
       )
@@ -3393,15 +3600,12 @@ alter table public.profiles enable row level security;
 alter table public.app_users enable row level security;
 alter table public.app_managers enable row level security;
 alter table public.app_admins enable row level security;
-alter table public.role_requests enable row level security;
 alter table public.leagues enable row level security;
 alter table public.seasons enable row level security;
 alter table public.teams enable row level security;
 alter table public.team_registrations enable row level security;
 alter table public.players enable row level security;
-alter table public.identity_proofs enable row level security;
 alter table public.player_season_registrations enable row level security;
-alter table public.player_hidden_attributes enable row level security;
 alter table public.fixtures enable row level security;
 alter table public.lineups enable row level security;
 alter table public.lineup_players enable row level security;
@@ -3422,7 +3626,6 @@ grant usage on schema public to anon, authenticated, service_role;
 revoke all on all tables in schema public from anon, authenticated;
 grant select on public.leagues, public.seasons, public.fixtures, public.standings, public.player_season_stats, public.season_groups, public.season_group_teams to anon, authenticated;
 grant select on public.profiles to authenticated;
-grant select, insert on public.role_requests to authenticated;
 grant select, insert, update, delete on all tables in schema public to service_role;
 grant usage, select on all sequences in schema public to service_role;
 
@@ -3438,18 +3641,6 @@ on public.profiles for update
 to authenticated
 using ((select auth.uid()) = id)
 with check ((select auth.uid()) = id);
-
-drop policy if exists "role_requests_select_self" on public.role_requests;
-create policy "role_requests_select_self"
-on public.role_requests for select
-to authenticated
-using ((select auth.uid()) = user_id);
-
-drop policy if exists "role_requests_insert_self_manager" on public.role_requests;
-create policy "role_requests_insert_self_manager"
-on public.role_requests for insert
-to authenticated
-with check ((select auth.uid()) = user_id and requested_role = 'MANAGER');
 
 drop policy if exists "leagues_public_read" on public.leagues;
 create policy "leagues_public_read"
@@ -3510,25 +3701,3 @@ create policy "season_group_teams_public_read"
 on public.season_group_teams for select
 to anon, authenticated
 using (true);
-
-insert into storage.buckets (id, name, public)
-values ('identity-proofs', 'identity-proofs', false)
-on conflict (id) do update set public = false;
-
-drop policy if exists "identity_proofs_owner_upload" on storage.objects;
-create policy "identity_proofs_owner_upload"
-on storage.objects for insert
-to authenticated
-with check (
-  bucket_id = 'identity-proofs'
-  and (storage.foldername(name))[1] = (select auth.uid())::text
-);
-
-drop policy if exists "identity_proofs_owner_read" on storage.objects;
-create policy "identity_proofs_owner_read"
-on storage.objects for select
-to authenticated
-using (
-  bucket_id = 'identity-proofs'
-  and (storage.foldername(name))[1] = (select auth.uid())::text
-);

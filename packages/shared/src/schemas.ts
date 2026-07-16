@@ -7,18 +7,11 @@ import {
   PlayerPosition,
   PreferredFoot,
   RegistrationStatus,
-  RoleRequestStatus,
   SeasonFormat,
   SeasonPhase,
-  VenueSide,
 } from "./enums.js";
 
 export const uuidSchema = z.string().uuid();
-
-export const roleRequestDecisionSchema = z.object({
-  status: z.enum([RoleRequestStatus.APPROVED, RoleRequestStatus.REJECTED]),
-  reason: z.string().max(500).optional(),
-});
 
 export const createLeagueSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -313,7 +306,6 @@ export const playerSubmissionSchema = z.object({
   team_registration_id: uuidSchema,
   full_name: z.string().trim().min(2).max(160),
   date_of_birth: z.string().date(),
-  nationality: z.string().trim().max(80).optional(),
   position: z.enum([
     PlayerPosition.GK,
     PlayerPosition.DEF,
@@ -346,18 +338,6 @@ export const playerSubmissionSchema = z.object({
   avatar_url: z.string().trim().max(500).optional(),
   id_type: z.enum([IdType.NID, IdType.BIRTH_ID]),
   id_number: z.string().trim().min(6).max(40),
-  proof_storage_path: z.string().trim().max(500).optional(),
-});
-
-export const hiddenAttributesSchema = z.object({
-  player_registration_id: uuidSchema,
-  pace: z.number().int().min(1).max(99),
-  shooting: z.number().int().min(1).max(99),
-  passing: z.number().int().min(1).max(99),
-  dribbling: z.number().int().min(1).max(99),
-  defending: z.number().int().min(1).max(99),
-  physical: z.number().int().min(1).max(99),
-  goalkeeping: z.number().int().min(1).max(99),
 });
 
 export const lineupPlayerInputSchema = z.object({
@@ -393,7 +373,6 @@ export const lineupPlayerInputSchema = z.object({
 export const lineupSubmissionSchema = z.object({
   fixture_id: uuidSchema,
   team_registration_id: uuidSchema,
-  side: z.enum([VenueSide.HOME, VenueSide.AWAY]),
   formation: z.string().trim().min(3).max(30),
   playing_style: z.string().trim().min(3).max(50).optional(),
   captain_id: uuidSchema.optional().nullable(),
@@ -464,6 +443,5 @@ export type PlayerAbilityDecisionInput = z.infer<
 export type PlayerLifecycleDecisionInput = z.infer<
   typeof playerLifecycleDecisionSchema
 >;
-export type HiddenAttributesInput = z.infer<typeof hiddenAttributesSchema>;
 export type LineupSubmissionInput = z.infer<typeof lineupSubmissionSchema>;
 export type EditSimulationInput = z.infer<typeof editSimulationSchema>;

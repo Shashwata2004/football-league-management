@@ -33,13 +33,7 @@ alter table public.lineup_players
   add column if not exists slot_key text,
   add column if not exists display_role text,
   add column if not exists player_natural_position public.football_position,
-  add column if not exists is_substitute boolean not null default false,
   add column if not exists display_order integer;
-
-update public.lineup_players
-set is_substitute = not is_starter
-where is_substitute = false
-  and is_starter = false;
 
 alter table public.player_abilities
   add column if not exists visible_to_manager boolean not null default true;

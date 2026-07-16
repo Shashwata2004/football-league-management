@@ -4,15 +4,16 @@ lock table public.lineup_players in share row exclusive mode;
 
 do $audit$
 declare
-  contradictory_roles integer;
+  invalid_slot_roles integer;
   bench_captains integer;
   multiple_captains integer;
   duplicate_starter_slots integer;
 begin
   select count(*)
-  into contradictory_roles
+  into invalid_slot_roles
   from public.lineup_players
-  where is_substitute = is_starter;
+  where (is_starter and slot_key is null)
+     or (not is_starter and slot_key is not null);
 
   select count(*)
   into bench_captains
@@ -39,15 +40,15 @@ begin
     having count(*) > 1
   ) invalid_slots;
 
-  if contradictory_roles > 0
+  if invalid_slot_roles > 0
     or bench_captains > 0
     or multiple_captains > 0
     or duplicate_starter_slots > 0 then
     raise exception using
       message = 'Cannot add lineup-player integrity rules because existing data is invalid.',
       detail = format(
-        'contradictory_roles=%s, bench_captains=%s, multiple_captains=%s, duplicate_starter_slots=%s',
-        contradictory_roles,
+        'invalid_slot_roles=%s, bench_captains=%s, multiple_captains=%s, duplicate_starter_slots=%s',
+        invalid_slot_roles,
         bench_captains,
         multiple_captains,
         duplicate_starter_slots
@@ -62,11 +63,14 @@ begin
     select 1
     from pg_constraint
     where conrelid = 'public.lineup_players'::regclass
-      and conname = 'lineup_players_role_consistency'
+      and conname = 'lineup_players_slot_role_consistency'
   ) then
     alter table public.lineup_players
-      add constraint lineup_players_role_consistency
-      check (is_substitute = (not is_starter)) not valid;
+      add constraint lineup_players_slot_role_consistency
+      check (
+        (is_starter and slot_key is not null)
+        or (not is_starter and slot_key is null)
+      ) not valid;
   end if;
 
   if not exists (
@@ -83,7 +87,7 @@ end
 $constraints$;
 
 alter table public.lineup_players
-  validate constraint lineup_players_role_consistency;
+  validate constraint lineup_players_slot_role_consistency;
 
 alter table public.lineup_players
   validate constraint lineup_players_captain_must_start;

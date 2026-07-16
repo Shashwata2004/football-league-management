@@ -253,7 +253,6 @@ type AdminPendingLineupRow = {
   id: string;
   fixture_id: string;
   team_registration_id: string;
-  side: "HOME" | "AWAY";
   formation: string;
   status: string;
   submitted_at?: string | null;
@@ -425,7 +424,6 @@ type PlayerRegistrationApiRow = {
   players?: {
     full_name?: string | null;
     date_of_birth?: string | null;
-    nationality?: string | null;
     id_type?: string | null;
     id_number_last4?: string | null;
     avatar_url?: string | null;
@@ -595,7 +593,6 @@ type AdminFormationSlot = {
 type MatchDetailLineup = {
   id: string;
   team_registration_id: string;
-  side: string;
   formation?: string | null;
   playing_style?: string | null;
   status?: string | null;
@@ -603,6 +600,19 @@ type MatchDetailLineup = {
   formation_slots?: AdminFormationSlot[] | null;
   lineup_players?: MatchDetailLineupPlayer[] | null;
 };
+
+function lineupForFixtureTeam(
+  lineups: MatchDetailLineup[] | null | undefined,
+  teamRegistrationId: string | null | undefined,
+) {
+  return (
+    lineups?.find(
+      (lineup) =>
+        teamRegistrationId != null &&
+        lineup.team_registration_id === teamRegistrationId,
+    ) ?? null
+  );
+}
 
 type MatchDetailTeamStat = {
   id: string;
@@ -690,6 +700,12 @@ type StandingApiRow = {
   goals_against: number;
   goal_difference?: number | null;
   points: number;
+  fair_play_score: number;
+  admin_draw_rank: number | null;
+  head_to_head_points?: number;
+  position?: number;
+  group_id?: string | null;
+  group_name?: string | null;
 };
 
 type PlayerSeasonStatApiRow = {
@@ -1436,7 +1452,10 @@ function buildPlayerEventMeta(
     const type = String(event.type ?? "");
     if (type === "GOAL" || type === "PENALTY_GOAL") meta.goals += 1;
     if (type === "OWN_GOAL") meta.ownGoals += 1;
-    if (event.related_player_registration_id) {
+    if (
+      (type === "GOAL" || type === "PENALTY_GOAL") &&
+      event.related_player_registration_id
+    ) {
       ensurePlayerEventMeta(
         map,
         String(event.related_player_registration_id),
@@ -1919,7 +1938,6 @@ export default function AdminLeagueSeasonDashboard() {
     action: PlayerLifecycleAction;
     playerId: string;
     reason: string;
-    allowResubmission?: boolean;
     suspensionType?: string;
     suspensionUntil?: string;
     suspensionMatchesRemaining?: number;
@@ -1934,10 +1952,7 @@ export default function AdminLeagueSeasonDashboard() {
             : "unsuspend";
     const body =
       input.action === "reject"
-        ? {
-            reason: input.reason,
-            allow_resubmission: Boolean(input.allowResubmission),
-          }
+        ? { reason: input.reason }
         : input.action === "suspend"
           ? {
               reason: input.reason,
@@ -5414,14 +5429,12 @@ function PlayerLifecycleModal({
     action: PlayerLifecycleAction;
     playerId: string;
     reason: string;
-    allowResubmission?: boolean;
     suspensionType?: string;
     suspensionUntil?: string;
     suspensionMatchesRemaining?: number;
   }) => Promise<void>;
 }) {
   const [reason, setReason] = useState("");
-  const [allowResubmission, setAllowResubmission] = useState(false);
   const [suspensionType, setSuspensionType] = useState(
     "UNTIL_ADMIN_UNSUSPENDS",
   );
@@ -5453,7 +5466,6 @@ function PlayerLifecycleModal({
         action,
         playerId: player.id,
         reason: reason.trim(),
-        allowResubmission,
         suspensionType,
         suspensionUntil,
         suspensionMatchesRemaining: Number(suspensionMatchesRemaining),
@@ -5535,16 +5547,6 @@ function PlayerLifecycleModal({
               </label>
             ) : null}
           </div>
-        ) : null}
-        {action === "reject" ? (
-          <label className="mt-5 flex items-center gap-3 rounded-2xl bg-indigo-50 p-4 text-sm font-bold text-indigo-900">
-            <input
-              type="checkbox"
-              checked={allowResubmission}
-              onChange={(event) => setAllowResubmission(event.target.checked)}
-            />
-            Allow manager to edit and resubmit this player
-          </label>
         ) : null}
         <label className="mt-5 grid gap-2">
           <span className="text-xs font-black uppercase tracking-wide text-slate-500">
@@ -5690,10 +5692,14 @@ function LineupConfirmationsView({
   const showSide = !isGroupKnockoutFormat(season.format);
 
   if (selectedFixtureId) {
-    const homeLineup =
-      detail?.lineups.find((lineup) => lineup.side === "HOME") ?? null;
-    const awayLineup =
-      detail?.lineups.find((lineup) => lineup.side === "AWAY") ?? null;
+    const homeLineup = lineupForFixtureTeam(
+      detail?.lineups,
+      selectedFixture?.home_team?.id,
+    );
+    const awayLineup = lineupForFixtureTeam(
+      detail?.lineups,
+      selectedFixture?.away_team?.id,
+    );
     return (
       <div className="space-y-6">
         <button
@@ -5794,6 +5800,12 @@ function LineupConfirmationsView({
                   const fixture = lineup.fixtures;
                   const match = `${fixture?.home_team?.teams?.name ?? "Home"} vs ${fixture?.away_team?.teams?.name ?? "Away"}`;
                   const team = lineup.team_registrations?.teams;
+                  const fixtureSide =
+                    lineup.team_registration_id === fixture?.home_team?.id
+                      ? "HOME"
+                      : lineup.team_registration_id === fixture?.away_team?.id
+                        ? "AWAY"
+                        : "—";
                   return (
                     <tr key={lineup.id} className="border-t border-slate-100">
                       <td className="px-4 py-4 font-bold">{match}</td>
@@ -5804,7 +5816,7 @@ function LineupConfirmationsView({
                         />
                       </td>
                       {showSide ? (
-                        <td className="px-4 py-4 font-black">{lineup.side}</td>
+                        <td className="px-4 py-4 font-black">{fixtureSide}</td>
                       ) : null}
                       <td className="px-4 py-4 font-black">
                         {lineup.formation}
@@ -6534,14 +6546,14 @@ function MatchDetailPage({
       stat,
     ]),
   );
-  const homeLineup =
-    detail?.lineups.find((lineup) => lineup.side === "HOME") ??
-    detail?.lineups[0] ??
-    null;
-  const awayLineup =
-    detail?.lineups.find((lineup) => lineup.side === "AWAY") ??
-    detail?.lineups[1] ??
-    null;
+  const homeLineup = lineupForFixtureTeam(
+    detail?.lineups,
+    detail?.fixture?.home_team_registration_id,
+  );
+  const awayLineup = lineupForFixtureTeam(
+    detail?.lineups,
+    detail?.fixture?.away_team_registration_id,
+  );
   const hasSimulation =
     (detail?.player_stats?.length ?? 0) > 0 ||
     (detail?.team_stats?.length ?? 0) > 0;
@@ -7479,12 +7491,14 @@ function buildOrderedStats(
   );
   const ordered: MatchDetailPlayerStat[] = [];
   const seen = new Set<string>();
-  const home =
-    detail?.lineups.find((lineup) => lineup.side === "HOME") ??
-    detail?.lineups[0];
-  const away =
-    detail?.lineups.find((lineup) => lineup.side === "AWAY") ??
-    detail?.lineups[1];
+  const home = lineupForFixtureTeam(
+    detail?.lineups,
+    detail?.fixture?.home_team_registration_id,
+  );
+  const away = lineupForFixtureTeam(
+    detail?.lineups,
+    detail?.fixture?.away_team_registration_id,
+  );
   for (const lineup of [home, away]) {
     for (const player of lineup?.lineup_players ?? []) {
       const stat = statsByPlayer.get(player.player_registration_id);
@@ -8401,7 +8415,18 @@ function GroupsView({ season }: { season: SeasonDto }) {
         <EmptyState label="Groups are not divided yet." />
       ) : (
         <div className="grid gap-5 xl:grid-cols-2">
-          {data.groups.map((group) => (
+          {data.groups.map((group) => {
+            const rankedTeams = [...group.teams].sort((a, b) => {
+              const aStanding = standingByTeam.get(a.id);
+              const bStanding = standingByTeam.get(b.id);
+              return (
+                Number(aStanding?.position ?? Number.MAX_SAFE_INTEGER) -
+                  Number(
+                    bStanding?.position ?? Number.MAX_SAFE_INTEGER,
+                  ) || a.id.localeCompare(b.id)
+              );
+            });
+            return (
             <Panel
               key={group.id}
               title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}
@@ -8425,7 +8450,7 @@ function GroupsView({ season }: { season: SeasonDto }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {group.teams.map((team) => {
+                      {rankedTeams.map((team) => {
                         const standing = standingByTeam.get(team.id);
                         const goalsFor = standing?.goals_for ?? 0;
                         const goalsAgainst = standing?.goals_against ?? 0;
@@ -8474,7 +8499,8 @@ function GroupsView({ season }: { season: SeasonDto }) {
                 </div>
               )}
             </Panel>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

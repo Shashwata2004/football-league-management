@@ -122,6 +122,10 @@ export interface SimMatchSetPieceTakers {
   away?: SimSetPieceTakers;
 }
 
+export interface SimMatchContext {
+  applyHomeAdvantage?: boolean;
+}
+
 export interface SimulationResult {
   home_score: number;
   away_score: number;
@@ -139,8 +143,30 @@ export interface SimulationResult {
 
 const OWN_GOAL_CONVERSION_PROBABILITY = 0.045;
 export const OWN_GOAL_RATING_PENALTY = 1.4;
+export const NEUTRAL_EXPECTED_GOALS_BASELINE = 1.08;
+export const LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS = 0.3;
 const GOAL_RATING_BONUS = 0.82;
 const ASSIST_RATING_BONUS = 0.52;
+const RELATED_PLAYER_REQUIRED_EVENT_TYPES = new Set<MatchEventType>([
+  MatchEventType.ASSIST,
+  MatchEventType.SUBSTITUTION,
+  MatchEventType.PENALTY_SAVED,
+]);
+
+export function matchEventRequiresRelatedPlayer(type: MatchEventType) {
+  return RELATED_PLAYER_REQUIRED_EVENT_TYPES.has(type);
+}
+
+export function expectedGoalBaselines(
+  applyHomeAdvantage: boolean,
+): { home: number; away: number } {
+  return {
+    home:
+      NEUTRAL_EXPECTED_GOALS_BASELINE +
+      (applyHomeAdvantage ? LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS : 0),
+    away: NEUTRAL_EXPECTED_GOALS_BASELINE,
+  };
+}
 
 type Strength = {
   attack: number;
@@ -2673,6 +2699,8 @@ function applyPenaltyMissEvents(
         (stat) => stat.position_played === FootballPosition.GK,
       );
       if (opponentGk) {
+        event.related_player_registration_id =
+          opponentGk.player_registration_id;
         opponentGk.saves += 1;
         opponentGk.penalty_saved_for_gk =
           (opponentGk.penalty_saved_for_gk ?? 0) + 1;
@@ -2901,13 +2929,25 @@ export function validateSimulationConsistency(
     );
   };
   for (const event of result.events) {
+    if (
+      matchEventRequiresRelatedPlayer(event.type) &&
+      !event.related_player_registration_id
+    ) {
+      throw new AppError(
+        400,
+        `${event.type} must reference its related player`,
+      );
+    }
     if (!allPlayerIds.has(event.player_registration_id))
       throw new AppError(400, "A match event references a non-playing player");
     if (
       event.related_player_registration_id &&
       !allPlayerIds.has(event.related_player_registration_id)
     ) {
-      throw new AppError(400, "A match assist references a non-playing player");
+      throw new AppError(
+        400,
+        "A match event references a non-playing related player",
+      );
     }
     if (!eventPlayerIsActive(event.player_registration_id, event.minute))
       throw new AppError(
@@ -2918,7 +2958,10 @@ export function validateSimulationConsistency(
       event.related_player_registration_id &&
       !eventPlayerIsActive(event.related_player_registration_id, event.minute)
     ) {
-      throw new AppError(400, "An assist occurs outside the player's minutes");
+      throw new AppError(
+        400,
+        "A related match event occurs outside the player's minutes",
+      );
     }
   }
   const dismissedPlayerIds = new Set(
@@ -2986,7 +3029,7 @@ export function validateSimulationConsistency(
     }
   }
   if (homePlayerIds && awayPlayerIds) {
-    for (const event of goalEvents) {
+    for (const event of result.events) {
       const creditedSideIds =
         event.side === VenueSide.HOME ? homePlayerIds : awayPlayerIds;
       const opposingSideIds =
@@ -3001,12 +3044,34 @@ export function validateSimulationConsistency(
         );
       }
       if (
-        event.type !== MatchEventType.OWN_GOAL &&
+        (event.type === MatchEventType.GOAL ||
+          event.type === MatchEventType.PENALTY_GOAL) &&
         !creditedSideIds.has(event.player_registration_id)
       ) {
         throw new AppError(
           400,
           "A goal must be attributed to the scoring team",
+        );
+      }
+      if (
+        event.type === MatchEventType.PENALTY_SAVED &&
+        event.related_player_registration_id &&
+        !opposingSideIds.has(event.related_player_registration_id)
+      ) {
+        throw new AppError(
+          400,
+          "A saved penalty must reference the opposing goalkeeper",
+        );
+      }
+      if (
+        event.related_player_registration_id &&
+        event.type !== MatchEventType.OWN_GOAL &&
+        event.type !== MatchEventType.PENALTY_SAVED &&
+        !creditedSideIds.has(event.related_player_registration_id)
+      ) {
+        throw new AppError(
+          400,
+          "A related event player must belong to the event side",
         );
       }
     }
@@ -3085,6 +3150,7 @@ export function simulateMatch(
   fixtureId: string,
   simulationAttempt = 1,
   setPieceTakers: SimMatchSetPieceTakers = {},
+  context: SimMatchContext = {},
 ): SimulationResult {
   if (
     homePlayers.filter((p) => p.is_starter).length !== 11 ||
@@ -3101,13 +3167,18 @@ export function simulateMatch(
   const homeQuality = home.overall * 0.7 + (35 + random() * 50) * 0.3;
   const awayQuality = away.overall * 0.7 + (35 + random() * 50) * 0.3;
   const mismatch = Math.abs(home.overall - away.overall);
+  const scoringBaselines = expectedGoalBaselines(
+    context.applyHomeAdvantage ?? false,
+  );
   const homeExpected = Math.max(
     0.15,
-    1.18 + (homeQuality - away.defense * 0.82 - away.keeper * 0.18) / 42 + 0.2,
+    scoringBaselines.home +
+      (homeQuality - away.defense * 0.82 - away.keeper * 0.18) / 42,
   );
   const awayExpected = Math.max(
     0.15,
-    1.08 + (awayQuality - home.defense * 0.82 - home.keeper * 0.18) / 42,
+    scoringBaselines.away +
+      (awayQuality - home.defense * 0.82 - home.keeper * 0.18) / 42,
   );
   const matchTempo = clampDecimal(
     0.84 + random() * 0.34 + (random() > 0.86 ? random() * 0.28 : 0),

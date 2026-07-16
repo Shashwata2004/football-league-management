@@ -39,7 +39,6 @@ The seed file creates the fixed admin account automatically.
 - `SUPABASE_SERVICE_ROLE_KEY` belongs only in `backend/.env`.
 - No browser code reads or writes tournament tables directly.
 - Player identity numbers are never stored raw. The backend stores only an HMAC hash and last four digits.
-- Proof documents belong in the private `identity-proofs` Storage bucket.
 - No advanced chance-quality metric fields, labels, formulas, or simulator values are included.
 
 ## Demo authentication

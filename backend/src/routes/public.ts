@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { supabaseAdmin } from "../db/supabase.js";
 import { asyncHandler } from "../errors.js";
+import { loadSeasonStandings } from "../services/standings-report.js";
 
 export const publicRouter = Router();
 
@@ -68,16 +69,9 @@ publicRouter.get(
 publicRouter.get(
   "/seasons/:seasonId/standings",
   asyncHandler(async (req, res) => {
-    const { data, error } = await supabaseAdmin
-      .from("standings")
-      .select("*")
-      .eq("season_id", req.params.seasonId)
-      .order("points", { ascending: false })
-      .order("goal_difference", { ascending: false })
-      .order("goals_for", { ascending: false })
-      .order("fair_play_score", { ascending: true });
-    if (error) throw error;
-    res.json({ standings: data });
+    const seasonId = String(req.params.seasonId);
+    const standings = await loadSeasonStandings(seasonId);
+    res.json({ standings });
   }),
 );
 

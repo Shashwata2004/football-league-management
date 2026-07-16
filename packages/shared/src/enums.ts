@@ -5,14 +5,6 @@ export const UserRole = {
 } as const;
 export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 
-export const RoleRequestStatus = {
-  PENDING: "PENDING",
-  APPROVED: "APPROVED",
-  REJECTED: "REJECTED",
-} as const;
-export type RoleRequestStatus =
-  (typeof RoleRequestStatus)[keyof typeof RoleRequestStatus];
-
 export const SeasonFormat = {
   SINGLE_ROUND_ROBIN: "SINGLE_ROUND_ROBIN",
   DOUBLE_ROUND_ROBIN: "DOUBLE_ROUND_ROBIN",
