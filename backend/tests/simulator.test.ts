@@ -6,6 +6,7 @@ import {
   VenueSide,
 } from "@flms/shared";
 import {
+  OWN_GOAL_RATING_PENALTY,
   simulateMatch,
   type SimPlayer,
   type SimPlayerStats,
@@ -78,9 +79,11 @@ function assertTeamTotals(
   team: SimTeamStats,
   stats: SimPlayerStats[],
   goals: number,
+  ownGoalsCreditedToTeam = 0,
 ) {
-  expect(sum(stats, "goals")).toBe(goals);
-  expect(sum(stats, "assists")).toBeLessThanOrEqual(goals);
+  const playerCreditedGoals = goals - ownGoalsCreditedToTeam;
+  expect(sum(stats, "goals")).toBe(playerCreditedGoals);
+  expect(sum(stats, "assists")).toBeLessThanOrEqual(playerCreditedGoals);
   expect(sum(stats, "shots")).toBe(team.shots);
   expect(sum(stats, "shots_on_target")).toBe(team.shots_on_target);
   expect(sum(stats, "passes")).toBe(team.passes);
@@ -132,12 +135,30 @@ describe("match-stat simulator", () => {
     const awayStats = result.player_stats.filter(
       (player) => !homeIds.has(player.player_registration_id),
     );
+    const homeOwnGoals = result.events.filter(
+      (event) =>
+        event.side === VenueSide.HOME && event.type === MatchEventType.OWN_GOAL,
+    ).length;
+    const awayOwnGoals = result.events.filter(
+      (event) =>
+        event.side === VenueSide.AWAY && event.type === MatchEventType.OWN_GOAL,
+    ).length;
 
     expect(result.home_stats.possession + result.away_stats.possession).toBe(
       100,
     );
-    assertTeamTotals(result.home_stats, homeStats, result.home_score);
-    assertTeamTotals(result.away_stats, awayStats, result.away_score);
+    assertTeamTotals(
+      result.home_stats,
+      homeStats,
+      result.home_score,
+      homeOwnGoals,
+    );
+    assertTeamTotals(
+      result.away_stats,
+      awayStats,
+      result.away_score,
+      awayOwnGoals,
+    );
     for (const [team, goals] of [
       [result.home_stats, result.home_score],
       [result.away_stats, result.away_score],
@@ -463,6 +484,53 @@ describe("match-stat simulator", () => {
       )!;
       expect(scorer.penalty_scored).toBeGreaterThan(0);
     }
+  });
+
+  it("attributes own goals to an active opponent and applies a major rating penalty", () => {
+    const home = players(VenueSide.HOME);
+    const away = players(VenueSide.AWAY);
+    const homeIds = new Set(
+      home.map((player) => player.player_registration_id),
+    );
+    const awayIds = new Set(
+      away.map((player) => player.player_registration_id),
+    );
+    let ownGoalResult: ReturnType<typeof simulateMatch> | null = null;
+
+    for (let index = 0; index < 1000 && !ownGoalResult; index += 1) {
+      const result = simulateMatch(home, away, `own-goal-${index}`);
+      if (
+        result.events.some((event) => event.type === MatchEventType.OWN_GOAL)
+      ) {
+        ownGoalResult = result;
+      }
+    }
+
+    expect(ownGoalResult).toBeTruthy();
+    const ownGoals = ownGoalResult!.events.filter(
+      (event) => event.type === MatchEventType.OWN_GOAL,
+    );
+    expect(ownGoals).toHaveLength(1);
+    expect(OWN_GOAL_RATING_PENALTY).toBe(1.4);
+
+    const event = ownGoals[0]!;
+    const scorerSideIds = event.side === VenueSide.HOME ? homeIds : awayIds;
+    const opponentSideIds = event.side === VenueSide.HOME ? awayIds : homeIds;
+    expect(scorerSideIds.has(event.player_registration_id)).toBe(false);
+    expect(opponentSideIds.has(event.player_registration_id)).toBe(true);
+    expect(event.related_player_registration_id).toBeUndefined();
+
+    const responsiblePlayer = ownGoalResult!.player_stats.find(
+      (stat) => stat.player_registration_id === event.player_registration_id,
+    )!;
+    const creditedGoals = ownGoalResult!.events.filter(
+      (candidate) =>
+        candidate.player_registration_id === event.player_registration_id &&
+        (candidate.type === MatchEventType.GOAL ||
+          candidate.type === MatchEventType.PENALTY_GOAL),
+    ).length;
+    expect(responsiblePlayer.goals).toBe(creditedGoals);
+    expect(responsiblePlayer.rating).toBeLessThanOrEqual(8.4);
   });
 
   it("uses the first configured set-piece taker who is active", () => {

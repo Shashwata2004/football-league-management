@@ -72,25 +72,25 @@ alter table public.player_season_stats
 alter table public.player_season_stats
   add constraint player_season_stats_non_negative_dashboard_stats
   check (
-    starts >= 0
+    appearances >= 0
+    and starts >= 0
     and minutes_played >= 0
+    and goals >= 0
+    and assists >= 0
     and shots >= 0
     and shots_on_target >= 0
-    and shots_on_target <= shots
     and chances_created >= 0
     and big_chances_created >= 0
     and total_passes >= 0
     and accurate_passes >= 0
-    and accurate_passes <= total_passes
     and dribbles_attempted >= 0
     and successful_dribbles >= 0
-    and successful_dribbles <= dribbles_attempted
     and dispossessed >= 0
     and tackles >= 0
     and interceptions >= 0
+    and yellow_cards >= 0
+    and red_cards >= 0
     and player_of_match_count >= 0
-    and (best_match_rating is null or best_match_rating between 5.5 and 9.5)
-    and (lowest_match_rating is null or lowest_match_rating between 5.5 and 9.5)
   );
 
 create index if not exists idx_teams_logo_url on public.teams(logo_url);

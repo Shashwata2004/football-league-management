@@ -137,6 +137,11 @@ export interface SimulationResult {
   penalties_away?: number;
 }
 
+const OWN_GOAL_CONVERSION_PROBABILITY = 0.045;
+export const OWN_GOAL_RATING_PENALTY = 1.4;
+const GOAL_RATING_BONUS = 0.82;
+const ASSIST_RATING_BONUS = 0.52;
+
 type Strength = {
   attack: number;
   midfield: number;
@@ -2519,6 +2524,132 @@ function ratingForGoalkeeper(input: {
   );
 }
 
+function applyOwnGoalConversions({
+  seed,
+  homePlayers,
+  awayPlayers,
+  homeSubstitutions,
+  awaySubstitutions,
+  homeStats,
+  awayStats,
+  homeEvents,
+  awayEvents,
+}: {
+  seed: string;
+  homePlayers: SimPlayer[];
+  awayPlayers: SimPlayer[];
+  homeSubstitutions: SimSubstitution[];
+  awaySubstitutions: SimSubstitution[];
+  homeStats: SimPlayerStats[];
+  awayStats: SimPlayerStats[];
+  homeEvents: SimMatchEvent[];
+  awayEvents: SimMatchEvent[];
+}) {
+  const random = rng(`${seed}:own-goals`);
+  const candidates = [
+    ...homeEvents.map((event) => ({
+      event,
+      attackingStats: homeStats,
+      defendingPlayers: awayPlayers,
+      defendingSubstitutions: awaySubstitutions,
+      defendingStats: awayStats,
+    })),
+    ...awayEvents.map((event) => ({
+      event,
+      attackingStats: awayStats,
+      defendingPlayers: homePlayers,
+      defendingSubstitutions: homeSubstitutions,
+      defendingStats: homeStats,
+    })),
+  ]
+    .filter(({ event }) => event.type === MatchEventType.GOAL)
+    .sort(
+      (a, b) =>
+        a.event.minute - b.event.minute ||
+        a.event.side.localeCompare(b.event.side),
+    );
+
+  for (const candidate of candidates) {
+    if (random() >= OWN_GOAL_CONVERSION_PROBABILITY) continue;
+
+    const activeDefenders = candidate.defendingPlayers.filter((player) =>
+      isPlayerActiveAtMinute(
+        player,
+        candidate.defendingSubstitutions,
+        candidate.event.minute,
+      ),
+    );
+    if (!activeDefenders.length) continue;
+
+    const ownGoalPlayer = pickWeighted(
+      activeDefenders,
+      (player) => {
+        const position = detailedPosition(player);
+        const roleRisk =
+          position === FootballPosition.CB
+            ? 5
+            : position === FootballPosition.LB ||
+                position === FootballPosition.RB
+              ? 3.6
+              : position === FootballPosition.DM
+                ? 2.4
+                : position === FootballPosition.GK
+                  ? 0.8
+                  : 0.45;
+        return (
+          roleRisk *
+          (player.defending * 0.55 +
+            player.physical * 0.25 +
+            (player.stamina ?? player.physical) * 0.2)
+        );
+      },
+      random,
+    );
+    const responsiblePlayer = candidate.defendingStats.find(
+      (stat) =>
+        stat.player_registration_id === ownGoalPlayer.player_registration_id,
+    );
+    if (!responsiblePlayer) continue;
+
+    const originalScorerId = candidate.event.player_registration_id;
+    const originalAssistId = candidate.event.related_player_registration_id;
+    const originalScorer = candidate.attackingStats.find(
+      (stat) => stat.player_registration_id === originalScorerId,
+    );
+    if (originalScorer) {
+      originalScorer.goals = Math.max(0, originalScorer.goals - 1);
+      originalScorer.rating = Number(
+        Math.max(4.8, originalScorer.rating - GOAL_RATING_BONUS).toFixed(1),
+      );
+    }
+    if (originalAssistId) {
+      const originalAssister = candidate.attackingStats.find(
+        (stat) => stat.player_registration_id === originalAssistId,
+      );
+      if (originalAssister) {
+        originalAssister.assists = Math.max(0, originalAssister.assists - 1);
+        originalAssister.rating = Number(
+          Math.max(4.8, originalAssister.rating - ASSIST_RATING_BONUS).toFixed(
+            1,
+          ),
+        );
+      }
+    }
+
+    responsiblePlayer.rating = Number(
+      Math.max(4.8, responsiblePlayer.rating - OWN_GOAL_RATING_PENALTY).toFixed(
+        1,
+      ),
+    );
+
+    candidate.event.type = MatchEventType.OWN_GOAL;
+    candidate.event.player_registration_id =
+      ownGoalPlayer.player_registration_id;
+    delete candidate.event.related_player_registration_id;
+    return;
+  }
+}
+
 function applyPenaltyMissEvents(
   stats: SimPlayerStats[],
   events: SimMatchEvent[],
@@ -2820,10 +2951,22 @@ export function validateSimulationConsistency(
   const assistedGoals = goalEvents.filter(
     (event) => event.related_player_registration_id,
   );
+  if (
+    goalEvents.some(
+      (event) =>
+        event.type === MatchEventType.OWN_GOAL &&
+        event.related_player_registration_id,
+    )
+  ) {
+    throw new AppError(400, "An own goal cannot have an assist");
+  }
   if (assistedGoals.length > goalEvents.length)
     throw new AppError(400, "Assists exceed assistable goals");
+  const creditedGoalEvents = goalEvents.filter(
+    (event) => event.type !== MatchEventType.OWN_GOAL,
+  );
   const eventGoalsByPlayer = countById(
-    goalEvents.map((event) => event.player_registration_id),
+    creditedGoalEvents.map((event) => event.player_registration_id),
   );
   const eventAssistsByPlayer = countById(
     assistedGoals.map((event) => event.related_player_registration_id!),
@@ -2842,12 +2985,39 @@ export function validateSimulationConsistency(
       throw new AppError(400, "Player assists do not match goal events");
     }
   }
+  if (homePlayerIds && awayPlayerIds) {
+    for (const event of goalEvents) {
+      const creditedSideIds =
+        event.side === VenueSide.HOME ? homePlayerIds : awayPlayerIds;
+      const opposingSideIds =
+        event.side === VenueSide.HOME ? awayPlayerIds : homePlayerIds;
+      if (
+        event.type === MatchEventType.OWN_GOAL &&
+        !opposingSideIds.has(event.player_registration_id)
+      ) {
+        throw new AppError(
+          400,
+          "An own goal must be attributed to the opposing team",
+        );
+      }
+      if (
+        event.type !== MatchEventType.OWN_GOAL &&
+        !creditedSideIds.has(event.player_registration_id)
+      ) {
+        throw new AppError(
+          400,
+          "A goal must be attributed to the scoring team",
+        );
+      }
+    }
+  }
 
   const validateTeamPlayerTotals = (
     label: string,
     ids: Set<string> | undefined,
     team: SimTeamStats,
     goals: number,
+    ownGoalsCreditedToSide: number,
   ) => {
     if (!ids) return;
     const players = result.player_stats.filter((player) =>
@@ -2879,22 +3049,33 @@ export function validateSimulationConsistency(
         );
       }
     }
-    if (sum("goals") !== goals)
+    const playerCreditedGoals = goals - ownGoalsCreditedToSide;
+    if (sum("goals") !== playerCreditedGoals)
       throw new AppError(400, `${label} player goals do not match scoreline`);
-    if (sum("assists") > goals)
+    if (sum("assists") > playerCreditedGoals)
       throw new AppError(400, `${label} player assists exceed goals`);
   };
+  const homeOwnGoals = goalEvents.filter(
+    (event) =>
+      event.side === VenueSide.HOME && event.type === MatchEventType.OWN_GOAL,
+  ).length;
+  const awayOwnGoals = goalEvents.filter(
+    (event) =>
+      event.side === VenueSide.AWAY && event.type === MatchEventType.OWN_GOAL,
+  ).length;
   validateTeamPlayerTotals(
     "home",
     homePlayerIds,
     result.home_stats,
     result.home_score,
+    homeOwnGoals,
   );
   validateTeamPlayerTotals(
     "away",
     awayPlayerIds,
     result.away_stats,
     result.away_score,
+    awayOwnGoals,
   );
 }
 
@@ -3013,6 +3194,17 @@ export function simulateMatch(
     awaySpecialEvents,
     homeAllocated.stats,
   );
+  applyOwnGoalConversions({
+    seed,
+    homePlayers,
+    awayPlayers,
+    homeSubstitutions: homeSubs,
+    awaySubstitutions: awaySubs,
+    homeStats: homeAllocated.stats,
+    awayStats: awayAllocated.stats,
+    homeEvents: homeAllocated.events,
+    awayEvents: awayAllocated.events,
+  });
   const sumPlayerStats = (
     stats: SimPlayerStats[],
     field: keyof SimPlayerStats,

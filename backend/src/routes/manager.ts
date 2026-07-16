@@ -18,6 +18,7 @@ import {
   UserRole,
   MatchEventType,
   VenueSide,
+  type LineupSubmissionInput,
 } from "@flms/shared";
 import { supabaseAdmin } from "../db/supabase.js";
 import { AppError, assertFound, asyncHandler } from "../errors.js";
@@ -1165,6 +1166,107 @@ async function saveLineupSetPieceTakers(
     .from("lineup_set_piece_takers")
     .insert(rows);
   if (insertError) throw insertError;
+}
+
+async function persistSubmittedLineup(
+  input: LineupSubmissionInput,
+  seasonId: string,
+  managerId: string,
+  captainId: string | null,
+) {
+  if (!captainId) {
+    throw new AppError(400, "A starting captain is required");
+  }
+
+  const now = new Date().toISOString();
+  const { data: stagedLineup, error: stageError } = await supabaseAdmin
+    .from("lineups")
+    .upsert(
+      {
+        fixture_id: input.fixture_id,
+        team_registration_id: input.team_registration_id,
+        side: input.side,
+        season_id: seasonId,
+        manager_id: managerId,
+        formation: input.formation,
+        playing_style: normalizedPlayingStyle(input.playing_style),
+        captain_id: null,
+        status: "REJECTED",
+        submitted_at: null,
+        reviewed_by: null,
+        reviewed_at: null,
+        confirmed_at: null,
+        rejection_reason:
+          "Lineup update was interrupted. Submit the lineup again.",
+        updated_at: now,
+      },
+      { onConflict: "fixture_id,team_registration_id" },
+    )
+    .select("*")
+    .single();
+  if (stageError) throw stageError;
+
+  // Clear dependants before replacing the submitted squad. This ordering keeps
+  // the database valid while captain and set-piece integrity triggers run.
+  const { error: takerDeleteError } = await supabaseAdmin
+    .from("lineup_set_piece_takers")
+    .delete()
+    .eq("lineup_id", stagedLineup.id);
+  if (takerDeleteError) throw takerDeleteError;
+
+  const { error: playerDeleteError } = await supabaseAdmin
+    .from("lineup_players")
+    .delete()
+    .eq("lineup_id", stagedLineup.id);
+  if (playerDeleteError) throw playerDeleteError;
+
+  const { error: playerInsertError } = await supabaseAdmin
+    .from("lineup_players")
+    .insert(
+      input.players.map((player) => ({
+        lineup_id: stagedLineup.id,
+        player_registration_id: player.player_registration_id,
+        is_starter: player.is_starter,
+        is_substitute: !player.is_starter,
+        position: player.position,
+        football_position: player.player_natural_position ?? null,
+        player_natural_position: player.player_natural_position ?? null,
+        slot_key: player.slot_key ?? null,
+        display_role: player.display_role ?? null,
+        display_order: player.display_order ?? null,
+        is_captain: player.player_registration_id === captainId,
+      })),
+    );
+  if (playerInsertError) throw playerInsertError;
+
+  const selectedPlayerIds = input.players.map(
+    (player) => player.player_registration_id,
+  );
+  await saveLineupSetPieceTakers(
+    stagedLineup.id,
+    selectedPlayerIds,
+    input.penalty_taker_ids,
+    input.free_kick_taker_ids,
+  );
+
+  const { data: publishedLineup, error: publishError } = await supabaseAdmin
+    .from("lineups")
+    .update({
+      captain_id: captainId,
+      status: "PENDING",
+      submitted_at: now,
+      reviewed_by: null,
+      reviewed_at: null,
+      confirmed_at: null,
+      rejection_reason: null,
+      updated_at: now,
+    })
+    .eq("id", stagedLineup.id)
+    .select("*")
+    .single();
+  if (publishError) throw publishError;
+
+  return publishedLineup;
 }
 
 function lineupPlayersFromPicks(
@@ -3234,55 +3336,11 @@ managerRouter.post(
         ?.player_registration_id ??
       null;
 
-    const { data: lineup, error } = await supabaseAdmin
-      .from("lineups")
-      .upsert(
-        {
-          fixture_id: input.fixture_id,
-          team_registration_id: input.team_registration_id,
-          side: input.side,
-          season_id: fixture.season_id,
-          manager_id: req.auth!.userId,
-          formation: input.formation,
-          playing_style: normalizedPlayingStyle(input.playing_style),
-          captain_id: captainId,
-          status: "PENDING",
-          submitted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "fixture_id,team_registration_id" },
-      )
-      .select("*")
-      .single();
-    if (error) throw error;
-
-    await supabaseAdmin
-      .from("lineup_players")
-      .delete()
-      .eq("lineup_id", lineup.id);
-    const { error: insertError } = await supabaseAdmin
-      .from("lineup_players")
-      .insert(
-        input.players.map((player) => ({
-          lineup_id: lineup.id,
-          player_registration_id: player.player_registration_id,
-          is_starter: player.is_starter,
-          is_substitute: !player.is_starter,
-          position: player.position,
-          football_position: player.player_natural_position ?? null,
-          player_natural_position: player.player_natural_position ?? null,
-          slot_key: player.slot_key ?? null,
-          display_role: player.display_role ?? null,
-          display_order: player.display_order ?? null,
-          is_captain: player.player_registration_id === captainId,
-        })),
-      );
-    if (insertError) throw insertError;
-    await saveLineupSetPieceTakers(
-      lineup.id,
-      selectedPlayerIds,
-      input.penalty_taker_ids,
-      input.free_kick_taker_ids,
+    const lineup = await persistSubmittedLineup(
+      input,
+      fixture.season_id,
+      req.auth!.userId,
+      captainId,
     );
     await saveManagerPreference(
       req.auth!.userId,
@@ -3511,55 +3569,11 @@ managerRouter.post(
         ?.player_registration_id ??
       null;
 
-    const { data: lineup, error } = await supabaseAdmin
-      .from("lineups")
-      .upsert(
-        {
-          fixture_id: input.fixture_id,
-          team_registration_id: input.team_registration_id,
-          side: input.side,
-          season_id: fixture.season_id,
-          manager_id: req.auth!.userId,
-          formation: input.formation,
-          playing_style: normalizedPlayingStyle(input.playing_style),
-          captain_id: captainId,
-          status: "PENDING",
-          submitted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "fixture_id,team_registration_id" },
-      )
-      .select("*")
-      .single();
-    if (error) throw error;
-
-    await supabaseAdmin
-      .from("lineup_players")
-      .delete()
-      .eq("lineup_id", lineup.id);
-    const { error: insertError } = await supabaseAdmin
-      .from("lineup_players")
-      .insert(
-        input.players.map((player) => ({
-          lineup_id: lineup.id,
-          player_registration_id: player.player_registration_id,
-          is_starter: player.is_starter,
-          is_substitute: !player.is_starter,
-          position: player.position,
-          football_position: player.player_natural_position ?? null,
-          player_natural_position: player.player_natural_position ?? null,
-          slot_key: player.slot_key ?? null,
-          display_role: player.display_role ?? null,
-          display_order: player.display_order ?? null,
-          is_captain: player.player_registration_id === captainId,
-        })),
-      );
-    if (insertError) throw insertError;
-    await saveLineupSetPieceTakers(
-      lineup.id,
-      selectedPlayerIds,
-      input.penalty_taker_ids,
-      input.free_kick_taker_ids,
+    const lineup = await persistSubmittedLineup(
+      input,
+      fixture.season_id,
+      req.auth!.userId,
+      captainId,
     );
     await saveManagerPreference(
       req.auth!.userId,

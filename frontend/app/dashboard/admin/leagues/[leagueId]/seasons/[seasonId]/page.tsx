@@ -44,6 +44,7 @@ import {
 } from "@flms/shared";
 import { api, publicApi } from "@/lib/api";
 import { clearAuth } from "@/lib/auth";
+import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 
 type TabId =
   | "dashboard"
@@ -1388,6 +1389,7 @@ function ratingBadgeClass(value: number) {
 
 type PlayerEventMeta = {
   goals: number;
+  ownGoals: number;
   assists: number;
   yellow: boolean;
   red: boolean;
@@ -1401,6 +1403,7 @@ type PlayerEventMeta = {
 function blankPlayerEventMeta(): PlayerEventMeta {
   return {
     goals: 0,
+    ownGoals: 0,
     assists: 0,
     yellow: false,
     red: false,
@@ -1432,6 +1435,7 @@ function buildPlayerEventMeta(
     const meta = ensurePlayerEventMeta(map, playerId);
     const type = String(event.type ?? "");
     if (type === "GOAL" || type === "PENALTY_GOAL") meta.goals += 1;
+    if (type === "OWN_GOAL") meta.ownGoals += 1;
     if (event.related_player_registration_id) {
       ensurePlayerEventMeta(
         map,
@@ -1519,10 +1523,19 @@ function LineupEventIcons({
         ) : null}
         {meta.goals ? (
           <span
-            className={`${badgeBase} absolute -right-1 bottom-0 bg-white text-slate-950`}
+            className={`${badgeBase} absolute -right-1 ${meta.ownGoals ? "bottom-5" : "bottom-0"} bg-white text-slate-950`}
             title="Goal"
           >
             ⚽{meta.goals > 1 ? meta.goals : ""}
+          </span>
+        ) : null}
+        {meta.ownGoals ? (
+          <span
+            className={`${badgeBase} absolute -right-1 bottom-0 gap-0.5 bg-white text-red-600 ring-1 ring-red-200`}
+            title="Own goal"
+          >
+            <OwnGoalIcon />
+            {meta.ownGoals > 1 ? meta.ownGoals : ""}
           </span>
         ) : null}
         {meta.assists ? (
@@ -1566,6 +1579,15 @@ function LineupEventIcons({
       {meta.goals ? (
         <span className={`${badgeBase} bg-white text-slate-950`} title="Goal">
           ⚽{meta.goals > 1 ? meta.goals : ""}
+        </span>
+      ) : null}
+      {meta.ownGoals ? (
+        <span
+          className={`${badgeBase} gap-0.5 bg-white text-red-600 ring-1 ring-red-200`}
+          title="Own goal"
+        >
+          <OwnGoalIcon />
+          {meta.ownGoals > 1 ? meta.ownGoals : ""}
         </span>
       ) : null}
       {meta.assists ? (

@@ -426,10 +426,45 @@ create table if not exists public.player_season_registrations (
     (identity_mode = 'GENERATED' and is_generated = true)
     or identity_mode = 'VERIFIED'
   ),
+  constraint player_registration_suspension_state_check check (
+    (
+      player_status = 'SUSPENDED'
+      and nullif(btrim(suspension_reason), '') is not null
+      and suspension_type in ('UNTIL_ADMIN_UNSUSPENDS', 'UNTIL_DATE', 'NEXT_MATCHES')
+      and suspended_by is not null
+      and suspended_at is not null
+      and (
+        (
+          suspension_type = 'UNTIL_DATE'
+          and suspension_until is not null
+          and suspension_matches_remaining is null
+        )
+        or (
+          suspension_type = 'NEXT_MATCHES'
+          and suspension_until is null
+          and suspension_matches_remaining >= 1
+        )
+        or (
+          suspension_type = 'UNTIL_ADMIN_UNSUSPENDS'
+          and suspension_until is null
+          and suspension_matches_remaining is null
+        )
+      )
+    )
+    or (
+      player_status <> 'SUSPENDED'
+      and suspension_reason is null
+      and suspension_type is null
+      and suspension_until is null
+      and suspension_matches_remaining is null
+    )
+  ),
   constraint player_registrations_team_season_fkey
     foreign key (team_registration_id, season_id)
     references public.team_registrations(id, season_id)
     on delete cascade,
+  constraint player_season_registrations_id_season_id_key
+    unique (id, season_id),
   unique (season_id, player_id)
 );
 
@@ -524,6 +559,194 @@ create table if not exists public.player_abilities (
   updated_at timestamptz not null default now()
 );
 
+create index if not exists player_abilities_player_id_idx
+  on public.player_abilities(player_id);
+
+create index if not exists player_abilities_season_team_idx
+  on public.player_abilities(season_id, team_registration_id);
+
+create or replace function app_private.enforce_player_ability_registration()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  registration_record public.player_season_registrations%rowtype;
+  expected_position public.football_position;
+begin
+  select *
+  into registration_record
+  from public.player_season_registrations registration
+  where registration.id = new.player_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Player ability registration does not exist.';
+  end if;
+
+  expected_position := coalesce(
+    registration_record.football_position,
+    case registration_record.position
+      when 'GK' then 'GK'::public.football_position
+      when 'DEF' then 'CB'::public.football_position
+      when 'MID' then 'CM'::public.football_position
+      when 'FWD' then 'ST'::public.football_position
+    end
+  );
+
+  if new.player_id is distinct from registration_record.player_id
+    or new.team_registration_id is distinct from registration_record.team_registration_id
+    or new.season_id is distinct from registration_record.season_id
+    or new.position is distinct from expected_position then
+    raise exception using
+      errcode = '23514',
+      message = 'Player ability identity fields must match its season registration.';
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.sync_player_registration_ability_tier()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if tg_op = 'DELETE' then
+    update public.player_season_registrations
+    set
+      ability_rating = null,
+      updated_at = now()
+    where id = old.player_registration_id
+      and ability_rating is not null;
+    return old;
+  end if;
+
+  update public.player_season_registrations
+  set
+    ability_rating = new.rating_tier,
+    updated_at = now()
+  where id = new.player_registration_id
+    and ability_rating is distinct from new.rating_tier;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.protect_player_ability_dependency()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  ability_record public.player_abilities%rowtype;
+  old_expected_position public.football_position;
+  new_expected_position public.football_position;
+begin
+  select *
+  into ability_record
+  from public.player_abilities ability
+  where ability.player_registration_id = old.id;
+
+  if not found then
+    if new.ability_rating is not null then
+      raise exception using
+        errcode = '23514',
+        message = 'A registration cannot have an ability tier without a player ability record.';
+    end if;
+    return new;
+  end if;
+
+  old_expected_position := coalesce(
+    old.football_position,
+    case old.position
+      when 'GK' then 'GK'::public.football_position
+      when 'DEF' then 'CB'::public.football_position
+      when 'MID' then 'CM'::public.football_position
+      when 'FWD' then 'ST'::public.football_position
+    end
+  );
+  new_expected_position := coalesce(
+    new.football_position,
+    case new.position
+      when 'GK' then 'GK'::public.football_position
+      when 'DEF' then 'CB'::public.football_position
+      when 'MID' then 'CM'::public.football_position
+      when 'FWD' then 'ST'::public.football_position
+    end
+  );
+
+  if new.player_id is distinct from old.player_id
+    or new.team_registration_id is distinct from old.team_registration_id
+    or new.season_id is distinct from old.season_id
+    or new_expected_position is distinct from old_expected_position then
+    raise exception using
+      errcode = '23514',
+      message = 'Rated player identity or position cannot change until its ability record is regenerated.';
+  end if;
+
+  if new.ability_rating is distinct from ability_record.rating_tier then
+    raise exception using
+      errcode = '23514',
+      message = 'Registration ability tier must match the player ability record.';
+  end if;
+
+  return new;
+end
+$function$;
+
+revoke all on function app_private.enforce_player_ability_registration()
+from public, anon, authenticated;
+
+revoke all on function app_private.sync_player_registration_ability_tier()
+from public, anon, authenticated;
+
+revoke all on function app_private.protect_player_ability_dependency()
+from public, anon, authenticated;
+
+drop trigger if exists enforce_player_ability_registration
+on public.player_abilities;
+
+create trigger enforce_player_ability_registration
+before insert or update of
+  player_registration_id,
+  player_id,
+  team_registration_id,
+  season_id,
+  position
+on public.player_abilities
+for each row
+execute function app_private.enforce_player_ability_registration();
+
+drop trigger if exists sync_player_registration_ability_tier
+on public.player_abilities;
+
+create trigger sync_player_registration_ability_tier
+after insert or update of rating_tier or delete
+on public.player_abilities
+for each row
+execute function app_private.sync_player_registration_ability_tier();
+
+drop trigger if exists protect_player_ability_dependency
+on public.player_season_registrations;
+
+create trigger protect_player_ability_dependency
+before update of
+  player_id,
+  team_registration_id,
+  season_id,
+  position,
+  football_position,
+  ability_rating
+on public.player_season_registrations
+for each row
+execute function app_private.protect_player_ability_dependency();
+
 -- Fixtures reference season_groups, so the parent relation must exist first
 -- when this schema is installed on a clean database.
 create table if not exists public.season_groups (
@@ -533,7 +756,8 @@ create table if not exists public.season_groups (
   locked boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (season_id, name)
+  unique (season_id, name),
+  constraint season_groups_id_season_id_key unique (id, season_id)
 );
 
 create table if not exists public.fixtures (
@@ -543,7 +767,7 @@ create table if not exists public.fixtures (
   round_no integer not null,
   matchday_number integer,
   stage text not null default 'LEAGUE',
-  group_id uuid references public.season_groups(id) on delete set null,
+  group_id uuid,
   group_name text,
   home_team_registration_id uuid,
   away_team_registration_id uuid,
@@ -610,6 +834,10 @@ create table if not exists public.fixtures (
   constraint fixtures_away_team_registration_id_fkey
     foreign key (away_team_registration_id, season_id)
     references public.team_registrations(id, season_id),
+  constraint fixtures_group_id_fkey
+    foreign key (group_id, season_id)
+    references public.season_groups(id, season_id)
+    on delete set null (group_id),
   constraint fixtures_id_season_id_key unique (id, season_id)
 );
 
@@ -701,6 +929,299 @@ create table if not exists public.lineup_set_piece_takers (
 create index if not exists idx_lineup_set_piece_takers_lineup
   on public.lineup_set_piece_takers(lineup_id, set_piece_type, priority);
 
+create index if not exists lineups_captain_id_idx
+  on public.lineups(captain_id)
+  where captain_id is not null;
+
+create index if not exists lineup_set_piece_takers_player_lineup_idx
+  on public.lineup_set_piece_takers(player_registration_id, lineup_id);
+
+create or replace function app_private.enforce_lineup_captain_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  captain_team_id uuid;
+  captain_season_id uuid;
+begin
+  if new.captain_id is null then
+    return new;
+  end if;
+
+  select
+    player_registration.team_registration_id,
+    player_registration.season_id
+  into
+    captain_team_id,
+    captain_season_id
+  from public.player_season_registrations player_registration
+  where player_registration.id = new.captain_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Lineup captain registration does not exist.';
+  end if;
+
+  if captain_team_id is distinct from new.team_registration_id
+    or captain_season_id is distinct from new.season_id then
+    raise exception using
+      errcode = '23514',
+      message = 'Lineup captain must belong to the lineup team and season.';
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.enforce_lineup_player_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  lineup_team_id uuid;
+  lineup_season_id uuid;
+  player_team_id uuid;
+  player_season_id uuid;
+begin
+  select lineup.team_registration_id, lineup.season_id
+  into lineup_team_id, lineup_season_id
+  from public.lineups lineup
+  where lineup.id = new.lineup_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Lineup does not exist.';
+  end if;
+
+  select
+    player_registration.team_registration_id,
+    player_registration.season_id
+  into
+    player_team_id,
+    player_season_id
+  from public.player_season_registrations player_registration
+  where player_registration.id = new.player_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      message = 'Lineup player registration does not exist.';
+  end if;
+
+  if player_team_id is distinct from lineup_team_id
+    or player_season_id is distinct from lineup_season_id then
+    raise exception using
+      errcode = '23514',
+      message = 'Lineup player must belong to the lineup team and season.';
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.enforce_set_piece_taker_scope()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  lineup_team_id uuid;
+  lineup_season_id uuid;
+  player_team_id uuid;
+  player_season_id uuid;
+begin
+  if not exists (
+    select 1
+    from public.lineup_players lineup_player
+    where lineup_player.lineup_id = new.lineup_id
+      and lineup_player.player_registration_id = new.player_registration_id
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Set-piece taker must belong to the submitted lineup.';
+  end if;
+
+  select lineup.team_registration_id, lineup.season_id
+  into lineup_team_id, lineup_season_id
+  from public.lineups lineup
+  where lineup.id = new.lineup_id;
+
+  select
+    player_registration.team_registration_id,
+    player_registration.season_id
+  into
+    player_team_id,
+    player_season_id
+  from public.player_season_registrations player_registration
+  where player_registration.id = new.player_registration_id;
+
+  if player_team_id is distinct from lineup_team_id
+    or player_season_id is distinct from lineup_season_id then
+    raise exception using
+      errcode = '23514',
+      message = 'Set-piece taker must belong to the lineup team and season.';
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.validate_published_lineup(
+  target_lineup_id uuid
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  lineup_record public.lineups%rowtype;
+  matching_captains integer;
+begin
+  select *
+  into lineup_record
+  from public.lineups lineup
+  where lineup.id = target_lineup_id;
+
+  if not found or lineup_record.status not in ('PENDING', 'CONFIRMED') then
+    return;
+  end if;
+
+  if lineup_record.captain_id is null then
+    raise exception using
+      errcode = '23514',
+      message = 'A pending or confirmed lineup must have a captain.';
+  end if;
+
+  select count(*)
+  into matching_captains
+  from public.lineup_players lineup_player
+  where lineup_player.lineup_id = lineup_record.id
+    and lineup_player.player_registration_id = lineup_record.captain_id
+    and lineup_player.is_starter
+    and lineup_player.is_captain;
+
+  if matching_captains <> 1 then
+    raise exception using
+      errcode = '23514',
+      message = 'Published lineup captain must be exactly one marked starter in that lineup.';
+  end if;
+
+  if exists (
+    select 1
+    from public.lineup_players lineup_player
+    join public.player_season_registrations player_registration
+      on player_registration.id = lineup_player.player_registration_id
+    where lineup_player.lineup_id = lineup_record.id
+      and (
+        player_registration.team_registration_id is distinct from lineup_record.team_registration_id
+        or player_registration.season_id is distinct from lineup_record.season_id
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Published lineup contains a player from another team or season.';
+  end if;
+
+  if exists (
+    select 1
+    from public.lineup_set_piece_takers taker
+    left join public.lineup_players lineup_player
+      on lineup_player.lineup_id = taker.lineup_id
+     and lineup_player.player_registration_id = taker.player_registration_id
+    where taker.lineup_id = lineup_record.id
+      and lineup_player.id is null
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'Published lineup has a set-piece taker outside its submitted squad.';
+  end if;
+end
+$function$;
+
+create or replace function app_private.validate_lineup_after_change()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if tg_table_name = 'lineups' then
+    perform app_private.validate_published_lineup(new.id);
+    return new;
+  end if;
+
+  if tg_op in ('UPDATE', 'DELETE') then
+    perform app_private.validate_published_lineup(old.lineup_id);
+  end if;
+
+  if tg_op in ('INSERT', 'UPDATE') then
+    perform app_private.validate_published_lineup(new.lineup_id);
+    return new;
+  end if;
+
+  return old;
+end
+$function$;
+
+revoke all on function app_private.enforce_lineup_captain_scope() from public;
+revoke all on function app_private.enforce_lineup_player_scope() from public;
+revoke all on function app_private.enforce_set_piece_taker_scope() from public;
+revoke all on function app_private.validate_published_lineup(uuid) from public;
+revoke all on function app_private.validate_lineup_after_change() from public;
+
+drop trigger if exists lineups_enforce_captain_scope
+on public.lineups;
+
+create trigger lineups_enforce_captain_scope
+before insert or update of captain_id, team_registration_id, season_id
+on public.lineups
+for each row
+execute function app_private.enforce_lineup_captain_scope();
+
+drop trigger if exists lineup_players_enforce_scope
+on public.lineup_players;
+
+create trigger lineup_players_enforce_scope
+before insert or update of lineup_id, player_registration_id
+on public.lineup_players
+for each row
+execute function app_private.enforce_lineup_player_scope();
+
+drop trigger if exists lineup_set_piece_takers_enforce_scope
+on public.lineup_set_piece_takers;
+
+create trigger lineup_set_piece_takers_enforce_scope
+before insert or update of lineup_id, player_registration_id
+on public.lineup_set_piece_takers
+for each row
+execute function app_private.enforce_set_piece_taker_scope();
+
+drop trigger if exists lineups_validate_published_state
+on public.lineups;
+
+create trigger lineups_validate_published_state
+after insert or update of status, captain_id, team_registration_id, season_id
+on public.lineups
+for each row
+execute function app_private.validate_lineup_after_change();
+
+drop trigger if exists lineup_players_validate_published_state
+on public.lineup_players;
+
+create trigger lineup_players_validate_published_state
+after insert or update or delete
+on public.lineup_players
+for each row
+execute function app_private.validate_lineup_after_change();
+
 create table if not exists public.manager_team_preferences (
   id uuid primary key default gen_random_uuid(),
   manager_id uuid not null references public.profiles(id) on delete cascade,
@@ -739,6 +1260,10 @@ create table if not exists public.team_match_stats (
   red_cards integer not null check (red_cards between 0 and 3),
   corners integer not null check (corners >= 0),
   created_at timestamptz not null default now(),
+  constraint team_match_stats_shot_consistency_check check (
+    shots_off_target = shots - shots_on_target
+    and hit_woodwork <= shots_off_target
+  ),
   unique (fixture_id, team_registration_id)
 );
 
@@ -788,6 +1313,19 @@ create table if not exists public.player_match_stats (
   red_cards integer not null check (red_cards between 0 and 1),
   rating numeric(3,1) not null check (rating between 4.5 and 10),
   created_at timestamptz not null default now(),
+  constraint player_match_stats_penalty_consistency_check check (
+    penalty_scored <= goals
+    and penalty_scored + penalty_missed <= shots
+    and penalty_saved_for_gk <= saves
+    and (
+      accurate_long_balls is null
+      or accurate_long_balls <= accurate_passes
+    )
+    and (
+      not clean_sheet
+      or coalesce(goals_conceded, 0) = 0
+    )
+  ),
   unique (fixture_id, player_registration_id)
 );
 
@@ -804,7 +1342,11 @@ create table if not exists public.match_events (
   type public.match_event_type not null,
   player_registration_id uuid not null references public.player_season_registrations(id),
   related_player_registration_id uuid references public.player_season_registrations(id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint match_events_distinct_players_check check (
+    related_player_registration_id is null
+    or related_player_registration_id <> player_registration_id
+  )
 );
 
 create table if not exists public.match_substitutions (
@@ -829,7 +1371,11 @@ create table if not exists public.match_injuries (
   minute integer not null check (minute between 1 and 130),
   forced_substitution boolean not null default false,
   expected_matches_out integer not null default 0 check (expected_matches_out >= 0),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint match_injuries_descriptor_check check (
+    nullif(btrim(injury_type), '') is not null
+    and nullif(btrim(severity), '') is not null
+  )
 );
 
 create table if not exists public.player_suspensions (
@@ -842,13 +1388,58 @@ create table if not exists public.player_suspensions (
   matches_remaining integer not null default 1 check (matches_remaining >= 0),
   status text not null default 'ACTIVE' check (status in ('ACTIVE', 'SERVED', 'CANCELLED')),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint player_suspensions_integrity_check check (
+    nullif(btrim(reason), '') is not null
+    and reason in ('RED_CARD', 'YELLOW_CARD_ACCUMULATION')
+    and (
+      (
+        status = 'ACTIVE'
+        and matches_remaining > 0
+      )
+      or (
+        status in ('SERVED', 'CANCELLED')
+        and matches_remaining = 0
+      )
+    )
+  )
 );
+
+create unique index if not exists match_substitutions_fixture_outgoing_uidx
+  on public.match_substitutions(fixture_id, player_out_registration_id);
+
+create unique index if not exists match_substitutions_fixture_incoming_uidx
+  on public.match_substitutions(fixture_id, player_in_registration_id);
+
+create unique index if not exists match_injuries_fixture_player_uidx
+  on public.match_injuries(fixture_id, player_registration_id);
+
+create index if not exists match_injuries_active_player_idx
+  on public.match_injuries(player_registration_id, created_at desc)
+  where expected_matches_out > 0;
+
+create index if not exists match_injuries_active_team_idx
+  on public.match_injuries(team_registration_id, fixture_id)
+  where expected_matches_out > 0;
+
+create unique index if not exists player_suspensions_one_active_player_uidx
+  on public.player_suspensions(player_registration_id)
+  where status = 'ACTIVE'
+    and matches_remaining > 0;
+
+create index if not exists player_suspensions_active_team_idx
+  on public.player_suspensions(team_registration_id, player_registration_id)
+  where status = 'ACTIVE'
+    and matches_remaining > 0;
+
+create index if not exists player_suspensions_source_fixture_idx
+  on public.player_suspensions(source_fixture_id)
+  where source_fixture_id is not null;
 
 create table if not exists public.standings (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references public.seasons(id) on delete cascade,
-  team_registration_id uuid not null references public.team_registrations(id) on delete cascade,
+  team_registration_id uuid not null,
   played integer not null default 0,
   won integer not null default 0,
   drawn integer not null default 0,
@@ -860,13 +1451,35 @@ create table if not exists public.standings (
   fair_play_score integer not null default 0,
   admin_draw_rank integer,
   updated_at timestamptz not null default now(),
+  constraint standings_team_registration_id_fkey
+    foreign key (team_registration_id, season_id)
+    references public.team_registrations(id, season_id)
+    on delete cascade,
+  constraint standings_non_negative_totals_check check (
+    played >= 0
+    and won >= 0
+    and drawn >= 0
+    and lost >= 0
+    and goals_for >= 0
+    and goals_against >= 0
+    and points >= 0
+    and fair_play_score >= 0
+  ),
+  constraint standings_record_consistency_check check (
+    played = won + drawn + lost
+    and goal_difference = goals_for - goals_against
+    and points = won * 3 + drawn
+  ),
+  constraint standings_admin_draw_rank_check check (
+    admin_draw_rank is null or admin_draw_rank > 0
+  ),
   unique (season_id, team_registration_id)
 );
 
 create table if not exists public.player_season_stats (
   id uuid primary key default gen_random_uuid(),
   season_id uuid not null references public.seasons(id) on delete cascade,
-  player_registration_id uuid not null references public.player_season_registrations(id) on delete cascade,
+  player_registration_id uuid not null,
   appearances integer not null default 0,
   starts integer not null default 0,
   minutes_played integer not null default 0,
@@ -891,6 +1504,59 @@ create table if not exists public.player_season_stats (
   lowest_match_rating numeric(3,1),
   player_of_match_count integer not null default 0,
   updated_at timestamptz not null default now(),
+  constraint player_season_stats_player_registration_id_fkey
+    foreign key (player_registration_id, season_id)
+    references public.player_season_registrations(id, season_id)
+    on delete cascade,
+  constraint player_season_stats_non_negative_dashboard_stats check (
+    appearances >= 0
+    and starts >= 0
+    and minutes_played >= 0
+    and goals >= 0
+    and assists >= 0
+    and shots >= 0
+    and shots_on_target >= 0
+    and chances_created >= 0
+    and big_chances_created >= 0
+    and total_passes >= 0
+    and accurate_passes >= 0
+    and dribbles_attempted >= 0
+    and successful_dribbles >= 0
+    and dribbled_past >= 0
+    and dispossessed >= 0
+    and tackles >= 0
+    and interceptions >= 0
+    and yellow_cards >= 0
+    and red_cards >= 0
+    and player_of_match_count >= 0
+  ),
+  constraint player_season_stats_aggregate_consistency_check check (
+    starts <= appearances
+    and minutes_played <= appearances * 130
+    and shots_on_target <= shots
+    and accurate_passes <= total_passes
+    and successful_dribbles <= dribbles_attempted
+    and player_of_match_count <= appearances
+    and (
+      (
+        appearances = 0
+        and average_rating is null
+        and best_match_rating is null
+        and lowest_match_rating is null
+      )
+      or (
+        appearances > 0
+        and average_rating is not null
+        and best_match_rating is not null
+        and lowest_match_rating is not null
+        and average_rating between 4.5 and 10
+        and best_match_rating between 4.5 and 10
+        and lowest_match_rating between 4.5 and 10
+        and lowest_match_rating <= average_rating
+        and average_rating <= best_match_rating
+      )
+    )
+  ),
   unique (season_id, player_registration_id)
 );
 
@@ -918,26 +1584,26 @@ alter table public.player_season_stats
 alter table public.player_season_stats
   add constraint player_season_stats_non_negative_dashboard_stats
   check (
-    starts >= 0
+    appearances >= 0
+    and starts >= 0
     and minutes_played >= 0
+    and goals >= 0
+    and assists >= 0
     and shots >= 0
     and shots_on_target >= 0
-    and shots_on_target <= shots
     and chances_created >= 0
     and big_chances_created >= 0
     and total_passes >= 0
     and accurate_passes >= 0
-    and accurate_passes <= total_passes
     and dribbles_attempted >= 0
     and successful_dribbles >= 0
-    and successful_dribbles <= dribbles_attempted
     and dribbled_past >= 0
     and dispossessed >= 0
     and tackles >= 0
     and interceptions >= 0
+    and yellow_cards >= 0
+    and red_cards >= 0
     and player_of_match_count >= 0
-    and (best_match_rating is null or best_match_rating between 5.5 and 9.5)
-    and (lowest_match_rating is null or lowest_match_rating between 5.5 and 9.5)
   );
 
 create table if not exists public.manager_messages (
@@ -976,8 +1642,8 @@ alter table public.seasons
 
 alter table public.seasons
   add constraint seasons_champion_team_fk
-  foreign key (champion_team_registration_id)
-  references public.team_registrations(id);
+  foreign key (champion_team_registration_id, id)
+  references public.team_registrations(id, season_id);
 
 create index if not exists idx_seasons_league on public.seasons(league_id);
 create index if not exists idx_seasons_phase on public.seasons(phase);
@@ -1000,6 +1666,17 @@ create unique index if not exists fixtures_unique_real_team_pair_per_stage
     and away_team_registration_id is not null
     and status <> 'CANCELLED';
 create index if not exists idx_lineups_fixture on public.lineups(fixture_id);
+create index if not exists idx_team_match_stats_team_registration
+  on public.team_match_stats(team_registration_id, fixture_id);
+create index if not exists idx_player_match_stats_player_registration
+  on public.player_match_stats(player_registration_id, fixture_id);
+create index if not exists idx_match_events_fixture_minute
+  on public.match_events(fixture_id, minute);
+create index if not exists idx_match_events_player_registration
+  on public.match_events(player_registration_id, fixture_id);
+create index if not exists idx_match_events_related_player_registration
+  on public.match_events(related_player_registration_id, fixture_id)
+  where related_player_registration_id is not null;
 create index if not exists idx_standings_season_sort on public.standings(season_id, points desc, goal_difference desc, goals_for desc, fair_play_score asc);
 create index if not exists idx_player_stats_season_goals on public.player_season_stats(season_id, goals desc);
 create index if not exists idx_manager_messages_season on public.manager_messages(season_id, created_at desc);
@@ -1055,6 +1732,863 @@ create trigger enforce_season_group_team_consistency
   for each row
   execute function app_private.enforce_season_group_team_consistency();
 
+create or replace function app_private.enforce_team_match_stats_participant()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
+begin
+  select
+    home_team_registration_id,
+    away_team_registration_id
+  into
+    fixture_home_team_id,
+    fixture_away_team_id
+  from public.fixtures
+  where id = new.fixture_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'team_match_stats_fixture_id_fkey',
+      message = 'The referenced fixture does not exist.';
+  end if;
+
+  if new.team_registration_id is distinct from fixture_home_team_id
+    and new.team_registration_id is distinct from fixture_away_team_id then
+    raise exception using
+      errcode = '23514',
+      constraint = 'team_match_stats_fixture_participant_check',
+      message = 'Team match statistics must belong to the fixture home or away team.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_team_match_stats_participant()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_fixture_team_match_stats_participants()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1
+    from public.team_match_stats team_stat
+    where team_stat.fixture_id = new.id
+      and team_stat.team_registration_id is distinct from new.home_team_registration_id
+      and team_stat.team_registration_id is distinct from new.away_team_registration_id
+  ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'fixtures_team_match_stats_participant_check',
+      message = 'Fixture participants cannot exclude a team that already has match statistics.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_fixture_team_match_stats_participants()
+from public, anon, authenticated;
+
+create or replace function app_private.validate_team_match_stats_pair()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  target_fixture_id uuid;
+  affected_fixture_ids uuid[];
+  stat_count integer;
+  possession_total integer;
+begin
+  if tg_op = 'DELETE' then
+    affected_fixture_ids := array[old.fixture_id];
+  elsif tg_op = 'UPDATE' then
+    affected_fixture_ids := array[new.fixture_id, old.fixture_id];
+  else
+    affected_fixture_ids := array[new.fixture_id];
+  end if;
+
+  for target_fixture_id in
+    select distinct fixture_id
+    from unnest(affected_fixture_ids) affected_fixture(fixture_id)
+    where fixture_id is not null
+  loop
+    if not exists (
+      select 1
+      from public.fixtures
+      where id = target_fixture_id
+    ) then
+      continue;
+    end if;
+
+    select count(*), coalesce(sum(possession), 0)
+    into stat_count, possession_total
+    from public.team_match_stats
+    where fixture_id = target_fixture_id;
+
+    if stat_count not in (0, 2) then
+      raise exception using
+        errcode = '23514',
+        constraint = 'team_match_stats_complete_fixture_pair_check',
+        message = 'A fixture must have either no team statistics or one row for each participant.';
+    end if;
+
+    if stat_count = 2 and possession_total <> 100 then
+      raise exception using
+        errcode = '23514',
+        constraint = 'team_match_stats_possession_total_check',
+        message = 'Home and away possession must total 100.';
+    end if;
+  end loop;
+
+  return null;
+end;
+$$;
+
+revoke all
+on function app_private.validate_team_match_stats_pair()
+from public, anon, authenticated;
+
+drop trigger if exists enforce_team_match_stats_participant
+on public.team_match_stats;
+
+create trigger enforce_team_match_stats_participant
+  before insert or update of fixture_id, team_registration_id
+  on public.team_match_stats
+  for each row
+  execute function app_private.enforce_team_match_stats_participant();
+
+drop trigger if exists enforce_fixture_team_match_stats_participants
+on public.fixtures;
+
+create trigger enforce_fixture_team_match_stats_participants
+  before update of home_team_registration_id, away_team_registration_id
+  on public.fixtures
+  for each row
+  execute function app_private.enforce_fixture_team_match_stats_participants();
+
+drop trigger if exists validate_team_match_stats_pair
+on public.team_match_stats;
+
+create constraint trigger validate_team_match_stats_pair
+  after insert or update or delete
+  on public.team_match_stats
+  deferrable initially deferred
+  for each row
+  execute function app_private.validate_team_match_stats_pair();
+
+create or replace function app_private.enforce_player_match_stat_participant()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  fixture_season_id uuid;
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
+  player_season_id uuid;
+  player_team_id uuid;
+begin
+  select season_id, home_team_registration_id, away_team_registration_id
+  into fixture_season_id, fixture_home_team_id, fixture_away_team_id
+  from public.fixtures
+  where id = new.fixture_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'player_match_stats_fixture_id_fkey',
+      message = 'The referenced fixture does not exist.';
+  end if;
+
+  select season_id, team_registration_id
+  into player_season_id, player_team_id
+  from public.player_season_registrations
+  where id = new.player_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'player_match_stats_player_registration_id_fkey',
+      message = 'The referenced player registration does not exist.';
+  end if;
+
+  if player_season_id is distinct from fixture_season_id
+    or (
+      player_team_id is distinct from fixture_home_team_id
+      and player_team_id is distinct from fixture_away_team_id
+    ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'player_match_stats_fixture_participant_check',
+      message = 'Player match statistics must belong to a registered participant in the same fixture season.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_player_match_stat_participant()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_match_event_participants()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  fixture_season_id uuid;
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
+  player_season_id uuid;
+  player_team_id uuid;
+  related_player_season_id uuid;
+  related_player_team_id uuid;
+begin
+  select season_id, home_team_registration_id, away_team_registration_id
+  into fixture_season_id, fixture_home_team_id, fixture_away_team_id
+  from public.fixtures
+  where id = new.fixture_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'match_events_fixture_id_fkey',
+      message = 'The referenced fixture does not exist.';
+  end if;
+
+  select season_id, team_registration_id
+  into player_season_id, player_team_id
+  from public.player_season_registrations
+  where id = new.player_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'match_events_player_registration_id_fkey',
+      message = 'The referenced event player registration does not exist.';
+  end if;
+
+  if player_season_id is distinct from fixture_season_id
+    or (
+      player_team_id is distinct from fixture_home_team_id
+      and player_team_id is distinct from fixture_away_team_id
+    ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'match_events_fixture_participant_check',
+      message = 'A match event player must be a registered participant in the same fixture season.';
+  end if;
+
+  if new.type <> 'OWN_GOAL'
+    and (
+      (new.side = 'HOME' and player_team_id is distinct from fixture_home_team_id)
+      or (new.side = 'AWAY' and player_team_id is distinct from fixture_away_team_id)
+    ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'match_events_side_player_check',
+      message = 'The event side must match the player team, except for an own goal.';
+  end if;
+
+  if new.related_player_registration_id is not null then
+    select season_id, team_registration_id
+    into related_player_season_id, related_player_team_id
+    from public.player_season_registrations
+    where id = new.related_player_registration_id;
+
+    if not found then
+      raise exception using
+        errcode = '23503',
+        constraint = 'match_events_related_player_registration_id_fkey',
+        message = 'The referenced related player registration does not exist.';
+    end if;
+
+    if related_player_season_id is distinct from fixture_season_id
+      or (
+        related_player_team_id is distinct from fixture_home_team_id
+        and related_player_team_id is distinct from fixture_away_team_id
+      )
+      or (
+        new.type <> 'OWN_GOAL'
+        and related_player_team_id is distinct from player_team_id
+      ) then
+      raise exception using
+        errcode = '23514',
+        constraint = 'match_events_related_fixture_participant_check',
+        message = 'The related event player must belong to the correct participating team and fixture season.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_match_event_participants()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_fixture_player_match_data()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1
+    from public.player_match_stats player_stat
+    join public.player_season_registrations player_registration
+      on player_registration.id = player_stat.player_registration_id
+    where player_stat.fixture_id = new.id
+      and (
+        player_registration.season_id is distinct from new.season_id
+        or (
+          player_registration.team_registration_id is distinct from new.home_team_registration_id
+          and player_registration.team_registration_id is distinct from new.away_team_registration_id
+        )
+      )
+  ) or exists (
+    select 1
+    from public.match_events event
+    join public.player_season_registrations player_registration
+      on player_registration.id = event.player_registration_id
+    left join public.player_season_registrations related_player
+      on related_player.id = event.related_player_registration_id
+    where event.fixture_id = new.id
+      and (
+        player_registration.season_id is distinct from new.season_id
+        or (
+          player_registration.team_registration_id is distinct from new.home_team_registration_id
+          and player_registration.team_registration_id is distinct from new.away_team_registration_id
+        )
+        or (
+          event.type <> 'OWN_GOAL'
+          and (
+            (event.side = 'HOME' and player_registration.team_registration_id is distinct from new.home_team_registration_id)
+            or (event.side = 'AWAY' and player_registration.team_registration_id is distinct from new.away_team_registration_id)
+          )
+        )
+        or (
+          event.related_player_registration_id is not null
+          and (
+            related_player.season_id is distinct from new.season_id
+            or (
+              related_player.team_registration_id is distinct from new.home_team_registration_id
+              and related_player.team_registration_id is distinct from new.away_team_registration_id
+            )
+            or (
+              event.type <> 'OWN_GOAL'
+              and related_player.team_registration_id is distinct from player_registration.team_registration_id
+            )
+          )
+        )
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'fixtures_player_match_data_participant_check',
+      message = 'Fixture season or participants cannot invalidate existing player match statistics or events.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_fixture_player_match_data()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_player_registration_match_data()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1
+    from public.player_match_stats player_stat
+    join public.fixtures fixture
+      on fixture.id = player_stat.fixture_id
+    where player_stat.player_registration_id = new.id
+      and (
+        new.season_id is distinct from fixture.season_id
+        or (
+          new.team_registration_id is distinct from fixture.home_team_registration_id
+          and new.team_registration_id is distinct from fixture.away_team_registration_id
+        )
+      )
+  ) or exists (
+    select 1
+    from public.match_events event
+    join public.fixtures fixture
+      on fixture.id = event.fixture_id
+    where event.player_registration_id = new.id
+      and (
+        new.season_id is distinct from fixture.season_id
+        or (
+          new.team_registration_id is distinct from fixture.home_team_registration_id
+          and new.team_registration_id is distinct from fixture.away_team_registration_id
+        )
+        or (
+          event.type <> 'OWN_GOAL'
+          and (
+            (event.side = 'HOME' and new.team_registration_id is distinct from fixture.home_team_registration_id)
+            or (event.side = 'AWAY' and new.team_registration_id is distinct from fixture.away_team_registration_id)
+          )
+        )
+      )
+  ) or exists (
+    select 1
+    from public.match_events event
+    join public.fixtures fixture
+      on fixture.id = event.fixture_id
+    join public.player_season_registrations event_player
+      on event_player.id = event.player_registration_id
+    where event.related_player_registration_id = new.id
+      and (
+        new.season_id is distinct from fixture.season_id
+        or (
+          new.team_registration_id is distinct from fixture.home_team_registration_id
+          and new.team_registration_id is distinct from fixture.away_team_registration_id
+        )
+        or (
+          event.type <> 'OWN_GOAL'
+          and new.team_registration_id is distinct from event_player.team_registration_id
+        )
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'player_registrations_match_data_consistency_check',
+      message = 'A player registration cannot be changed in a way that invalidates existing match statistics or events.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_player_registration_match_data()
+from public, anon, authenticated;
+
+drop trigger if exists enforce_player_match_stat_participant
+on public.player_match_stats;
+
+create trigger enforce_player_match_stat_participant
+  before insert or update of fixture_id, player_registration_id
+  on public.player_match_stats
+  for each row
+  execute function app_private.enforce_player_match_stat_participant();
+
+drop trigger if exists enforce_match_event_participants
+on public.match_events;
+
+create trigger enforce_match_event_participants
+  before insert or update of fixture_id, side, type, player_registration_id, related_player_registration_id
+  on public.match_events
+  for each row
+  execute function app_private.enforce_match_event_participants();
+
+drop trigger if exists enforce_fixture_player_match_data
+on public.fixtures;
+
+create trigger enforce_fixture_player_match_data
+  before update of season_id, home_team_registration_id, away_team_registration_id
+  on public.fixtures
+  for each row
+  execute function app_private.enforce_fixture_player_match_data();
+
+drop trigger if exists enforce_player_registration_match_data
+on public.player_season_registrations;
+
+create trigger enforce_player_registration_match_data
+  before update of season_id, team_registration_id
+  on public.player_season_registrations
+  for each row
+  execute function app_private.enforce_player_registration_match_data();
+
+create or replace function app_private.enforce_match_substitution_integrity()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  fixture_season_id uuid;
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
+  outgoing_season_id uuid;
+  outgoing_team_id uuid;
+  incoming_season_id uuid;
+  incoming_team_id uuid;
+begin
+  select season_id, home_team_registration_id, away_team_registration_id
+  into fixture_season_id, fixture_home_team_id, fixture_away_team_id
+  from public.fixtures
+  where id = new.fixture_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'match_substitutions_fixture_id_fkey',
+      message = 'The referenced fixture does not exist.';
+  end if;
+
+  if new.team_registration_id is distinct from fixture_home_team_id
+    and new.team_registration_id is distinct from fixture_away_team_id then
+    raise exception using
+      errcode = '23514',
+      constraint = 'match_substitutions_fixture_team_check',
+      message = 'A substitution team must be a participant in the fixture.';
+  end if;
+
+  select season_id, team_registration_id
+  into outgoing_season_id, outgoing_team_id
+  from public.player_season_registrations
+  where id = new.player_out_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'match_substitutions_player_out_registration_id_fkey',
+      message = 'The outgoing player registration does not exist.';
+  end if;
+
+  select season_id, team_registration_id
+  into incoming_season_id, incoming_team_id
+  from public.player_season_registrations
+  where id = new.player_in_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'match_substitutions_player_in_registration_id_fkey',
+      message = 'The incoming player registration does not exist.';
+  end if;
+
+  if outgoing_season_id is distinct from fixture_season_id
+    or incoming_season_id is distinct from fixture_season_id
+    or outgoing_team_id is distinct from new.team_registration_id
+    or incoming_team_id is distinct from new.team_registration_id then
+    raise exception using
+      errcode = '23514',
+      constraint = 'match_substitutions_player_team_season_check',
+      message = 'Both substitution players must belong to the selected fixture team and season.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_match_substitution_integrity()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_match_injury_integrity()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  fixture_season_id uuid;
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
+  player_season_id uuid;
+  player_team_id uuid;
+begin
+  select season_id, home_team_registration_id, away_team_registration_id
+  into fixture_season_id, fixture_home_team_id, fixture_away_team_id
+  from public.fixtures
+  where id = new.fixture_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'match_injuries_fixture_id_fkey',
+      message = 'The referenced fixture does not exist.';
+  end if;
+
+  select season_id, team_registration_id
+  into player_season_id, player_team_id
+  from public.player_season_registrations
+  where id = new.player_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'match_injuries_player_registration_id_fkey',
+      message = 'The referenced injured player registration does not exist.';
+  end if;
+
+  if (
+      new.team_registration_id is distinct from fixture_home_team_id
+      and new.team_registration_id is distinct from fixture_away_team_id
+    )
+    or player_season_id is distinct from fixture_season_id
+    or player_team_id is distinct from new.team_registration_id then
+    raise exception using
+      errcode = '23514',
+      constraint = 'match_injuries_fixture_participant_check',
+      message = 'An injury must belong to a player on a participating team in the same fixture season.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_match_injury_integrity()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_player_suspension_integrity()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  player_season_id uuid;
+  player_team_id uuid;
+  fixture_season_id uuid;
+  fixture_home_team_id uuid;
+  fixture_away_team_id uuid;
+begin
+  select season_id, team_registration_id
+  into player_season_id, player_team_id
+  from public.player_season_registrations
+  where id = new.player_registration_id;
+
+  if not found then
+    raise exception using
+      errcode = '23503',
+      constraint = 'player_suspensions_player_registration_id_fkey',
+      message = 'The referenced suspended player registration does not exist.';
+  end if;
+
+  if player_season_id is distinct from new.season_id
+    or player_team_id is distinct from new.team_registration_id then
+    raise exception using
+      errcode = '23514',
+      constraint = 'player_suspensions_player_team_season_check',
+      message = 'A suspension must use the player registration team and season.';
+  end if;
+
+  if new.source_fixture_id is not null then
+    select season_id, home_team_registration_id, away_team_registration_id
+    into fixture_season_id, fixture_home_team_id, fixture_away_team_id
+    from public.fixtures
+    where id = new.source_fixture_id;
+
+    if not found then
+      raise exception using
+        errcode = '23503',
+        constraint = 'player_suspensions_source_fixture_id_fkey',
+        message = 'The referenced suspension source fixture does not exist.';
+    end if;
+
+    if fixture_season_id is distinct from new.season_id
+      or (
+        new.team_registration_id is distinct from fixture_home_team_id
+        and new.team_registration_id is distinct from fixture_away_team_id
+      ) then
+      raise exception using
+        errcode = '23514',
+        constraint = 'player_suspensions_source_fixture_check',
+        message = 'A suspension source fixture must include the player team in the same season.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_player_suspension_integrity()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_fixture_absence_data()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1
+    from public.match_substitutions substitution
+    join public.player_season_registrations outgoing_player
+      on outgoing_player.id = substitution.player_out_registration_id
+    join public.player_season_registrations incoming_player
+      on incoming_player.id = substitution.player_in_registration_id
+    where substitution.fixture_id = new.id
+      and (
+        (
+          substitution.team_registration_id is distinct from new.home_team_registration_id
+          and substitution.team_registration_id is distinct from new.away_team_registration_id
+        )
+        or outgoing_player.season_id is distinct from new.season_id
+        or incoming_player.season_id is distinct from new.season_id
+        or outgoing_player.team_registration_id is distinct from substitution.team_registration_id
+        or incoming_player.team_registration_id is distinct from substitution.team_registration_id
+      )
+  ) or exists (
+    select 1
+    from public.match_injuries injury
+    join public.player_season_registrations player_registration
+      on player_registration.id = injury.player_registration_id
+    where injury.fixture_id = new.id
+      and (
+        (
+          injury.team_registration_id is distinct from new.home_team_registration_id
+          and injury.team_registration_id is distinct from new.away_team_registration_id
+        )
+        or player_registration.season_id is distinct from new.season_id
+        or player_registration.team_registration_id is distinct from injury.team_registration_id
+      )
+  ) or exists (
+    select 1
+    from public.player_suspensions suspension
+    where suspension.source_fixture_id = new.id
+      and (
+        suspension.season_id is distinct from new.season_id
+        or (
+          suspension.team_registration_id is distinct from new.home_team_registration_id
+          and suspension.team_registration_id is distinct from new.away_team_registration_id
+        )
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'fixtures_absence_data_consistency_check',
+      message = 'Fixture season or participants cannot invalidate existing substitutions, injuries, or suspensions.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_fixture_absence_data()
+from public, anon, authenticated;
+
+create or replace function app_private.enforce_player_registration_absence_data()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+begin
+  if exists (
+    select 1
+    from public.match_substitutions substitution
+    join public.fixtures fixture
+      on fixture.id = substitution.fixture_id
+    where (
+        substitution.player_out_registration_id = new.id
+        or substitution.player_in_registration_id = new.id
+      )
+      and (
+        new.season_id is distinct from fixture.season_id
+        or new.team_registration_id is distinct from substitution.team_registration_id
+      )
+  ) or exists (
+    select 1
+    from public.match_injuries injury
+    join public.fixtures fixture
+      on fixture.id = injury.fixture_id
+    where injury.player_registration_id = new.id
+      and (
+        new.season_id is distinct from fixture.season_id
+        or new.team_registration_id is distinct from injury.team_registration_id
+      )
+  ) or exists (
+    select 1
+    from public.player_suspensions suspension
+    where suspension.player_registration_id = new.id
+      and (
+        new.season_id is distinct from suspension.season_id
+        or new.team_registration_id is distinct from suspension.team_registration_id
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      constraint = 'player_registrations_absence_data_consistency_check',
+      message = 'A player registration cannot be changed in a way that invalidates substitutions, injuries, or suspensions.';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all
+on function app_private.enforce_player_registration_absence_data()
+from public, anon, authenticated;
+
+drop trigger if exists enforce_match_substitution_integrity
+on public.match_substitutions;
+
+create trigger enforce_match_substitution_integrity
+  before insert or update of fixture_id, team_registration_id, player_out_registration_id, player_in_registration_id
+  on public.match_substitutions
+  for each row
+  execute function app_private.enforce_match_substitution_integrity();
+
+drop trigger if exists enforce_match_injury_integrity
+on public.match_injuries;
+
+create trigger enforce_match_injury_integrity
+  before insert or update of fixture_id, player_registration_id, team_registration_id
+  on public.match_injuries
+  for each row
+  execute function app_private.enforce_match_injury_integrity();
+
+drop trigger if exists enforce_player_suspension_integrity
+on public.player_suspensions;
+
+create trigger enforce_player_suspension_integrity
+  before insert or update of player_registration_id, team_registration_id, season_id, source_fixture_id
+  on public.player_suspensions
+  for each row
+  execute function app_private.enforce_player_suspension_integrity();
+
+drop trigger if exists enforce_fixture_absence_data
+on public.fixtures;
+
+create trigger enforce_fixture_absence_data
+  before update of season_id, home_team_registration_id, away_team_registration_id
+  on public.fixtures
+  for each row
+  execute function app_private.enforce_fixture_absence_data();
+
+drop trigger if exists enforce_player_registration_absence_data
+on public.player_season_registrations;
+
+create trigger enforce_player_registration_absence_data
+  before update of season_id, team_registration_id
+  on public.player_season_registrations
+  for each row
+  execute function app_private.enforce_player_registration_absence_data();
+
 create or replace function app_private.handle_new_user()
 returns trigger
 language plpgsql
@@ -1101,6 +2635,9 @@ alter table public.lineup_set_piece_takers enable row level security;
 alter table public.team_match_stats enable row level security;
 alter table public.player_match_stats enable row level security;
 alter table public.match_events enable row level security;
+alter table public.match_substitutions enable row level security;
+alter table public.match_injuries enable row level security;
+alter table public.player_suspensions enable row level security;
 alter table public.standings enable row level security;
 alter table public.player_season_stats enable row level security;
 alter table public.manager_messages enable row level security;
@@ -1173,6 +2710,18 @@ using (true);
 drop policy if exists "manager_messages_service_only" on public.manager_messages;
 create policy "manager_messages_service_only"
 on public.manager_messages for all
+using (false)
+with check (false);
+
+drop policy if exists "match_injuries_service_only" on public.match_injuries;
+create policy "match_injuries_service_only"
+on public.match_injuries for all
+using (false)
+with check (false);
+
+drop policy if exists "player_suspensions_service_only" on public.player_suspensions;
+create policy "player_suspensions_service_only"
+on public.player_suspensions for all
 using (false)
 with check (false);
 

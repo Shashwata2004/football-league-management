@@ -35,6 +35,7 @@ import {
 } from "@flms/shared";
 import { api } from "@/lib/api";
 import { clearAuth } from "@/lib/auth";
+import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 
 type Section =
   | "Dashboard"
@@ -5601,6 +5602,7 @@ function isManagerGroupKnockoutFormat(format?: string | null) {
 
 type ManagerPlayerEventMeta = {
   goals: number;
+  ownGoals: number;
   assists: number;
   yellow: boolean;
   red: boolean;
@@ -5614,6 +5616,7 @@ type ManagerPlayerEventMeta = {
 function managerBlankEventMeta(): ManagerPlayerEventMeta {
   return {
     goals: 0,
+    ownGoals: 0,
     assists: 0,
     yellow: false,
     red: false,
@@ -5645,6 +5648,7 @@ function managerBuildEventMeta(
     const meta = managerEnsureEventMeta(map, playerId);
     const type = String(event.type ?? "");
     if (type === "GOAL" || type === "PENALTY_GOAL") meta.goals += 1;
+    if (type === "OWN_GOAL") meta.ownGoals += 1;
     if (event.related_player_registration_id) {
       managerEnsureEventMeta(
         map,
@@ -6631,8 +6635,19 @@ function ManagerLineupEventIcons({
           <span className="absolute -left-2 bottom-5 h-4 w-3 rounded-[3px] border border-white/70 bg-red-500 shadow" />
         ) : null}
         {meta.goals ? (
-          <span className="absolute -right-1 bottom-0 inline-grid h-4 min-w-4 place-items-center rounded-full bg-white px-1 text-[9px] text-slate-950 shadow">
+          <span
+            className={`absolute -right-1 ${meta.ownGoals ? "bottom-5" : "bottom-0"} inline-grid h-4 min-w-4 place-items-center rounded-full bg-white px-1 text-[9px] text-slate-950 shadow`}
+          >
             ⚽{meta.goals > 1 ? meta.goals : ""}
+          </span>
+        ) : null}
+        {meta.ownGoals ? (
+          <span
+            className="absolute -right-1 bottom-0 inline-flex h-4 min-w-4 items-center justify-center gap-0.5 rounded-full bg-white px-0.5 text-red-600 shadow ring-1 ring-red-200"
+            title="Own goal"
+          >
+            <OwnGoalIcon />
+            {meta.ownGoals > 1 ? meta.ownGoals : ""}
           </span>
         ) : null}
         {meta.assists ? (
@@ -6659,6 +6674,15 @@ function ManagerLineupEventIcons({
       {meta.subInMinute ? <span>{meta.subInMinute}' ↪</span> : null}
       {meta.goals ? (
         <span title="Goal">⚽{meta.goals > 1 ? meta.goals : ""}</span>
+      ) : null}
+      {meta.ownGoals ? (
+        <span
+          className="inline-flex h-4 min-w-4 items-center justify-center gap-0.5 rounded-full bg-white px-0.5 text-red-600 shadow ring-1 ring-red-200"
+          title="Own goal"
+        >
+          <OwnGoalIcon />
+          {meta.ownGoals > 1 ? meta.ownGoals : ""}
+        </span>
       ) : null}
       {meta.assists ? (
         <span

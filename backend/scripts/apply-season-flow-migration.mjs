@@ -43,12 +43,30 @@ const sql = [
   readFileSync(
     resolve(
       process.cwd(),
+      "../supabase/add-player-ability-registration-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
       "../supabase/add-player-registration-season-consistency.sql",
     ),
     "utf8",
   ),
   readFileSync(
+    resolve(process.cwd(), "../supabase/add-standings-champion-integrity.sql"),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/fixture-generation-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-fixture-group-season-consistency.sql",
+    ),
     "utf8",
   ),
   readFileSync(
@@ -81,7 +99,33 @@ const sql = [
     "utf8",
   ),
   readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-lineup-captain-set-piece-integrity.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
     resolve(process.cwd(), "../supabase/matchday-team-stats-flow.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/add-team-match-stats-integrity.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/add-player-match-event-integrity.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(process.cwd(), "../supabase/add-player-season-stats-integrity.sql"),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
+      "../supabase/add-substitution-injury-suspension-integrity.sql",
+    ),
     "utf8",
   ),
   readFileSync(
