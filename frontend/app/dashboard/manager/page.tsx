@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   LogOut,
   Mail,
+  Menu,
   Plus,
   RefreshCcw,
   ShieldAlert,
@@ -27,6 +28,7 @@ import {
   Trophy,
   User,
   Users,
+  X,
 } from "lucide-react";
 import {
   FootballPosition,
@@ -1082,6 +1084,7 @@ export default function ManagerDashboardPage() {
   const [hasPresentedAvailabilityNotice, setHasPresentedAvailabilityNotice] =
     useState(false);
   const [matchBackOrigin, setMatchBackOrigin] = useState<string | null>(null);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const routeMatchId = pathname.startsWith("/dashboard/manager/results/")
     ? Array.isArray(params.matchId)
       ? params.matchId[0]
@@ -1091,7 +1094,17 @@ export default function ManagerDashboardPage() {
     ? "Other Teams"
     : sectionFromPath(pathname);
 
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavigationOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileNavigationOpen]);
+
   function navigateSection(nextSection: Section) {
+    setMobileNavigationOpen(false);
     if (nextSection === "Other Teams") return;
     setSelectedTeamViewId(null);
     setTeamView(null);
@@ -1373,6 +1386,8 @@ export default function ManagerDashboardPage() {
         section={section}
         unreadMessages={unreadMessages}
         onSection={navigateSection}
+        mobileOpen={mobileNavigationOpen}
+        onClose={() => setMobileNavigationOpen(false)}
       />
       <main className="min-h-screen lg:pl-72">
         <ManagerTopbar
@@ -1382,11 +1397,13 @@ export default function ManagerDashboardPage() {
           activeLeague={activeLeague}
           activeSeason={activeSeason}
           unreadMessages={unreadMessages}
+          mobileOpen={mobileNavigationOpen}
+          onMenuOpen={() => setMobileNavigationOpen(true)}
           onTeamChange={(teamId) =>
             void changeTeam(teamId).catch((error) => setMessage(error.message))
           }
         />
-        <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl px-3 py-5 sm:px-6 sm:py-8 lg:px-8">
           {message ? (
             <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {message}
@@ -1508,15 +1525,35 @@ function ManagerSidebar({
   section,
   unreadMessages,
   onSection,
+  mobileOpen,
+  onClose,
 }: {
   profile: Profile | null;
   activeTeam: TeamRecord | null;
   section: Section;
   unreadMessages: number;
   onSection: (section: Section) => void;
+  mobileOpen: boolean;
+  onClose: () => void;
 }) {
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col overflow-hidden bg-[var(--team-secondary)] text-[var(--team-sidebar-text)] shadow-2xl lg:flex">
+    <>
+      <button
+        type="button"
+        aria-label="Close manager navigation"
+        className={`fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-sm transition-opacity lg:hidden ${
+          mobileOpen
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0"
+        }`}
+        onClick={onClose}
+      />
+      <aside
+        id="manager-navigation"
+        className={`fixed inset-y-0 left-0 z-40 flex w-[min(88vw,18rem)] flex-col overflow-hidden bg-[var(--team-secondary)] text-[var(--team-sidebar-text)] shadow-2xl transition-transform duration-300 lg:z-30 lg:w-72 lg:translate-x-0 ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
       <div className="flex items-center gap-3 border-b border-[var(--team-sidebar-border)] px-6 py-6">
         <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--team-primary)]">
           <Trophy size={22} />
@@ -1527,6 +1564,14 @@ function ManagerSidebar({
             Manager
           </p>
         </div>
+        <button
+          type="button"
+          aria-label="Close manager navigation"
+          className="ml-auto grid h-10 w-10 place-items-center rounded-xl border border-[var(--team-sidebar-border)] lg:hidden"
+          onClick={onClose}
+        >
+          <X size={18} />
+        </button>
       </div>
       <div className="mx-4 mt-5 rounded-3xl border border-[var(--team-sidebar-border)] bg-[var(--team-sidebar-panel)] p-4">
         <div className="flex items-center gap-3">
@@ -1550,7 +1595,10 @@ function ManagerSidebar({
                 ? "bg-[var(--team-primary)] text-[var(--team-primary-text)] shadow-lg shadow-purple-950/30"
                 : "text-[var(--team-sidebar-text)] hover:bg-[var(--team-sidebar-hover)] hover:text-[var(--team-sidebar-text)]"
             }`}
-            onClick={() => onSection(item.label)}
+            onClick={() => {
+              onClose();
+              onSection(item.label);
+            }}
           >
             {item.icon}
             <span className="flex-1">{item.label}</span>
@@ -1572,7 +1620,8 @@ function ManagerSidebar({
         <LogOut size={18} />
         Logout
       </button>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -1583,6 +1632,8 @@ function ManagerTopbar({
   activeLeague,
   activeSeason,
   unreadMessages,
+  mobileOpen,
+  onMenuOpen,
   onTeamChange,
 }: {
   profile: Profile | null;
@@ -1591,14 +1642,27 @@ function ManagerTopbar({
   activeLeague: League | null;
   activeSeason: Season | null;
   unreadMessages: number;
+  mobileOpen: boolean;
+  onMenuOpen: () => void;
   onTeamChange: (teamId: string) => void;
 }) {
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-4 py-4 backdrop-blur lg:px-8">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-        <div>
+      <div className="mx-auto flex max-w-7xl items-start justify-between gap-3 sm:items-center sm:gap-4">
+        <button
+          type="button"
+          aria-label="Open manager navigation"
+          aria-controls="manager-navigation"
+          aria-expanded={mobileOpen}
+          className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm lg:hidden"
+          onClick={onMenuOpen}
+        >
+          <Menu size={20} />
+        </button>
+        <div className="min-w-0 flex-1">
           <select
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none transition focus:border-[var(--team-primary)] focus:ring-4 focus:ring-purple-100"
+            aria-label="Active team"
+            className="w-full max-w-xl truncate rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold outline-none transition focus:border-[var(--team-primary)] focus:ring-4 focus:ring-purple-100"
             value={activeTeamId}
             onChange={(event) => onTeamChange(event.target.value)}
           >
@@ -1619,7 +1683,7 @@ function ManagerTopbar({
             {activeSeason?.name ?? "No season selected"}
           </p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex shrink-0 items-center gap-2 sm:gap-4">
           <div className="relative rounded-full bg-slate-100 p-3 text-slate-700">
             <Bell size={18} />
             {unreadMessages > 0 ? (
@@ -1703,7 +1767,7 @@ function DashboardSection({
         <p className="text-sm font-semibold uppercase tracking-[0.25em] text-[var(--team-primary)]">
           Manager Dashboard
         </p>
-        <h1 className="mt-2 text-4xl font-black">
+        <h1 className="mt-2 text-3xl font-black leading-tight sm:text-4xl">
           Welcome back, {profile?.full_name ?? "Manager"}
         </h1>
         <p className="mt-2 text-slate-600">
@@ -2755,7 +2819,7 @@ function SubmitLineupSection({
           {!loadingBuilder && builder ? (
             <>
               <div className="grid gap-6 xl:grid-cols-[minmax(0,760px)_420px]">
-                <div className="relative h-[820px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
+                <div className="relative h-[760px] overflow-hidden rounded-2xl bg-[#05A967] p-2 shadow-xl ring-1 ring-emerald-800/20 sm:h-[820px] sm:rounded-[2rem] sm:p-5">
                   <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
                   <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
                   <div className="absolute left-1/2 top-1/2 h-12 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/5" />
@@ -2776,7 +2840,7 @@ function SubmitLineupSection({
                     return (
                       <div
                         key={slot.slotKey}
-                        className={`absolute z-10 w-[112px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center transition ${draggedSlotKey && draggedSlotKey !== slot.slotKey ? "bg-white/10 ring-2 ring-white/25" : ""}`}
+                        className={`absolute z-10 w-[82px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center transition sm:w-[112px] ${draggedSlotKey && draggedSlotKey !== slot.slotKey ? "bg-white/10 ring-2 ring-white/25" : ""}`}
                         style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
                         onDragOver={(event) => event.preventDefault()}
                         onDrop={(event) => handleSlotDrop(event, slot.slotKey)}
@@ -2815,7 +2879,7 @@ function SubmitLineupSection({
                             }}
                           >
                             <div
-                              className={`relative grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] bg-white shadow-md transition group-hover:brightness-110 ${fitBorderClass(selected?.fit_label)}`}
+                              className={`relative grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] bg-white shadow-md transition group-hover:brightness-110 sm:h-14 sm:w-14 ${fitBorderClass(selected?.fit_label)}`}
                             >
                               {player.players?.avatar_url ? (
                                 <img
@@ -2839,7 +2903,7 @@ function SubmitLineupSection({
                                 {Number(player.league_rating).toFixed(1)}
                               </span>
                             ) : null}
-                            <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
+                            <div className="mt-1 flex w-full items-center justify-center gap-1 px-0.5 sm:w-32 sm:max-w-[8rem]">
                               {selected?.is_captain ? (
                                 <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-black lowercase leading-none text-slate-700 shadow">
                                   c
@@ -2862,7 +2926,7 @@ function SubmitLineupSection({
                             </p>
                             {captainMenuSlotKey === slot.slotKey ? (
                               <div
-                                className={`absolute left-1/2 z-30 w-40 -translate-x-1/2 rounded-2xl border border-white/20 bg-slate-950/90 p-2 text-white shadow-2xl backdrop-blur ${
+                                className={`absolute left-1/2 z-30 w-24 -translate-x-1/2 rounded-2xl border border-white/20 bg-slate-950/90 p-1 text-white shadow-2xl backdrop-blur sm:w-40 sm:p-2 ${
                                   slot.y > 72
                                     ? "bottom-[calc(100%+0.35rem)]"
                                     : "top-[calc(100%+0.35rem)]"
@@ -2896,7 +2960,7 @@ function SubmitLineupSection({
                           </div>
                         ) : (
                           <div className="group inline-flex flex-col items-center">
-                            <span className="relative grid h-14 w-14 place-items-center rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20 text-emerald-100 shadow-inner transition group-hover:scale-110 group-hover:border-white">
+                            <span className="relative grid h-12 w-12 place-items-center rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20 text-emerald-100 shadow-inner transition group-hover:scale-110 group-hover:border-white sm:h-14 sm:w-14">
                               <User size={28} className="opacity-40" />
                             </span>
                             <span className="mt-1 text-[11px] font-black uppercase tracking-wide text-white/80">
@@ -2909,7 +2973,7 @@ function SubmitLineupSection({
                   })}
                   <div className="absolute bottom-4 left-4">
                     <select
-                      className="max-w-[280px] rounded-full border border-white/15 bg-emerald-700/80 px-4 py-2 text-sm font-black text-white shadow outline-none transition hover:bg-emerald-800/90"
+                      className="max-w-[calc(100vw-3rem)] rounded-full border border-white/15 bg-emerald-700/80 px-3 py-2 text-xs font-black text-white shadow outline-none transition hover:bg-emerald-800/90 sm:max-w-[280px] sm:px-4 sm:text-sm"
                       value={formation}
                       onChange={(event) => changeFormation(event.target.value)}
                       aria-label="Select formation"
@@ -6250,8 +6314,8 @@ function MatchDetailModal({
       >
         ← {backLabel}
       </button>
-      <div className="w-full rounded-[2rem] bg-white p-6 shadow-sm ring-1 ring-slate-200">
-        <div className="flex items-start justify-between gap-4">
+      <div className="w-full rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:rounded-[2rem] sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-sm font-black uppercase tracking-[0.24em] text-[var(--team-primary)]">
               Match Detail
@@ -6450,7 +6514,7 @@ function ManagerMatchLineupPitch({
       {!lineup ? <EmptyState label="No submitted lineup." /> : null}
       {lineup ? (
         <>
-          <div className="relative h-[720px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
+          <div className="relative h-[680px] overflow-hidden rounded-2xl bg-[#05A967] p-2 shadow-xl ring-1 ring-emerald-800/20 sm:h-[720px] sm:rounded-[2rem] sm:p-5">
             <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
             <div className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
             <div className="absolute left-1/2 top-0 h-20 w-40 -translate-x-1/2 rounded-b-3xl border-x-[5px] border-b-[5px] border-white/10" />
@@ -6470,7 +6534,7 @@ function ManagerMatchLineupPitch({
               return (
                 <div
                   key={slot.slotKey}
-                  className="absolute z-10 w-[116px] -translate-x-1/2 -translate-y-1/2 text-center"
+                  className="absolute z-10 w-[82px] -translate-x-1/2 -translate-y-1/2 text-center sm:w-[116px]"
                   style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
                 >
                   {player ? (
@@ -6480,7 +6544,7 @@ function ManagerMatchLineupPitch({
                       onClick={() => (stat ? onPlayerStat(stat) : undefined)}
                       title="View match stats"
                     >
-                      <div className="relative h-14 w-14">
+                      <div className="relative h-12 w-12 sm:h-14 sm:w-14">
                         <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
                           {registration?.players?.avatar_url ? (
                             <img
@@ -6512,7 +6576,7 @@ function ManagerMatchLineupPitch({
                           <ManagerLineupEventIcons meta={meta} overlay />
                         ) : null}
                       </div>
-                      <div className="mt-1 flex max-w-[8rem] items-center justify-center gap-1">
+                      <div className="mt-1 flex w-full items-center justify-center gap-1 px-0.5 sm:max-w-[8rem]">
                         {meta?.injured ? (
                           <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[12px] font-black leading-none text-red-600 shadow ring-1 ring-red-100">
                             +
@@ -6536,7 +6600,7 @@ function ManagerMatchLineupPitch({
                       </p>
                     </button>
                   ) : (
-                    <span className="inline-block h-14 w-14 rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20" />
+                    <span className="inline-block h-12 w-12 rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20 sm:h-14 sm:w-14" />
                   )}
                 </div>
               );
@@ -7174,20 +7238,20 @@ function TeamHero({
   const viewedTheme = themeFromTeam(team);
   return (
     <div
-      className="rounded-[2rem] p-6 shadow-xl"
+      className="min-w-0 rounded-2xl p-4 shadow-xl sm:rounded-[2rem] sm:p-6"
       style={{
         background: `linear-gradient(135deg, ${viewedTheme.primary}, ${viewedTheme.secondary})`,
         color: getReadableTextColor(viewedTheme.primary),
       }}
     >
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <Avatar
             name={team?.teams?.name ?? "Team"}
             src={team?.teams?.logo_url}
           />
-          <div>
-            <h2 className="text-3xl font-black">
+          <div className="min-w-0">
+            <h2 className="break-words text-2xl font-black sm:text-3xl">
               {team?.teams?.name ?? "No team"}
             </h2>
             <p className="text-sm opacity-80">
@@ -7371,7 +7435,7 @@ function AvailabilityNoticeModal({
     );
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/50 p-4 backdrop-blur">
-      <div className="w-full max-w-md rounded-[2rem] bg-white p-6 shadow-2xl">
+      <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <Avatar
@@ -7407,7 +7471,7 @@ function AvailabilityNoticeModal({
 function PageTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div>
-      <h1 className="text-4xl font-black">{title}</h1>
+      <h1 className="break-words text-3xl font-black leading-tight sm:text-4xl">{title}</h1>
       <p className="mt-2 text-slate-600">{subtitle}</p>
     </div>
   );

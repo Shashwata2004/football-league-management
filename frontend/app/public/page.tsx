@@ -24,10 +24,10 @@ export default function PublicPage() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
-      <section className="rounded-2xl bg-slate-950 p-8 text-white">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-5 sm:py-8">
+      <section className="rounded-2xl bg-slate-950 p-5 text-white sm:p-8">
         <p className="text-sm uppercase tracking-wide text-green-300">DBMS Course Project</p>
-        <h1 className="mt-2 text-4xl font-bold">Custom Football League Management System</h1>
+        <h1 className="mt-2 text-3xl font-bold leading-tight sm:text-4xl">Custom Football League Management System</h1>
         <p className="mt-3 max-w-2xl text-slate-300">
           Public fixtures, final results, standings, and player season statistics. Admin-only attributes, formulas, identity data, and
           unconfirmed simulations are not exposed.

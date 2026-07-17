@@ -18,7 +18,7 @@ export default function PublicSeasonPage() {
   }, [params.seasonId]);
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-5 sm:py-8">
       <Card>
         <CardTitle>Standings</CardTitle>
         <div className="mt-4 overflow-x-auto">
@@ -60,7 +60,7 @@ export default function PublicSeasonPage() {
         <div className="mt-4 grid gap-3">
           {fixtures.map((fixture) => (
             <div key={fixture.id} className="rounded-lg border p-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>Round {fixture.round_no}</span>
                 <Badge>{fixture.status}</Badge>
               </div>

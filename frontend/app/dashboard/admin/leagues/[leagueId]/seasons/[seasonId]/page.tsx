@@ -20,6 +20,7 @@ import {
   Home,
   Mail,
   LogOut,
+  Menu,
   MessageSquare,
   PlayCircle,
   Settings,
@@ -31,6 +32,7 @@ import {
   User,
   UserPlus,
   Users,
+  X,
   XCircle,
 } from "lucide-react";
 import {
@@ -1738,6 +1740,16 @@ export default function AdminLeagueSeasonDashboard() {
   );
   const [requestedTeamReturnTab, setRequestedTeamReturnTab] =
     useState<TabId | null>(null);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavigationOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileNavigationOpen]);
 
   async function loadDashboardData() {
     const [me, leagueData, seasonData] = await Promise.all([
@@ -2183,12 +2195,35 @@ export default function AdminLeagueSeasonDashboard() {
 
   return (
     <div className="fixed inset-0 z-50 flex overflow-hidden bg-[#f6f8fb] text-[#0f172a]">
-      <aside className="flex w-[272px] shrink-0 flex-col overflow-y-auto bg-[#0d2035] bg-[radial-gradient(circle_at_top_left,rgba(58,122,255,0.2),transparent_18rem)] text-white shadow-2xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <button
+        type="button"
+        aria-label="Close admin navigation"
+        className={`fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-sm transition-opacity lg:hidden ${
+          mobileNavigationOpen
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0"
+        }`}
+        onClick={() => setMobileNavigationOpen(false)}
+      />
+      <aside
+        id="admin-season-navigation"
+        className={`fixed inset-y-0 left-0 z-40 flex w-[min(88vw,272px)] shrink-0 flex-col overflow-y-auto bg-[#0d2035] bg-[radial-gradient(circle_at_top_left,rgba(58,122,255,0.2),transparent_18rem)] text-white shadow-2xl transition-transform duration-300 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:static lg:z-auto lg:w-[272px] lg:translate-x-0 ${
+          mobileNavigationOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
         <div className="flex h-[74px] items-center gap-3 px-6">
           <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-[#1d8aff] to-[#3057dc] shadow-lg">
             <Trophy size={23} />
           </div>
           <div className="text-xl font-black">League Admin</div>
+          <button
+            type="button"
+            aria-label="Close admin navigation"
+            className="ml-auto grid h-10 w-10 place-items-center rounded-xl border border-white/15 lg:hidden"
+            onClick={() => setMobileNavigationOpen(false)}
+          >
+            <X size={19} />
+          </button>
         </div>
 
         <div className="mx-3 mb-5 rounded-xl bg-white/7 p-4">
@@ -2214,7 +2249,10 @@ export default function AdminLeagueSeasonDashboard() {
               key={item.id}
               item={item}
               active={activeTab === item.id}
-              onClick={() => setActiveTab(item.id as TabId)}
+              onClick={() => {
+                setActiveTab(item.id as TabId);
+                setMobileNavigationOpen(false);
+              }}
             />
           ))}
         </nav>
@@ -2231,7 +2269,10 @@ export default function AdminLeagueSeasonDashboard() {
                   key={item.id}
                   item={item}
                   active={activeTab === item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setMobileNavigationOpen(false);
+                  }}
                 />
               ))}
             </nav>
@@ -2243,7 +2284,10 @@ export default function AdminLeagueSeasonDashboard() {
           <SidebarButton
             item={{ id: "settings", label: "Settings", icon: Settings }}
             active={activeTab === "settings"}
-            onClick={() => setActiveTab("settings")}
+            onClick={() => {
+              setActiveTab("settings");
+              setMobileNavigationOpen(false);
+            }}
           />
           <button
             type="button"
@@ -2257,33 +2301,42 @@ export default function AdminLeagueSeasonDashboard() {
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-[74px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 shadow-sm">
-          <div className="flex items-center gap-5">
+        <header className="flex min-h-[74px] shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-6 lg:py-0">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-5">
+            <button
+              type="button"
+              aria-label="Open admin navigation"
+              aria-controls="admin-season-navigation"
+              aria-expanded={mobileNavigationOpen}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm lg:hidden"
+              onClick={() => setMobileNavigationOpen(true)}
+            >
+              <Menu size={20} />
+            </button>
             <TeamBadge
               name={league.short_name || league.name}
               logoUrl={league.logo_url}
             />
-            <div>
-              <div className="flex items-center gap-2 text-base font-black">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 truncate text-sm font-black sm:text-base">
                 {league.name}
-                <ChevronDown size={17} />
               </div>
-              <div className="text-sm font-semibold text-blue-700">
+              <div className="truncate text-xs font-semibold text-blue-700 sm:text-sm">
                 {season.name}
               </div>
             </div>
-            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-700">
+            <span className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-wide text-emerald-700 md:inline-flex">
               {formatPhase(season.phase)}
             </span>
-            <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
+            <span className="hidden rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 xl:inline-flex">
               {formatLabel(season.format)}
             </span>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex shrink-0 items-center gap-3 sm:gap-6">
             <Link
               href="/dashboard/admin"
-              className="text-sm font-bold text-blue-700 hover:text-blue-900"
+              className="hidden text-sm font-bold text-blue-700 hover:text-blue-900 md:block"
             >
               Back to League Selector
             </Link>
@@ -2295,7 +2348,7 @@ export default function AdminLeagueSeasonDashboard() {
                 </span>
               ) : null}
             </div>
-            <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-3 sm:flex">
               <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-200 text-sm font-black text-slate-600">
                 {(profile?.full_name ?? profile?.email ?? "AD")
                   .slice(0, 2)
@@ -2310,7 +2363,7 @@ export default function AdminLeagueSeasonDashboard() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-8">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-5 lg:p-8">
           {activeTab === "dashboard" ? (
             <DashboardView
               league={league}
@@ -5909,7 +5962,7 @@ function AdminLineupPitch({
       ) : null}
       {lineup ? (
         <>
-          <div className="relative h-[720px] overflow-hidden rounded-[2rem] bg-[#05A967] p-5 shadow-xl ring-1 ring-emerald-800/20">
+          <div className="relative h-[680px] overflow-hidden rounded-2xl bg-[#05A967] p-2 shadow-xl ring-1 ring-emerald-800/20 sm:h-[720px] sm:rounded-[2rem] sm:p-5">
             <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 bg-white/10" />
             <div className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
             <div className="absolute left-1/2 top-0 h-20 w-40 -translate-x-1/2 rounded-b-3xl border-x-[5px] border-b-[5px] border-white/10" />
@@ -5929,7 +5982,7 @@ function AdminLineupPitch({
               return (
                 <div
                   key={slot.slotKey}
-                  className="absolute z-10 w-[112px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center"
+                  className="absolute z-10 w-[82px] -translate-x-1/2 -translate-y-1/2 rounded-3xl py-1 text-center sm:w-[112px]"
                   style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
                 >
                   {player ? (
@@ -5940,7 +5993,7 @@ function AdminLineupPitch({
                         onPlayerClick?.(player, lineup?.team_registration_id)
                       }
                     >
-                      <div className="relative h-14 w-14 shrink-0">
+                      <div className="relative h-12 w-12 shrink-0 sm:h-14 sm:w-14">
                         <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
                           {registration?.players?.avatar_url ? (
                             <img
@@ -5969,7 +6022,7 @@ function AdminLineupPitch({
                           </span>
                         ) : null}
                       </div>
-                      <div className="mt-1 flex w-32 max-w-[8rem] items-center justify-center gap-1">
+                      <div className="mt-1 flex w-full items-center justify-center gap-1 px-0.5 sm:w-32 sm:max-w-[8rem]">
                         {meta?.injured ? (
                           <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[12px] font-black leading-none text-red-600 shadow ring-1 ring-red-100">
                             +
@@ -5994,7 +6047,7 @@ function AdminLineupPitch({
                       </p>
                     </button>
                   ) : (
-                    <span className="inline-block h-14 w-14 rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20" />
+                    <span className="inline-block h-12 w-12 rounded-full border-[3px] border-emerald-300/70 bg-emerald-800/20 sm:h-14 sm:w-14" />
                   )}
                 </div>
               );
@@ -6837,8 +6890,8 @@ function AdminCombinedMatchPitch({
   );
   return (
     <div className="overflow-hidden rounded-3xl bg-[#05a967] text-white shadow-xl">
-      <div className="flex items-center justify-between gap-4 bg-emerald-700/15 px-5 py-4 text-sm font-black">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 bg-emerald-700/15 px-3 py-4 text-sm font-black sm:px-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
           <span
             className={`rounded-full px-2.5 py-1 text-xs ${ratingBadgeClass(homeRating)}`}
           >
@@ -6848,7 +6901,7 @@ function AdminCombinedMatchPitch({
           <span>{match.home}</span>
           <span>{homeLineup?.formation ?? "Formation N/A"}</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3">
           <span>{awayLineup?.formation ?? "Formation N/A"}</span>
           <span>{match.away}</span>
           <TeamBadge name={match.away} logoUrl={match.awayLogoUrl} />
@@ -6859,7 +6912,7 @@ function AdminCombinedMatchPitch({
           </span>
         </div>
       </div>
-      <div className="relative h-[620px] bg-[#06a766]">
+      <div className="relative h-[560px] bg-[#06a766] sm:h-[620px]">
         <div className="absolute inset-y-0 left-1/2 w-1 -translate-x-1/2 bg-white/10" />
         <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
         <div className="absolute left-0 top-1/2 h-48 w-20 -translate-y-1/2 rounded-r-3xl border-y-[5px] border-r-[5px] border-white/10" />
@@ -7002,7 +7055,7 @@ function AdminMatchPlayerNode({
         event.preventDefault();
         onPlayerProfile(player, teamRegistrationId);
       }}
-      className="absolute z-10 w-[118px] -translate-x-1/2 -translate-y-1/2 text-center outline-none transition hover:-translate-y-[54%]"
+      className="absolute z-10 w-[72px] -translate-x-1/2 -translate-y-1/2 text-center outline-none transition hover:-translate-y-[54%] sm:w-[96px] lg:w-[118px]"
       style={{ left: `${x}%`, top: `${y}%` }}
       title={
         stat
@@ -7010,7 +7063,7 @@ function AdminMatchPlayerNode({
           : "Right click for player profile"
       }
     >
-      <div className="relative mx-auto h-14 w-14">
+      <div className="relative mx-auto h-11 w-11 sm:h-14 sm:w-14">
         <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
           {registration?.players?.avatar_url ? (
             <img
@@ -8812,7 +8865,7 @@ function EditableField({
 function PageTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="mb-7">
-      <h1 className="text-3xl font-black tracking-tight text-slate-950">
+      <h1 className="break-words text-2xl font-black tracking-tight text-slate-950 sm:text-3xl">
         {title}
       </h1>
       <p className="mt-2 text-base text-slate-600">{subtitle}</p>

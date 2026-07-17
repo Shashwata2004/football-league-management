@@ -288,7 +288,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex min-h-screen bg-[#080d08] text-[#f0f5f0]">
+    <div className="fixed inset-0 z-50 flex min-h-[100dvh] overflow-y-auto bg-[#080d08] text-[#f0f5f0]">
       <style jsx global>{`
         .scoreline-condensed {
           font-family: "Barlow Condensed", sans-serif;
@@ -334,7 +334,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <div className="flex min-h-screen w-full flex-col justify-center overflow-y-auto border-l border-[#b3ff00]/15 bg-[#080d08] px-8 py-12 sm:px-14 lg:w-[500px] xl:w-[540px]">
+      <div className="viewport-safe-center flex min-h-[100dvh] w-full flex-col overflow-y-auto border-l border-[#b3ff00]/15 bg-[#080d08] px-4 py-8 sm:px-10 sm:py-12 lg:w-[500px] lg:px-12 xl:w-[540px]">
         <div className="mb-10 flex items-center gap-3 lg:hidden">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#b3ff00]">
             <Trophy size={16} className="text-[#081008]" />
@@ -343,7 +343,7 @@ export default function LoginPage() {
         </div>
 
         <div className="mb-6">
-          <h1 className="scoreline-condensed text-5xl font-black uppercase leading-none tracking-[-0.01em] text-[#f0f5f0]">{heading}</h1>
+          <h1 className="scoreline-condensed text-4xl font-black uppercase leading-none tracking-[-0.01em] text-[#f0f5f0] sm:text-5xl">{heading}</h1>
           <p className="mt-2 text-sm text-[#82a982]">
             {view === "login" ? "Sign in to access your league dashboard." : "Create your account and choose your role."}
           </p>

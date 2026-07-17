@@ -391,24 +391,24 @@ export default function AdminDashboard() {
       `}</style>
 
       <header className="border-b border-[#00baff]/15 bg-[#070d19]/92">
-        <div className="mx-auto flex max-w-[1320px] items-center justify-between px-8 py-5">
+        <div className="mx-auto flex max-w-[1320px] items-center justify-between gap-3 px-4 py-4 sm:px-8 sm:py-5">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#00baff]/35 bg-[#00baff]/12 text-[#00c8ff]">
               <Zap size={20} />
             </div>
-            <span className="scoreline-condensed text-xl font-black uppercase tracking-[0.22em] text-white">Scoreline</span>
+            <span className="scoreline-condensed text-lg font-black uppercase tracking-[0.16em] text-white sm:text-xl sm:tracking-[0.22em]">Scoreline</span>
             <span className="scoreline-mono rounded-full border border-[#00baff]/40 bg-[#00baff]/10 px-2 py-1 text-[10px] uppercase text-[#00c8ff]">
               Admin
             </span>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 sm:gap-6">
             <button
               onClick={signOut}
               className="scoreline-mono flex items-center gap-2 text-xs text-[#49a6d8] transition-all duration-200 hover:-translate-y-0.5 hover:text-[#00c8ff] hover:drop-shadow-[0_0_8px_rgba(0,200,255,0.45)] active:translate-y-0"
             >
               <LogOut size={14} />
-              Sign out
+              <span className="hidden sm:inline">Sign out</span>
             </button>
             <div className="flex h-11 w-11 items-center justify-center rounded-full border border-[#00baff]/40 bg-[#00baff]/15 text-xs font-bold text-[#83eaff]">
               {(profile?.full_name ?? profile?.email ?? "AR").slice(0, 2).toUpperCase()}
@@ -417,10 +417,10 @@ export default function AdminDashboard() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1050px] px-8 py-12">
+      <main className="mx-auto max-w-[1050px] px-4 py-8 sm:px-8 sm:py-12">
         <section className="mb-10">
           <p className="scoreline-mono mb-4 text-xs uppercase tracking-[0.35em] text-[#1b78ad]">Admin Portal</p>
-          <h1 className="scoreline-condensed text-7xl font-black uppercase leading-none tracking-[-0.03em]">
+          <h1 className="scoreline-condensed text-5xl font-black uppercase leading-none tracking-[-0.03em] sm:text-7xl">
             Your <span className="text-[#00c8ff]">Leagues</span>
           </h1>
           <p className="mt-4 text-[#257aad]">Select a league to open its dashboard, or create something new.</p>
@@ -471,14 +471,14 @@ export default function AdminDashboard() {
               return (
                 <article
                   key={league.id}
-                  className="group rounded-2xl border border-[#00baff]/18 bg-[#080d21] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:-translate-y-1 hover:border-[#00c8ff]/60 hover:shadow-[0_16px_45px_rgba(0,186,255,0.12)]"
+                    className="group min-w-0 rounded-2xl border border-[#00baff]/18 bg-[#080d21] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:-translate-y-1 hover:border-[#00c8ff]/60 hover:shadow-[0_16px_45px_rgba(0,186,255,0.12)] sm:p-6"
                 >
-                  <div className="mb-6 flex items-start justify-between gap-4">
-                    <div className="flex gap-4">
+                  <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex min-w-0 gap-4">
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#00baff]/25 bg-[#00baff]/10 text-[#00c8ff]">
                         {index % 3 === 0 ? <Trophy size={19} /> : <Zap size={19} />}
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         <h2 className="scoreline-condensed text-2xl font-black uppercase leading-tight text-white">
                           {league.name}
                         </h2>
@@ -542,7 +542,7 @@ export default function AdminDashboard() {
         onClick={() => setDrawerOpen(false)}
       />
       <aside
-        className={`fixed right-0 top-0 z-50 h-full w-full max-w-[470px] overflow-y-auto border-l border-[#00baff]/25 bg-[#07101d] p-7 shadow-[-28px_0_70px_rgba(0,0,0,0.45)] transition-transform duration-500 ease-out ${
+        className={`fixed right-0 top-0 z-50 h-full w-full max-w-[470px] overflow-y-auto border-l border-[#00baff]/25 bg-[#07101d] p-4 shadow-[-28px_0_70px_rgba(0,0,0,0.45)] transition-transform duration-500 ease-out sm:p-7 ${
           drawerOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -680,7 +680,7 @@ export default function AdminDashboard() {
               {previousSeason ? `Previous season: ${previousSeason.name}` : "This league has no previous season yet."}
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <button
               type="button"
               disabled={!previousSeason}
@@ -777,7 +777,7 @@ export default function AdminDashboard() {
 
     if (step === 3) {
       return (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="col-span-2">
             <TextInput
               label="Total Teams"
@@ -836,7 +836,7 @@ export default function AdminDashboard() {
 
     return (
       <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <TextInput
             label="Number of Groups"
             type="number"
