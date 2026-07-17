@@ -11,6 +11,7 @@
     "db:fix-runtime-schema": "node scripts/apply-runtime-schema-hotfix.mjs",
     "db:add-set-piece-takers": "node scripts/apply-lineup-set-piece-takers.mjs",
     "db:add-yellow-card-rule": "node scripts/apply-yellow-card-suspension-rule.mjs",
+    "db:fix-lineup-validation": "node scripts/apply-lineup-validation-security-definer.mjs",
     "db:rebalance-abilities": "tsx scripts/rebalance-existing-player-abilities.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

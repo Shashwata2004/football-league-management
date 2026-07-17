@@ -1263,7 +1263,7 @@ $function$;
 create or replace function app_private.validate_lineup_after_change()
 returns trigger
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $function$
 begin
