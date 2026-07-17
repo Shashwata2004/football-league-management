@@ -432,6 +432,11 @@ export const editSimulationSchema = z.object({
   away_stats: editableTeamStatsSchema,
 });
 
+export const addFavoriteTeamSchema = z.object({
+  team_id: uuidSchema,
+  is_primary: z.boolean().optional().default(false),
+});
+
 export type CreateLeagueInput = z.infer<typeof createLeagueSchema>;
 export type CreateSeasonInput = z.infer<typeof createSeasonSchema>;
 export type UpdateSeasonPhaseInput = z.infer<typeof updateSeasonPhaseSchema>;
@@ -445,3 +450,4 @@ export type PlayerLifecycleDecisionInput = z.infer<
 >;
 export type LineupSubmissionInput = z.infer<typeof lineupSubmissionSchema>;
 export type EditSimulationInput = z.infer<typeof editSimulationSchema>;
+export type AddFavoriteTeamInput = z.infer<typeof addFavoriteTeamSchema>;

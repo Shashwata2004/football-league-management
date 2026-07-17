@@ -2090,6 +2090,27 @@ create table if not exists public.season_group_teams (
   unique (team_registration_id)
 );
 
+-- Fans (USER role) follow persistent clubs. Reads/writes go through the Express
+-- API using the service role, like every other tournament table.
+create table if not exists public.user_favorite_teams (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  team_id uuid not null references public.teams(id) on delete cascade,
+  is_primary boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (user_id, team_id)
+);
+
+create index if not exists user_favorite_teams_user_idx
+  on public.user_favorite_teams(user_id, created_at desc);
+
+create index if not exists user_favorite_teams_team_idx
+  on public.user_favorite_teams(team_id);
+
+create unique index if not exists user_favorite_teams_one_primary_uidx
+  on public.user_favorite_teams(user_id)
+  where is_primary = true;
+
 create or replace function app_private.lock_group_after_fixture_generation()
 returns trigger
 language plpgsql
@@ -3621,6 +3642,7 @@ alter table public.player_season_stats enable row level security;
 alter table public.manager_messages enable row level security;
 alter table public.season_groups enable row level security;
 alter table public.season_group_teams enable row level security;
+alter table public.user_favorite_teams enable row level security;
 
 grant usage on schema public to anon, authenticated, service_role;
 revoke all on all tables in schema public from anon, authenticated;
@@ -3701,3 +3723,9 @@ create policy "season_group_teams_public_read"
 on public.season_group_teams for select
 to anon, authenticated
 using (true);
+
+drop policy if exists "user_favorite_teams_service_only" on public.user_favorite_teams;
+create policy "user_favorite_teams_service_only"
+on public.user_favorite_teams for all
+using (false)
+with check (false);

@@ -28,6 +28,7 @@ export function SiteNav() {
     pathname === "/login" ||
     pathname.startsWith("/dashboard/admin") ||
     pathname.startsWith("/dashboard/manager") ||
+    pathname.startsWith("/dashboard/fan") ||
     pathname.startsWith("/manager")
   ) {
     return null;
@@ -41,6 +42,7 @@ export function SiteNav() {
         </Link>
         <nav aria-label="Primary navigation" className="flex max-w-full flex-wrap items-center justify-end gap-2 text-sm text-slate-700 sm:gap-4">
           <Link className="hover:text-slate-950" href="/public">Public</Link>
+          {profile?.role === UserRole.USER ? <Link className="hover:text-slate-950" href="/dashboard/fan">My Dashboard</Link> : null}
           {profile?.role === UserRole.MANAGER || profile?.role === UserRole.ADMIN ? <Link className="hover:text-slate-950" href="/dashboard/manager">Manager</Link> : null}
           {profile?.role === UserRole.ADMIN ? <Link className="hover:text-slate-950" href="/dashboard/admin">Admin</Link> : null}
           {profile ? (

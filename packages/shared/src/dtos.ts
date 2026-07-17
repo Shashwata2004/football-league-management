@@ -102,3 +102,19 @@ export interface StandingDto {
   fair_play_score: number;
   admin_draw_rank: number | null;
 }
+
+export interface FavoriteTeamDto {
+  id: string;
+  team_id: string;
+  is_primary: boolean;
+  created_at: string;
+  team: {
+    id: string;
+    name: string;
+    short_name: string | null;
+    logo_url: string | null;
+    primary_color: string | null;
+    secondary_color: string | null;
+    accent_color: string | null;
+  } | null;
+}

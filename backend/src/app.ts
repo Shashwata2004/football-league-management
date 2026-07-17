@@ -6,6 +6,7 @@ import { env } from "./config/env.js";
 import { errorHandler } from "./errors.js";
 import { adminRouter } from "./routes/admin.js";
 import { authRouter } from "./routes/auth.js";
+import { fanRouter } from "./routes/fan.js";
 import { managerRouter } from "./routes/manager.js";
 import { publicRouter } from "./routes/public.js";
 
@@ -42,6 +43,7 @@ app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.use(authRouter);
 app.use("/public", publicRouter);
+app.use("/fan", fanRouter);
 app.use("/manager", managerRouter);
 app.use("/admin", adminRouter);
 app.use(errorHandler);

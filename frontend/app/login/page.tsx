@@ -379,7 +379,7 @@ export default function LoginPage() {
           onSuccess={(profile) => {
             if (profile.role === "ADMIN") window.location.href = "/dashboard/admin";
             else if (profile.role === "MANAGER") window.location.href = "/dashboard/manager";
-            else window.location.href = "/public";
+            else window.location.href = "/dashboard/fan";
           }}
         />
 
