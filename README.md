@@ -47,6 +47,29 @@ This project uses custom backend auth stored in PostgreSQL tables, not Supabase 
 
 Admin credentials are intentionally not published in the repository. Obtain them from an authorized project maintainer.
 
+## Deployment
+
+Deployed on Vercel as two projects fed from this one repo, both auto-deploying on push to `main`:
+
+- `football-league-management-system` (frontend, Root Directory `frontend`)
+- `football-league-management-api` (backend API, Root Directory repo root)
+
+Because the shared package resolves to its build output, it must be built before each app. The build commands are:
+
+- Frontend (`frontend/vercel.json`):
+
+  ```bash
+  pnpm --filter @flms/shared build && pnpm run build
+  ```
+
+- API (`vercel.json`):
+
+  ```bash
+  pnpm --filter @flms/shared build && pnpm --filter @flms/backend build
+  ```
+
+Pushing to `main` triggers production deployments; pushes to other branches create previews.
+
 ## Verification
 
 ```bash
