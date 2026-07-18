@@ -486,6 +486,7 @@ export default function FanDashboardPage() {
               playerRegistrationId={routePlayerId}
               onBack={() => router.back()}
               onOpenTeam={(id) => router.push(`/dashboard/fan/teams/${id}`)}
+              onOpenMatch={(id) => router.push(`/dashboard/fan/matches/${id}`)}
             />
           ) : routeTeamId ? (
             <TeamProfileView
@@ -1029,11 +1030,33 @@ function StandingsSection({ favorites, onOpenTeam, onError }: SectionProps) {
   );
 }
 
+interface FanStatEntry {
+  id: string;
+  name: string;
+  subLabel: string;
+  logoUrl: string | null;
+  teamLogoUrl: string | null;
+  initials: string;
+  value: string;
+  numericValue: number;
+}
+
+interface FanStatCard {
+  id: string;
+  title: string;
+  entries: FanStatEntry[];
+}
+
+interface FanStatSection {
+  title: string;
+  cards: FanStatCard[];
+}
+
 function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonId, setSeasonId] = useState("");
-  const [rows, setRows] = useState<any[]>([]);
-  const [metric, setMetric] = useState<"goals" | "assists" | "average_rating">("goals");
+  const [sections, setSections] = useState<FanStatSection[]>([]);
+  const [openCard, setOpenCard] = useState<FanStatCard | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -1050,9 +1073,9 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
     if (!seasonId) return;
     let alive = true;
     setLoading(true);
-    api<{ player_stats: any[] }>(`/fan/seasons/${seasonId}/player-stats`)
+    api<{ player_sections: FanStatSection[] }>(`/fan/seasons/${seasonId}/stat-leaderboards`)
       .then((data) => {
-        if (alive) setRows(data.player_stats);
+        if (alive) setSections(data.player_sections ?? []);
       })
       .catch((error) => onError(error instanceof Error ? error.message : "Failed to load player stats"))
       .finally(() => {
@@ -1063,13 +1086,10 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
     };
   }, [seasonId, onError]);
 
-  const ranked = useMemo(() => {
-    return [...rows]
-      .map((row) => ({ row, value: Number(row[metric] ?? 0) }))
-      .filter((entry) => Number.isFinite(entry.value) && entry.value > 0)
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 25);
-  }, [rows, metric]);
+  const hasData = useMemo(
+    () => sections.some((section) => section.cards.some((card) => card.entries.length > 0)),
+    [sections],
+  );
 
   return (
     <div className="space-y-6">
@@ -1091,56 +1111,148 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
             );
           })}
         </select>
-        <FilterPill active={metric === "goals"} onClick={() => setMetric("goals")}>
-          Top Scorers
-        </FilterPill>
-        <FilterPill active={metric === "assists"} onClick={() => setMetric("assists")}>
-          Assists
-        </FilterPill>
-        <FilterPill active={metric === "average_rating"} onClick={() => setMetric("average_rating")}>
-          Rating
-        </FilterPill>
       </div>
 
       {loading ? (
         <LoadingState label="Loading player stats..." />
-      ) : ranked.length === 0 ? (
-        <EmptyState label="No player statistics recorded yet." />
+      ) : !hasData ? (
+        <EmptyState label="Player stats will appear after confirmed match results generate stats." />
       ) : (
-        <Panel title="Leaderboard">
-          <div className="space-y-2">
-            {ranked.map((entry, index) => {
-              const reg = one<any>(entry.row.player_season_registrations);
-              const player = one<any>(reg?.players);
-              const teamReg = one<any>(reg?.team_registrations);
-              const team = one<any>(teamReg?.teams);
-              return (
-                <button
-                  key={entry.row.player_registration_id}
-                  className="flex w-full items-center gap-3 rounded-2xl bg-slate-50 p-3 text-left transition hover:-translate-y-0.5 hover:bg-purple-50"
-                  onClick={() => reg?.id && onOpenPlayer(reg.id)}
-                >
-                  <span className="w-6 shrink-0 text-center font-black text-slate-400">{index + 1}</span>
-                  <Avatar name={player?.full_name ?? "Player"} src={player?.avatar_url} small />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-black text-slate-900">
-                      {player?.full_name ?? "Player"}
-                    </span>
-                    <span className="block truncate text-xs font-bold text-slate-500">
-                      {team?.name ?? "Team"} · {reg?.football_position ?? reg?.position ?? ""}
-                    </span>
-                  </span>
-                  <span className="shrink-0 rounded-full bg-[var(--team-primary)] px-3 py-1 text-sm font-black text-[var(--team-primary-text)]">
-                    {metric === "average_rating"
-                      ? Number(entry.value).toFixed(1)
-                      : Math.round(entry.value)}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </Panel>
+        <div className="space-y-6">
+          {sections.map((section) => {
+            const cards = section.cards.filter((card) => card.entries.length > 0);
+            if (cards.length === 0) return null;
+            return (
+              <div key={section.title}>
+                <h3 className="mb-3 text-lg font-black text-slate-900">{section.title}</h3>
+                <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                  {cards.map((card) => (
+                    <FanLeaderboardCard key={card.id} card={card} onOpen={() => setOpenCard(card)} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
+
+      {openCard ? (
+        <FanLeaderboardModal card={openCard} onOpenPlayer={onOpenPlayer} onClose={() => setOpenCard(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+function FanLeaderboardCard({ card, onOpen }: { card: FanStatCard; onOpen: () => void }) {
+  const topEntries = card.entries.slice(0, 3);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-[var(--team-primary)] hover:shadow-xl active:translate-y-0"
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h4 className="text-lg font-black text-slate-900">{card.title}</h4>
+        <span className="text-2xl font-black text-slate-300">›</span>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {topEntries.map((entry, index) => (
+          <FanLeaderboardRow key={entry.id} entry={entry} rank={index + 1} />
+        ))}
+      </div>
+    </button>
+  );
+}
+
+function FanLeaderboardRow({
+  entry,
+  rank,
+  onClick,
+}: {
+  entry: FanStatEntry;
+  rank: number;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="w-5 shrink-0 text-sm font-black text-slate-400">{rank}</span>
+        <Avatar name={entry.name} src={entry.logoUrl} small />
+        <div className="min-w-0">
+          <p className="truncate font-black text-slate-900">{entry.name}</p>
+          <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-slate-500">
+            {entry.teamLogoUrl ? (
+              <img src={entry.teamLogoUrl} alt="" className="h-4 w-4 rounded-full object-cover" />
+            ) : null}
+            <span className="truncate">{entry.subLabel}</span>
+          </div>
+        </div>
+      </div>
+      <span
+        className={`shrink-0 rounded-full px-3 py-1 text-sm font-black ${rank === 1 ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-100 text-slate-900"}`}
+      >
+        {entry.value}
+      </span>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full items-center justify-between gap-4 py-3 text-left transition hover:bg-purple-50"
+      >
+        {content}
+      </button>
+    );
+  }
+  return <div className="flex items-center justify-between gap-4 py-3">{content}</div>;
+}
+
+function FanLeaderboardModal({
+  card,
+  onOpenPlayer,
+  onClose,
+}: {
+  card: FanStatCard;
+  onOpenPlayer: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-[var(--team-primary)]">
+              Full Leaderboard
+            </p>
+            <h2 className="mt-1 text-2xl font-black text-slate-900">{card.title}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-black transition hover:bg-slate-200"
+          >
+            Close
+          </button>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {card.entries.map((entry, index) => (
+            <FanLeaderboardRow
+              key={entry.id}
+              entry={entry}
+              rank={index + 1}
+              onClick={() => {
+                onClose();
+                onOpenPlayer(entry.id);
+              }}
+            />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2104,6 +2216,17 @@ function TeamProfileView({
     };
   }, [teamRegistrationId]);
 
+  const standingGroups = useMemo(() => {
+    const map = new Map<string, StandingRow[]>();
+    (payload?.standings ?? []).forEach((row) => {
+      const key = row.group_name ?? "";
+      const list = map.get(key) ?? [];
+      list.push(row);
+      map.set(key, list);
+    });
+    return Array.from(map.entries());
+  }, [payload?.standings]);
+
   if (loading) return <LoadingState label="Loading team..." />;
   if (error) return <ErrorBanner text={error} />;
   if (!payload) return <EmptyState label="Team not found." />;
@@ -2152,18 +2275,22 @@ function TeamProfileView({
       <Tabs tabs={["Overview", "Squad", "Fixtures"]} active={tab} onChange={(next) => setTab(next as typeof tab)} />
 
       {tab === "Overview" ? (
-        <Panel title="Standings">
-          {payload.standings.length === 0 ? (
+        payload.standings.length === 0 ? (
+          <Panel title="Standings">
             <EmptyState label="No standings yet." />
-          ) : (
-            <StandingsTable
-              rows={payload.standings}
-              favoriteTeamIds={new Set(favorites.map((favorite) => favorite.team_id))}
-              onOpenTeam={() => undefined}
-              highlightRegistrationId={payload.team.id}
-            />
-          )}
-        </Panel>
+          </Panel>
+        ) : (
+          standingGroups.map(([groupName, rows]) => (
+            <Panel key={groupName || "table"} title={groupName ? `Group ${groupName}` : "Standings"}>
+              <StandingsTable
+                rows={rows}
+                favoriteTeamIds={new Set(favorites.map((favorite) => favorite.team_id))}
+                onOpenTeam={() => undefined}
+                highlightRegistrationId={payload.team.id}
+              />
+            </Panel>
+          ))
+        )
       ) : null}
 
       {tab === "Squad" ? (
@@ -2233,7 +2360,10 @@ function TeamProfileView({
 
 interface PlayerProfilePayload {
   player: any;
-  season_stats: any | null;
+  overall_rating: number | null;
+  league_rating: number | null;
+  season_stats: Record<string, number | string | null> | null;
+  stored_season_stats: any | null;
   match_stats: any[];
 }
 
@@ -2241,14 +2371,17 @@ function PlayerProfileView({
   playerRegistrationId,
   onBack,
   onOpenTeam,
+  onOpenMatch,
 }: {
   playerRegistrationId: string;
   onBack: () => void;
   onOpenTeam: (id: string) => void;
+  onOpenMatch?: ((matchId: string) => void) | undefined;
 }) {
   const [payload, setPayload] = useState<PlayerProfilePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [tab, setTab] = useState("Season stats");
 
   useEffect(() => {
     let alive = true;
@@ -2278,17 +2411,7 @@ function PlayerProfileView({
   const club = one<any>(teamReg?.teams);
   const season = one<any>(player.seasons);
   const stats = payload.season_stats;
-
-  const statCards: { label: string; value: ReactNode }[] = [
-    { label: "Appearances", value: stats?.appearances ?? 0 },
-    { label: "Goals", value: stats?.goals ?? 0 },
-    { label: "Assists", value: stats?.assists ?? 0 },
-    { label: "Minutes", value: stats?.minutes_played ?? 0 },
-    { label: "Avg rating", value: stats?.average_rating ? Number(stats.average_rating).toFixed(1) : "-" },
-    { label: "Yellow cards", value: stats?.yellow_cards ?? 0 },
-    { label: "Red cards", value: stats?.red_cards ?? 0 },
-    { label: "Overall", value: player.overall_rating ?? "-" },
-  ];
+  const isGoalkeeper = (player.football_position ?? player.position) === "GK";
 
   return (
     <div className="space-y-6">
@@ -2297,9 +2420,17 @@ function PlayerProfileView({
         <div className="flex flex-wrap items-center gap-4">
           <Avatar name={identity?.full_name ?? "Player"} src={identity?.avatar_url} />
           <div className="min-w-0 flex-1">
-            <h1 className="break-words text-2xl font-black leading-tight sm:text-3xl">
-              {identity?.full_name ?? "Player"}
-            </h1>
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="break-words text-2xl font-black leading-tight sm:text-3xl">
+                {identity?.full_name ?? "Player"}
+              </h1>
+              {payload.overall_rating != null ? (
+                <span className="inline-flex rounded-full bg-[var(--team-primary)] px-3 py-1 text-sm font-black text-[var(--team-primary-text)]">
+                  OVR {payload.overall_rating}
+                </span>
+              ) : null}
+              <RatingCapsule value={payload.league_rating} label="League" />
+            </div>
             <p className="mt-1 text-sm font-bold text-slate-500">
               {(player.football_position ?? player.position ?? "").toString()}
               {player.shirt_number ? ` · #${player.shirt_number}` : ""}
@@ -2321,15 +2452,342 @@ function PlayerProfileView({
         ) : null}
       </section>
 
-      <Panel title="Season stats">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {statCards.map((card) => (
-            <Detail key={card.label} label={card.label} value={card.value} />
-          ))}
-        </div>
-      </Panel>
+      <PlayerSeasonHighlights stats={stats} isGoalkeeper={isGoalkeeper} />
+
+      <Tabs tabs={["Season stats", "Match by match"]} active={tab} onChange={setTab} />
+
+      {tab === "Season stats" ? (
+        <PlayerStatsBreakdown stats={stats} isGoalkeeper={isGoalkeeper} />
+      ) : (
+        <Panel title="Match by match">
+          <PlayerMatchLog
+            rows={payload.match_stats}
+            playerTeamRegistrationId={player.team_registration_id}
+            isGoalkeeper={isGoalkeeper}
+            onOpenMatch={onOpenMatch}
+          />
+        </Panel>
+      )}
     </div>
   );
+}
+
+// Headline cards shown above the tabs — the numbers fans scan for first.
+function PlayerSeasonHighlights({
+  stats,
+  isGoalkeeper,
+}: {
+  stats: Record<string, number | string | null> | null;
+  isGoalkeeper: boolean;
+}) {
+  const cards: { label: string; value: ReactNode }[] = isGoalkeeper
+    ? [
+        { label: "Appearances", value: fanStatValue(stats?.matches_played) },
+        { label: "Clean sheets", value: fanStatValue(stats?.clean_sheets) },
+        { label: "Saves", value: fanStatValue(stats?.saves) },
+        { label: "Goals conceded", value: fanStatValue(stats?.goals_conceded) },
+        { label: "Avg rating", value: fanFormatRating(stats?.average_rating) },
+        { label: "Minutes", value: fanStatValue(stats?.minutes_played) },
+      ]
+    : [
+        { label: "Appearances", value: fanStatValue(stats?.matches_played) },
+        { label: "Goals", value: fanStatValue(stats?.goals) },
+        { label: "Assists", value: fanStatValue(stats?.assists) },
+        { label: "Avg rating", value: fanFormatRating(stats?.average_rating) },
+        { label: "Minutes", value: fanStatValue(stats?.minutes_played) },
+        { label: "Cards", value: `${fanStatValue(stats?.yellow_cards)}Y / ${fanStatValue(stats?.red_cards)}R` },
+      ];
+  return (
+    <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {cards.map((card) => (
+        <div key={card.label} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400">{card.label}</p>
+          <p className="mt-1 text-2xl font-black text-slate-900">{card.value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Full grouped season breakdown, position-aware, matching the manager view.
+function PlayerStatsBreakdown({
+  stats,
+  isGoalkeeper,
+}: {
+  stats: Record<string, number | string | null> | null;
+  isGoalkeeper: boolean;
+}) {
+  const sections: Array<{ title: string; items: Array<[string, string]> }> = isGoalkeeper
+    ? [
+        {
+          title: "General",
+          items: [
+            ["Matches Played", "matches_played"],
+            ["Starts", "starts"],
+            ["Minutes Played", "minutes_played"],
+            ["Average Rating", "average_rating"],
+            ["Best Rating", "best_match_rating"],
+            ["Lowest Rating", "lowest_match_rating"],
+          ],
+        },
+        {
+          title: "Goalkeeping",
+          items: [
+            ["Saves", "saves"],
+            ["Diving Saves", "diving_saves"],
+            ["Saves Inside Box", "saves_inside_box"],
+            ["Goals Conceded", "goals_conceded"],
+            ["Clean Sheets", "clean_sheets"],
+          ],
+        },
+        {
+          title: "Distribution",
+          items: [
+            ["Accurate Passes", "accurate_passes"],
+            ["Accurate Long Balls", "accurate_long_balls"],
+            ["Clearances", "clearances"],
+          ],
+        },
+        {
+          title: "Discipline",
+          items: [
+            ["Fouls Committed", "fouls_committed"],
+            ["Yellow Cards", "yellow_cards"],
+            ["Red Cards", "red_cards"],
+          ],
+        },
+      ]
+    : [
+        {
+          title: "General",
+          items: [
+            ["Matches Played", "matches_played"],
+            ["Starts", "starts"],
+            ["Minutes Played", "minutes_played"],
+            ["Average Rating", "average_rating"],
+            ["Best Rating", "best_match_rating"],
+            ["Lowest Rating", "lowest_match_rating"],
+          ],
+        },
+        {
+          title: "Attack",
+          items: [
+            ["Goals", "goals"],
+            ["Assists", "assists"],
+            ["Shots", "shots"],
+            ["Shots on Target", "shots_on_target"],
+            ["Shot Accuracy", "shot_accuracy"],
+            ["Chances Created", "chances_created"],
+            ["Big Chances Created", "big_chances_created"],
+            ["Big Chances Missed", "big_chances_missed"],
+          ],
+        },
+        {
+          title: "Passing + Dribbling",
+          items: [
+            ["Total Passes", "total_passes"],
+            ["Accurate Passes", "accurate_passes"],
+            ["Pass Accuracy", "pass_accuracy"],
+            ["Dribbles Attempted", "dribbles_attempted"],
+            ["Successful Dribbles", "successful_dribbles"],
+            ["Dribble Success Rate", "dribble_success_rate"],
+            ["Dispossessed", "dispossessed"],
+          ],
+        },
+        {
+          title: "Defense",
+          items: [
+            ["Tackles", "tackles"],
+            ["Interceptions", "interceptions"],
+            ["Clearances", "clearances"],
+            ["Blocks", "blocks"],
+          ],
+        },
+        {
+          title: "Discipline",
+          items: [
+            ["Fouls Committed", "fouls_committed"],
+            ["Yellow Cards", "yellow_cards"],
+            ["Red Cards", "red_cards"],
+          ],
+        },
+      ];
+
+  return (
+    <div className="space-y-5">
+      {sections.map((section) => (
+        <Panel key={section.title} title={section.title}>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {section.items.map(([label, key]) => {
+              const isRating =
+                key === "average_rating" ||
+                key === "best_match_rating" ||
+                key === "lowest_match_rating";
+              return (
+                <Detail
+                  key={key}
+                  label={label}
+                  value={isRating ? <RatingCapsule value={stats?.[key]} /> : fanFormatStat(stats, key)}
+                />
+              );
+            })}
+          </div>
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+// Match-by-match log. Confirmed rows only; each row links to the match detail.
+function PlayerMatchLog({
+  rows,
+  playerTeamRegistrationId,
+  isGoalkeeper,
+  onOpenMatch,
+}: {
+  rows: any[];
+  playerTeamRegistrationId: string | null | undefined;
+  isGoalkeeper: boolean;
+  onOpenMatch?: ((matchId: string) => void) | undefined;
+}) {
+  if (!rows?.length) {
+    return <EmptyState label="No confirmed match stats yet." />;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[720px] text-left text-sm">
+        <thead className="text-xs uppercase text-slate-500">
+          <tr>
+            {[
+              "Match",
+              "Min",
+              isGoalkeeper ? "Conceded" : "Goals",
+              isGoalkeeper ? "Saves" : "Assists",
+              "Pass %",
+              "Cards",
+              "Rating",
+            ].map((head) => (
+              <th key={head} className="px-3 py-2">
+                {head}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const fixture = one<any>(row.fixtures);
+            const homeTeam = one<any>(fixture?.home_team);
+            const awayTeam = one<any>(fixture?.away_team);
+            const playerIsHome = fixture?.home_team_registration_id === playerTeamRegistrationId;
+            const opponentTeam = playerIsHome ? awayTeam : homeTeam;
+            const ownTeam = playerIsHome ? homeTeam : awayTeam;
+            const homeName = homeTeam?.teams?.name ?? "Home";
+            const awayName = awayTeam?.teams?.name ?? "Away";
+            const matchName = fixture ? `${homeName} vs ${awayName}` : "Match";
+            const final = fixture?.status === "FINAL";
+            const score =
+              final && fixture?.home_score != null && fixture?.away_score != null
+                ? `${fixture.home_score} - ${fixture.away_score}`
+                : (fixture?.status ?? "Scheduled");
+            const clickable = Boolean(onOpenMatch && fixture?.id);
+            return (
+              <tr
+                key={row.id ?? index}
+                className={`border-t border-slate-100 ${clickable ? "cursor-pointer transition hover:bg-purple-50/60" : ""}`}
+                onClick={() => clickable && onOpenMatch!(fixture.id)}
+              >
+                <td className="px-3 py-2">
+                  <div className="flex min-w-[220px] items-center gap-3">
+                    <Avatar
+                      name={opponentTeam?.teams?.name ?? ownTeam?.teams?.name ?? "Opponent"}
+                      src={opponentTeam?.teams?.logo_url ?? ownTeam?.teams?.logo_url}
+                      small
+                    />
+                    <div className="min-w-0">
+                      <p className="truncate font-black text-slate-900">{matchName}</p>
+                      <p className="text-xs font-bold text-slate-500">
+                        {fixture ? `${formatDate(fixture.kickoff_at)} · ${score}` : "Fixture unavailable"}
+                      </p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-2">{fanStatValue(row.minutes ?? row.minutes_played)}</td>
+                <td className="px-3 py-2">
+                  {isGoalkeeper ? fanStatValue(row.goals_conceded) : fanStatValue(row.goals)}
+                </td>
+                <td className="px-3 py-2">
+                  {isGoalkeeper ? fanStatValue(row.saves) : fanStatValue(row.assists)}
+                </td>
+                <td className="px-3 py-2">
+                  {fanPercentage(row.accurate_passes, row.passes ?? row.total_passes)}
+                </td>
+                <td className="px-3 py-2">
+                  {fanStatValue(row.yellow_cards)}Y / {fanStatValue(row.red_cards)}R
+                </td>
+                <td className="px-3 py-2">
+                  <RatingCapsule value={row.rating} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Small coloured rating pill shared by the season grid and match log.
+function RatingCapsule({ value, label }: { value: unknown; label?: string }) {
+  if (value === null || value === undefined || value === "") {
+    return <span className="text-slate-400">-</span>;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return <span className="text-slate-400">-</span>;
+  const tone =
+    numeric >= 8
+      ? "bg-emerald-600"
+      : numeric >= 7
+        ? "bg-emerald-500"
+        : numeric >= 6
+          ? "bg-amber-500"
+          : "bg-red-500";
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-black text-white ${tone}`}>
+      {label ? <span className="opacity-80">{label}</span> : null}
+      {numeric.toFixed(1)}
+    </span>
+  );
+}
+
+function fanStatValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "0";
+  if (typeof value === "number" && Number.isFinite(value))
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  return String(value);
+}
+
+function fanFormatRating(value: unknown, fallback = "0.0") {
+  if (value === null || value === undefined || value === "") return fallback;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(1) : fallback;
+}
+
+function fanPercentage(numerator: unknown, denominator: unknown) {
+  const top = Number(numerator ?? 0);
+  const bottom = Number(denominator ?? 0);
+  if (!bottom || !Number.isFinite(top) || !Number.isFinite(bottom)) return "0%";
+  return `${Math.round((top / bottom) * 100)}%`;
+}
+
+// Formats a single season-stat field, deriving percentage fields from their
+// numerator/denominator so they stay consistent with the raw counts.
+function fanFormatStat(stats: Record<string, number | string | null> | null, key: string) {
+  if (!stats) return "0";
+  if (key === "shot_accuracy") return fanPercentage(stats.shots_on_target, stats.shots);
+  if (key === "pass_accuracy") return fanPercentage(stats.accurate_passes, stats.total_passes);
+  if (key === "dribble_success_rate")
+    return fanPercentage(stats.successful_dribbles, stats.dribbles_attempted);
+  return fanStatValue(stats[key]);
 }
 
 // ===========================================================================

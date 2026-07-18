@@ -61,6 +61,19 @@ import {
   standingReportToApiRow,
   type StandingReportRow,
 } from "../services/standings-report.js";
+import {
+  buildPlayerSeasonStatsFromMatchRows,
+  loadLeagueRatings,
+} from "../services/player-stats.js";
+import {
+  avg,
+  buildPlayerLeaderboardRows,
+  makePlayerStatSections,
+  makeTeamLeaderboard,
+  perMatch,
+  type PlayerLeaderboardRow,
+  relatedName,
+} from "../services/stat-leaderboards.js";
 
 export const managerRouter = Router();
 managerRouter.use(requireAuth, requireRole(UserRole.MANAGER, UserRole.ADMIN));
@@ -164,124 +177,8 @@ function relatedOne<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
-function relatedName(value: unknown, key: string) {
-  const row = Array.isArray(value) ? value[0] : value;
-  if (!row || typeof row !== "object" || !(key in row)) return null;
-  const resolved = (row as Record<string, unknown>)[key];
-  return typeof resolved === "string" && resolved.trim() ? resolved : null;
-}
-
-function per90(value: number, minutes: number) {
-  if (!minutes || minutes <= 0) return 0;
-  return Number(((value / minutes) * 90).toFixed(2));
-}
-
-function perMatch(value: number, matches: number) {
-  if (!matches || matches <= 0) return 0;
-  return Number((value / matches).toFixed(2));
-}
-
-function avg(values: number[]) {
-  const valid = values.filter((value) => Number.isFinite(value) && value > 0);
-  if (valid.length === 0) return 0;
-  return Number(
-    (valid.reduce((sum, value) => sum + value, 0) / valid.length).toFixed(2),
-  );
-}
-
-type LeaderboardFormat = "number" | "decimal" | "percent" | "rating";
-
-function formatLeaderboardValue(value: number, format: LeaderboardFormat) {
-  if (format === "percent") return `${Math.round(value)}%`;
-  if (format === "rating") return value.toFixed(1);
-  if (format === "decimal") return value.toFixed(2).replace(/\.00$/, "");
-  return String(Math.round(value));
-}
-
-function makeLeaderboard<
-  T extends {
-    id: string;
-    name: string;
-    team: string;
-    teamLogoUrl: string | null;
-    avatarUrl: string | null;
-  },
->(
-  id: string,
-  title: string,
-  rows: T[],
-  field: keyof T,
-  format: LeaderboardFormat,
-) {
-  const entries = rows
-    .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
-    .filter(
-      ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
-    )
-    .sort((a, b) => b.numericValue - a.numericValue)
-    .map(({ row, numericValue }) => ({
-      id: row.id,
-      name: row.name,
-      subLabel: row.team,
-      logoUrl: row.avatarUrl,
-      teamLogoUrl: row.teamLogoUrl,
-      initials:
-        row.name
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 2)
-          .map((part) => part[0]?.toUpperCase() ?? "")
-          .join("") || "NA",
-      value: formatLeaderboardValue(numericValue, format),
-      numericValue,
-    }));
-  return { id, title, entries };
-}
-
-function makeTeamLeaderboard<
-  T extends { id: string; name: string; logoUrl: string | null },
->(
-  id: string,
-  title: string,
-  rows: T[],
-  field: keyof T,
-  format: LeaderboardFormat,
-) {
-  const entries = rows
-    .map((row) => ({ row, numericValue: Number(row[field] ?? 0) }))
-    .filter(
-      ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
-    )
-    .sort((a, b) => b.numericValue - a.numericValue)
-    .map(({ row, numericValue }) => ({
-      id: row.id,
-      name: row.name,
-      subLabel: "Team",
-      logoUrl: row.logoUrl,
-      teamLogoUrl: row.logoUrl,
-      initials:
-        row.name
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 2)
-          .map((part) => part[0]?.toUpperCase() ?? "")
-          .join("") || "TM",
-      value: formatLeaderboardValue(numericValue, format),
-      numericValue,
-    }));
-  return { id, title, entries };
-}
-
 function makeStatsReport(
-  playerRows: Array<
-    Record<string, unknown> & {
-      id: string;
-      name: string;
-      team: string;
-      teamLogoUrl: string | null;
-      avatarUrl: string | null;
-    }
-  >,
+  playerRows: PlayerLeaderboardRow[],
   teamRows: Array<
     Record<string, unknown> & {
       id: string;
@@ -291,167 +188,7 @@ function makeStatsReport(
   >,
 ) {
   return {
-    player_sections: [
-      {
-        title: "General",
-        cards: [
-          makeLeaderboard(
-            "minutes_played",
-            "Minutes Played",
-            playerRows,
-            "minutes",
-            "number",
-          ),
-          makeLeaderboard("rating", "Rating", playerRows, "rating", "rating"),
-        ],
-      },
-      {
-        title: "Attack",
-        cards: [
-          makeLeaderboard(
-            "top_scorer",
-            "Top Scorer",
-            playerRows,
-            "goals",
-            "number",
-          ),
-          makeLeaderboard(
-            "assists",
-            "Assists",
-            playerRows,
-            "assists",
-            "number",
-          ),
-          makeLeaderboard(
-            "goal_assists",
-            "Goal + Assists",
-            playerRows,
-            "goalAssists",
-            "number",
-          ),
-          makeLeaderboard(
-            "successful_dribbles_per_90",
-            "Successful Dribbles per 90",
-            playerRows,
-            "successfulDribblesPer90",
-            "decimal",
-          ),
-          makeLeaderboard(
-            "shots_on_target_per_90",
-            "Shots on Target per 90",
-            playerRows,
-            "shotsOnTargetPer90",
-            "decimal",
-          ),
-          makeLeaderboard(
-            "accurate_passes_per_90",
-            "Accurate Passes per 90",
-            playerRows,
-            "accuratePassesPer90",
-            "decimal",
-          ),
-          makeLeaderboard(
-            "big_chances_created",
-            "Big Chances Created",
-            playerRows,
-            "bigChancesCreated",
-            "number",
-          ),
-          makeLeaderboard(
-            "big_chances_missed",
-            "Big Chances Missed",
-            playerRows,
-            "bigChancesMissed",
-            "number",
-          ),
-        ],
-      },
-      {
-        title: "Defense",
-        cards: [
-          makeLeaderboard(
-            "tackles_per_90",
-            "Tackles per 90",
-            playerRows,
-            "tacklesPer90",
-            "decimal",
-          ),
-          makeLeaderboard(
-            "interceptions_per_90",
-            "Interceptions per 90",
-            playerRows,
-            "interceptionsPer90",
-            "decimal",
-          ),
-          makeLeaderboard(
-            "blocks_per_90",
-            "Blocks per 90",
-            playerRows,
-            "blocksPer90",
-            "decimal",
-          ),
-          makeLeaderboard(
-            "clearances_per_90",
-            "Clearances per 90",
-            playerRows,
-            "clearancesPer90",
-            "decimal",
-          ),
-        ],
-      },
-      {
-        title: "Goalkeeping",
-        cards: [
-          makeLeaderboard(
-            "clean_sheets",
-            "Clean Sheets",
-            playerRows,
-            "cleanSheets",
-            "number",
-          ),
-          makeLeaderboard(
-            "saves_per_90",
-            "Saves per 90",
-            playerRows,
-            "savesPer90",
-            "decimal",
-          ),
-          makeLeaderboard(
-            "goals_conceded_per_90",
-            "Goals Conceded per 90",
-            playerRows,
-            "goalsConcededPer90",
-            "decimal",
-          ),
-        ],
-      },
-      {
-        title: "Discipline",
-        cards: [
-          makeLeaderboard(
-            "yellow_cards",
-            "Yellow Cards",
-            playerRows,
-            "yellowCards",
-            "number",
-          ),
-          makeLeaderboard(
-            "red_cards",
-            "Red Cards",
-            playerRows,
-            "redCards",
-            "number",
-          ),
-          makeLeaderboard(
-            "fouls_committed_per_90",
-            "Fouls Committed per 90",
-            playerRows,
-            "foulsCommittedPer90",
-            "decimal",
-          ),
-        ],
-      },
-    ],
+    player_sections: makePlayerStatSections(playerRows),
     team_sections: [
       {
         title: "General",
@@ -852,33 +589,6 @@ async function loadManagerVisiblePlayerRegistration(
   };
 }
 
-async function loadLeagueRatings(playerRegistrationIds: string[]) {
-  if (playerRegistrationIds.length === 0) return new Map<string, number>();
-  const { data, error } = await supabaseAdmin
-    .from("player_match_stats")
-    .select("player_registration_id,minutes,rating")
-    .in("player_registration_id", playerRegistrationIds);
-  if (error) throw error;
-  const totals = new Map<string, { weighted: number; minutes: number }>();
-  for (const row of data ?? []) {
-    const minutes = Number(row.minutes ?? 0);
-    const rating = Number(row.rating ?? 0);
-    if (!minutes || !rating) continue;
-    const current = totals.get(row.player_registration_id) ?? {
-      weighted: 0,
-      minutes: 0,
-    };
-    current.weighted += rating * minutes;
-    current.minutes += minutes;
-    totals.set(row.player_registration_id, current);
-  }
-  const ratings = new Map<string, number>();
-  for (const [id, total] of totals.entries()) {
-    ratings.set(id, Number((total.weighted / total.minutes).toFixed(2)));
-  }
-  return ratings;
-}
-
 async function loadYellowCardDiscipline(
   seasonId: string,
   fixtureStage: string,
@@ -947,78 +657,6 @@ async function loadYellowCardDiscipline(
         };
       })
       .filter((player) => player.total_phase_yellow_cards > 0),
-  };
-}
-
-function buildPlayerSeasonStatsFromMatchRows(
-  matchStats: Array<Record<string, any>>,
-) {
-  const playedRows = matchStats.filter((row) => Number(row.minutes ?? 0) > 0);
-  const sum = (field: string) =>
-    playedRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
-  const ratings = playedRows
-    .map((row) => Number(row.rating ?? 0))
-    .filter((rating) => Number.isFinite(rating) && rating > 0);
-  const gkRows = playedRows.filter(
-    (row) => row.position_played === FootballPosition.GK,
-  );
-  const appearances = playedRows.length;
-  const shots = sum("shots");
-  const shotsOnTarget = sum("shots_on_target");
-  const passes = sum("passes");
-  const accuratePasses = sum("accurate_passes");
-  const dribblesAttempted = sum("dribbles_attempted");
-  const successfulDribbles = sum("successful_dribbles");
-
-  return {
-    matches_played: appearances,
-    appearances,
-    starts: playedRows.filter((row) => Number(row.minutes ?? 0) >= 45).length,
-    minutes_played: sum("minutes"),
-    goals: sum("goals"),
-    assists: sum("assists"),
-    shots,
-    shots_on_target: shotsOnTarget,
-    chances_created: sum("chances_created"),
-    big_chances_created: sum("big_chances_created"),
-    big_chances_missed: sum("big_chances_missed"),
-    total_passes: passes,
-    accurate_passes: accuratePasses,
-    dribbles_attempted: dribblesAttempted,
-    successful_dribbles: successfulDribbles,
-    dribbled_past: sum("dribbled_past"),
-    dispossessed: sum("dispossessed"),
-    tackles: sum("tackles"),
-    interceptions: sum("interceptions"),
-    clearances: sum("clearances"),
-    blocks: sum("blocks"),
-    fouls_committed: sum("fouls_committed"),
-    yellow_cards: sum("yellow_cards"),
-    red_cards: sum("red_cards"),
-    saves: sum("saves"),
-    goals_conceded: sum("goals_conceded"),
-    accurate_long_balls: sum("accurate_long_balls"),
-    diving_saves: sum("diving_saves"),
-    saves_inside_box: sum("saves_inside_box"),
-    clean_sheets: gkRows.filter(
-      (row) =>
-        Number(row.goals_conceded ?? 0) === 0 && Number(row.minutes ?? 0) >= 45,
-    ).length,
-    shot_accuracy: shots ? Math.round((shotsOnTarget / shots) * 100) : 0,
-    pass_accuracy: passes ? Math.round((accuratePasses / passes) * 100) : 0,
-    dribble_success_rate: dribblesAttempted
-      ? Math.round((successfulDribbles / dribblesAttempted) * 100)
-      : 0,
-    average_rating: ratings.length
-      ? Number(
-          (
-            ratings.reduce((total, rating) => total + rating, 0) /
-            ratings.length
-          ).toFixed(2),
-        )
-      : null,
-    best_match_rating: ratings.length ? Math.max(...ratings) : null,
-    lowest_match_rating: ratings.length ? Math.min(...ratings) : null,
   };
 }
 
@@ -2612,69 +2250,11 @@ managerRouter.get(
     );
     const playerMatchStats = playerMatchStatsResult.data ?? [];
 
-    const playerRows = (playerSeasonStatsResult.data ?? []).map(
-      (seasonStat) => {
-        const player = playerById.get(seasonStat.player_registration_id);
-        const team = player ? teamById.get(player.team_registration_id) : null;
-        const matchRows = playerMatchStats.filter(
-          (row) =>
-            row.player_registration_id === seasonStat.player_registration_id,
-        );
-        const minutes = Number(seasonStat.minutes_played ?? 0);
-        const sum = (field: string) =>
-          matchRows.reduce((total, row) => total + Number(row[field] ?? 0), 0);
-        const gkRows = matchRows.filter(
-          (row) => row.position_played === FootballPosition.GK,
-        );
-        const cleanSheets = gkRows.filter(
-          (row) =>
-            Number(row.goals_conceded ?? 0) === 0 &&
-            Number(row.minutes ?? 0) >= 45,
-        ).length;
-        return {
-          id: seasonStat.player_registration_id,
-          name: relatedName(player?.players, "full_name") ?? "Unnamed player",
-          avatarUrl: relatedName(player?.players, "avatar_url"),
-          team: relatedName(team?.teams, "name") ?? "Unassigned team",
-          teamLogoUrl: relatedName(team?.teams, "logo_url"),
-          minutes,
-          matches: Number(seasonStat.appearances ?? 0),
-          goals: Number(seasonStat.goals ?? 0),
-          assists: Number(seasonStat.assists ?? 0),
-          goalAssists:
-            Number(seasonStat.goals ?? 0) + Number(seasonStat.assists ?? 0),
-          successfulDribblesPer90: per90(
-            Number(seasonStat.successful_dribbles ?? 0),
-            minutes,
-          ),
-          shotsOnTargetPer90: per90(
-            Number(seasonStat.shots_on_target ?? 0),
-            minutes,
-          ),
-          accuratePassesPer90: per90(
-            Number(seasonStat.accurate_passes ?? 0),
-            minutes,
-          ),
-          bigChancesCreated: Number(
-            seasonStat.big_chances_created ?? sum("big_chances_created") ?? 0,
-          ),
-          bigChancesMissed: sum("big_chances_missed"),
-          tacklesPer90: per90(Number(seasonStat.tackles ?? 0), minutes),
-          interceptionsPer90: per90(
-            Number(seasonStat.interceptions ?? 0),
-            minutes,
-          ),
-          blocksPer90: per90(sum("blocks"), minutes),
-          clearancesPer90: per90(sum("clearances"), minutes),
-          cleanSheets,
-          savesPer90: per90(sum("saves"), minutes),
-          goalsConcededPer90: per90(sum("goals_conceded"), minutes),
-          yellowCards: Number(seasonStat.yellow_cards ?? 0),
-          redCards: Number(seasonStat.red_cards ?? 0),
-          foulsCommittedPer90: per90(sum("fouls_committed"), minutes),
-          rating: Number(seasonStat.average_rating ?? 0),
-        };
-      },
+    const playerRows = buildPlayerLeaderboardRows(
+      playerSeasonStatsResult.data ?? [],
+      playerMatchStats,
+      playerById,
+      teamById,
     );
 
     const standingsByTeam = new Map(

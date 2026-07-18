@@ -11,6 +11,14 @@ import { AppError, asyncHandler } from "../errors.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { getFormationSlots } from "../domain/lineup-builder.js";
 import { loadSeasonStandings } from "../services/standings-report.js";
+import {
+  buildPlayerSeasonStatsFromMatchRows,
+  loadLeagueRatings,
+} from "../services/player-stats.js";
+import {
+  buildPlayerLeaderboardRows,
+  makePlayerStatSections,
+} from "../services/stat-leaderboards.js";
 
 // The fan experience is read-only over the same tournament data the public and
 // manager surfaces expose, plus a personal list of favourite clubs. Everything
@@ -291,6 +299,74 @@ fanRouter.get(
   }),
 );
 
+// Categorized player leaderboards for the whole league, mirroring the manager
+// Player Stats page (General / Attack / Defense / Goalkeeping / Discipline).
+// Fans get the full read-only view across every approved team in the season.
+fanRouter.get(
+  "/seasons/:seasonId/stat-leaderboards",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    await assertFanCanViewSeason(seasonId);
+
+    const [teamRegistrationsResult, playerRegistrationsResult] =
+      await Promise.all([
+        supabaseAdmin
+          .from("team_registrations")
+          .select("id,teams(name,short_name,logo_url)")
+          .eq("season_id", seasonId)
+          .eq("status", RegistrationStatus.APPROVED),
+        supabaseAdmin
+          .from("player_season_registrations")
+          .select(
+            "id,team_registration_id,players(full_name,avatar_url)",
+          )
+          .eq("season_id", seasonId),
+      ]);
+    if (teamRegistrationsResult.error) throw teamRegistrationsResult.error;
+    if (playerRegistrationsResult.error) throw playerRegistrationsResult.error;
+
+    const teams = teamRegistrationsResult.data ?? [];
+    const teamIds = teams.map((team) => team.id);
+    const playerRegistrations = (
+      playerRegistrationsResult.data ?? []
+    ).filter((player) => teamIds.includes(player.team_registration_id));
+    const playerIds = playerRegistrations.map((player) => player.id);
+
+    const [playerSeasonStatsResult, playerMatchStatsResult] =
+      await Promise.all([
+        playerIds.length
+          ? supabaseAdmin
+              .from("player_season_stats")
+              .select("*")
+              .eq("season_id", seasonId)
+              .in("player_registration_id", playerIds)
+          : Promise.resolve({ data: [], error: null }),
+        playerIds.length
+          ? supabaseAdmin
+              .from("player_match_stats")
+              .select("*")
+              .in("player_registration_id", playerIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+    if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
+    if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
+
+    const teamById = new Map(teams.map((team) => [team.id, team]));
+    const playerById = new Map(
+      playerRegistrations.map((player) => [player.id, player]),
+    );
+
+    const playerRows = buildPlayerLeaderboardRows(
+      playerSeasonStatsResult.data ?? [],
+      playerMatchStatsResult.data ?? [],
+      playerById,
+      teamById,
+    );
+
+    res.json({ player_sections: makePlayerStatSections(playerRows) });
+  }),
+);
+
 // ---------------------------------------------------------------------------
 // Match detail (fan-safe)
 // ---------------------------------------------------------------------------
@@ -492,7 +568,7 @@ fanRouter.get(
       : player.player_abilities;
 
     const [
-      { data: seasonStats, error: seasonError },
+      { data: storedSeasonStats, error: seasonError },
       { data: matchStats, error: matchError },
     ] = await Promise.all([
       supabaseAdmin
@@ -511,9 +587,22 @@ fanRouter.get(
     if (seasonError) throw seasonError;
     if (matchError) throw matchError;
 
+    // Match the manager profile shape: derive the season aggregates from the
+    // confirmed match rows (so they always reconcile with the match-by-match
+    // table) and expose the minutes-weighted league rating. Ability attributes
+    // stay hidden — fans only ever see the same performance data managers do.
+    const leagueRatings = await loadLeagueRatings([player.id]);
+
     res.json({
-      player: { ...player, overall_rating: ability?.overall_rating ?? null, player_abilities: undefined },
-      season_stats: seasonStats,
+      player: {
+        ...player,
+        overall_rating: ability?.overall_rating ?? null,
+        player_abilities: undefined,
+      },
+      overall_rating: ability?.overall_rating ?? null,
+      league_rating: leagueRatings.get(player.id) ?? null,
+      season_stats: buildPlayerSeasonStatsFromMatchRows(matchStats ?? []),
+      stored_season_stats: storedSeasonStats,
       match_stats: (matchStats ?? []).map((row) => ({
         ...row,
         fixtures: row.fixtures
