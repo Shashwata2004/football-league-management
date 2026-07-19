@@ -1532,6 +1532,10 @@ create table if not exists public.player_match_stats (
       or coalesce(goals_conceded, 0) = 0
     )
   ),
+  constraint player_match_stats_pass_accuracy_cap_check check (
+    passes = 0
+    or accurate_passes * 100 <= passes * 98
+  ),
   unique (fixture_id, player_registration_id)
 );
 

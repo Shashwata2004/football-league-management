@@ -7,10 +7,13 @@ import {
 } from "@flms/shared";
 import {
   expectedGoalBaselines,
+  EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP,
   LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS,
   matchEventRequiresRelatedPlayer,
+  maximumAccuratePassesForPlayer,
   NEUTRAL_EXPECTED_GOALS_BASELINE,
   OWN_GOAL_RATING_PENALTY,
+  STANDARD_PLAYER_PASS_ACCURACY_CAP,
   simulateMatch,
   type SimPlayer,
   type SimPlayerStats,
@@ -104,6 +107,15 @@ function assertTeamTotals(
 }
 
 describe("match-stat simulator", () => {
+  it("caps player pass accuracy at 95%, with 98% reserved for rare elite performances", () => {
+    expect(STANDARD_PLAYER_PASS_ACCURACY_CAP).toBe(0.95);
+    expect(EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP).toBe(0.98);
+    expect(maximumAccuratePassesForPlayer(40, 89, 0.999)).toBe(38);
+    expect(maximumAccuratePassesForPlayer(50, 92, 0.5)).toBe(47);
+    expect(maximumAccuratePassesForPlayer(50, 92, 0.99)).toBe(49);
+    expect(maximumAccuratePassesForPlayer(1, 92, 0.99)).toBe(0);
+  });
+
   it("applies the scoring advantage only when explicitly enabled", () => {
     const leagueBaselines = expectedGoalBaselines(true);
     const neutralBaselines = expectedGoalBaselines(false);
@@ -277,6 +289,12 @@ describe("match-stat simulator", () => {
       expect(player.minutes).toBeGreaterThan(0);
       expect(player.minutes).toBeLessThanOrEqual(90);
       expect(player.accurate_passes).toBeLessThanOrEqual(player.passes);
+      if (player.passes > 0) {
+        expect(player.accurate_passes).toBeLessThan(player.passes);
+        expect(player.accurate_passes / player.passes).toBeLessThanOrEqual(
+          EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP,
+        );
+      }
       expect(player.shots_on_target ?? 0).toBeLessThanOrEqual(player.shots);
       expect(player.successful_dribbles).toBeLessThanOrEqual(
         player.dribbles_attempted,

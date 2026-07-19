@@ -145,6 +145,8 @@ const OWN_GOAL_CONVERSION_PROBABILITY = 0.045;
 export const OWN_GOAL_RATING_PENALTY = 1.4;
 export const NEUTRAL_EXPECTED_GOALS_BASELINE = 1.08;
 export const LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS = 0.3;
+export const STANDARD_PLAYER_PASS_ACCURACY_CAP = 0.95;
+export const EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP = 0.98;
 const GOAL_RATING_BONUS = 0.82;
 const ASSIST_RATING_BONUS = 0.52;
 const RELATED_PLAYER_REQUIRED_EVENT_TYPES = new Set<MatchEventType>([
@@ -586,6 +588,24 @@ function clamp(value: number, min: number, max: number) {
 
 function clampDecimal(value: number, min: number, max: number, decimals = 2) {
   return Number(Math.max(min, Math.min(max, value)).toFixed(decimals));
+}
+
+export function maximumAccuratePassesForPlayer(
+  passes: number,
+  passingAbility: number,
+  rarityRoll: number,
+) {
+  const attempts = Math.max(0, Math.floor(passes));
+  if (attempts === 0) return 0;
+  const exceptionalMatch =
+    passingAbility >= 90 && attempts >= 35 && rarityRoll >= 0.98;
+  const accuracyCap = exceptionalMatch
+    ? EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP
+    : STANDARD_PLAYER_PASS_ACCURACY_CAP;
+  return Math.max(
+    0,
+    Math.min(attempts - 1, Math.floor(attempts * accuracyCap)),
+  );
 }
 
 function pick<T>(items: T[], random: () => number) {
@@ -1929,13 +1949,29 @@ function allocateStats(
     },
   );
   // Pass completion is allocated only after attempts, so the player totals
-  // exactly reconcile with the team total and can never exceed attempts.
+  // exactly reconcile with the team total. Individual players are capped at
+  // 95%; only an elite passer in a rare match can reach up to 98%.
+  const accuratePassCapByPlayer = new Map(
+    active.map((player) => {
+      const position = detailedPosition(player);
+      const passing =
+        position === FootballPosition.GK
+          ? (player.distribution ?? player.passing)
+          : player.passing;
+      const passes = passByPlayer.get(player.player_registration_id) ?? 0;
+      return [
+        player.player_registration_id,
+        maximumAccuratePassesForPlayer(passes, passing, random()),
+      ] as const;
+    }),
+  );
   const cappedAccuratePassByPlayer = allocateCappedIntegerTotal(
     teamStats.accurate_passes,
     active,
     playerId,
     () => 0,
-    (player) => passByPlayer.get(player.player_registration_id) ?? 0,
+    (player) =>
+      accuratePassCapByPlayer.get(player.player_registration_id) ?? 0,
     (player) => {
       const position = detailedPosition(player);
       const passing =
@@ -2896,6 +2932,15 @@ export function validateSimulationConsistency(
       throw new AppError(400, "A player's shots on target exceed shots");
     if (player.accurate_passes > player.passes)
       throw new AppError(400, "A player's accurate passes exceed passes");
+    if (player.passes > 0 && player.accurate_passes >= player.passes)
+      throw new AppError(400, "A player has an impossible 100% pass accuracy");
+    if (
+      player.passes > 0 &&
+      player.accurate_passes / player.passes >
+        EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP
+    ) {
+      throw new AppError(400, "A player's pass accuracy exceeds 98%");
+    }
     if ((player.dribbled_past ?? 0) < 0)
       throw new AppError(400, "A player's dribbled past cannot be negative");
     if ((player.diving_saves ?? 0) > player.saves)

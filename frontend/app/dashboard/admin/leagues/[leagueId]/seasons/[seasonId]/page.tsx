@@ -1467,7 +1467,17 @@ function buildPlayerEventMeta(
     if (type === "YELLOW_CARD") meta.yellow = true;
     if (type === "RED_CARD") meta.red = true;
     if (type === "PENALTY_MISS") meta.penaltyMiss = true;
-    if (type === "PENALTY_SAVED") meta.penaltySaved = true;
+    if (type === "PENALTY_SAVED") {
+      // The penalty taker owns the event; the saving goalkeeper is related.
+      // Show a miss on the taker and preserve the save on the goalkeeper.
+      meta.penaltyMiss = true;
+      if (event.related_player_registration_id) {
+        ensurePlayerEventMeta(
+          map,
+          String(event.related_player_registration_id),
+        ).penaltySaved = true;
+      }
+    }
     if (type === "INJURY") meta.injured = true;
   }
   for (const sub of substitutions) {
@@ -6758,9 +6768,7 @@ function MatchScorelineHeader({
           event.side === side &&
           (type === "GOAL" ||
             type === "PENALTY_GOAL" ||
-            type === "OWN_GOAL" ||
-            type === "PENALTY_MISS" ||
-            type === "PENALTY_SAVED")
+            type === "OWN_GOAL")
         );
       })
       .map((event) => {
@@ -6773,11 +6781,7 @@ function MatchScorelineHeader({
             ? " (Pen)"
             : type === "OWN_GOAL"
               ? " (OG)"
-              : type === "PENALTY_SAVED"
-                ? " (Pen saved)"
-                : type === "PENALTY_MISS"
-                  ? " (Pen missed)"
-                  : "";
+              : "";
         return `${name} ${formatNumber(event.minute)}'${suffix}`;
       });
   const homeScorers = scoreEventLines("HOME");
