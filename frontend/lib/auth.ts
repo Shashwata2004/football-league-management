@@ -1,6 +1,7 @@
 "use client";
 
 import type { ProfileDto } from "@flms/shared";
+import { clearResponseCache } from "./request-cache";
 
 const tokenKey = "flms_token";
 const profileKey = "flms_profile";
@@ -11,11 +12,13 @@ export function getAuthToken() {
 }
 
 export function saveAuth(token: string, profile: ProfileDto) {
+  clearResponseCache();
   window.localStorage.setItem(tokenKey, token);
   window.localStorage.setItem(profileKey, JSON.stringify(profile));
 }
 
 export function clearAuth() {
+  clearResponseCache();
   window.localStorage.removeItem(tokenKey);
   window.localStorage.removeItem(profileKey);
 }

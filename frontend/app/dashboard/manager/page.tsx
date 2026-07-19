@@ -2165,16 +2165,39 @@ function PlayersSection({
   );
 }
 
+function isCompletedFixture(fixture: FixtureRecord) {
+  return fixture.status === "FINAL" || fixture.status === "COMPLETED";
+}
+
+function compareFixturesNewestFirst(a: FixtureRecord, b: FixtureRecord) {
+  const aKickoff = a.kickoff_at ? Date.parse(a.kickoff_at) : 0;
+  const bKickoff = b.kickoff_at ? Date.parse(b.kickoff_at) : 0;
+  return bKickoff - aKickoff;
+}
+
+function mergeFixtureRows(
+  ...fixtureGroups: FixtureRecord[][]
+): FixtureRecord[] {
+  const rows = new Map<string, FixtureRecord>();
+  for (const fixtures of fixtureGroups) {
+    for (const fixture of fixtures) rows.set(fixture.id, fixture);
+  }
+  return [...rows.values()];
+}
+
 function FixturesSection({
   fixtures,
+  results,
   activeTeam,
   activeSeason,
   standings,
   onTeamClick,
 }: Parameters<typeof SectionView>[0]) {
   const [seasonTeams, setSeasonTeams] = useState<TeamRecord[]>([]);
-  const [fixtureRows, setFixtureRows] = useState<FixtureRecord[]>(fixtures);
-  const [teamFilter, setTeamFilter] = useState(activeTeam?.id ?? "MY_TEAM");
+  const [fixtureRows, setFixtureRows] = useState<FixtureRecord[]>(() =>
+    mergeFixtureRows(fixtures, results),
+  );
+  const [teamFilter, setTeamFilter] = useState("MY_TEAM");
   const [showGroups, setShowGroups] = useState(false);
   const [selectedFixture, setSelectedFixture] = useState<FixtureRecord | null>(
     null,
@@ -2184,8 +2207,31 @@ function FixturesSection({
   const showHomeAway = !isManagerGroupKnockoutFormat(activeSeason?.format);
 
   useEffect(() => {
-    setFixtureRows(fixtures);
-  }, [fixtures]);
+    setFixtureRows(mergeFixtureRows(fixtures, results));
+  }, [fixtures, results]);
+
+  useEffect(() => {
+    if (!activeSeason?.id) return;
+    let alive = true;
+    const queryTeamId =
+      teamFilter === "MY_TEAM" ? activeTeam?.id : teamFilter;
+    const query =
+      queryTeamId === "ALL"
+        ? `seasonId=${activeSeason.id}&teamId=ALL`
+        : `seasonId=${activeSeason.id}&teamId=${queryTeamId ?? "ALL"}`;
+
+    api<{ fixtures: FixtureRecord[] }>(`/manager/fixtures?${query}`)
+      .then((payload) => {
+        if (alive) setFixtureRows(payload.fixtures);
+      })
+      .catch(() => {
+        // Keep the dashboard's already-loaded rows visible if refresh fails.
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeSeason?.id, activeTeam?.id, teamFilter]);
 
   useEffect(() => {
     if (!activeSeason?.id) return;
@@ -2202,18 +2248,8 @@ function FixturesSection({
     };
   }, [activeSeason?.id]);
 
-  async function changeFixtureFilter(value: string) {
+  function changeFixtureFilter(value: string) {
     setTeamFilter(value);
-    if (!activeSeason?.id) return;
-    const queryTeamId = value === "MY_TEAM" ? activeTeam?.id : value;
-    const query =
-      queryTeamId === "ALL"
-        ? `seasonId=${activeSeason.id}&teamId=ALL`
-        : `seasonId=${activeSeason.id}&teamId=${queryTeamId ?? activeTeam?.id ?? "ALL"}`;
-    const payload = await api<{ fixtures: FixtureRecord[] }>(
-      `/manager/fixtures?${query}`,
-    );
-    setFixtureRows(payload.fixtures);
   }
 
   async function openFixture(fixture: FixtureRecord) {
@@ -2232,25 +2268,25 @@ function FixturesSection({
     <div className="space-y-6">
       <PageTitle
         title="Fixtures"
-        subtitle="Upcoming and scheduled matches for your selected team."
+        subtitle="Upcoming fixtures and previous confirmed scorelines for your selected team."
       />
       <div className="flex flex-wrap gap-3 rounded-3xl border border-slate-200 bg-white p-4">
         <button
           className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === "MY_TEAM" ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`}
-          onClick={() => void changeFixtureFilter("MY_TEAM")}
+          onClick={() => changeFixtureFilter("MY_TEAM")}
         >
           My Fixtures
         </button>
         <button
           className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === "ALL" ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`}
-          onClick={() => void changeFixtureFilter("ALL")}
+          onClick={() => changeFixtureFilter("ALL")}
         >
           All Fixtures
         </button>
         <select
           className="manager-input max-w-xs"
           value={teamFilter}
-          onChange={(event) => void changeFixtureFilter(event.target.value)}
+          onChange={(event) => changeFixtureFilter(event.target.value)}
         >
           <option value="MY_TEAM">My team only</option>
           <option value="ALL">All season fixtures</option>
@@ -2277,14 +2313,32 @@ function FixturesSection({
           onTeamClick={onTeamClick}
         />
       ) : null}
-      <FixtureTable
-        fixtures={fixtureRows.filter((fixture) => fixture.status !== "FINAL")}
-        activeTeamId={activeTeam?.id}
-        showHomeAway={showHomeAway}
-        emptyLabel="No fixtures yet. Fixtures will appear after admin generates them."
-        onTeamClick={onTeamClick}
-        onOpen={openFixture}
-      />
+      <section className="space-y-3">
+        <h2 className="text-lg font-black text-slate-900">Upcoming Matches</h2>
+        <FixtureTable
+          fixtures={fixtureRows.filter(
+            (fixture) => !isCompletedFixture(fixture),
+          )}
+          activeTeamId={activeTeam?.id}
+          showHomeAway={showHomeAway}
+          emptyLabel="No upcoming fixtures."
+          onTeamClick={onTeamClick}
+          onOpen={openFixture}
+        />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-lg font-black text-slate-900">Previous Matches</h2>
+        <FixtureTable
+          fixtures={fixtureRows
+            .filter(isCompletedFixture)
+            .sort(compareFixturesNewestFirst)}
+          activeTeamId={activeTeam?.id}
+          showHomeAway={showHomeAway}
+          emptyLabel="No completed matches yet. Scorelines will appear after results are confirmed."
+          onTeamClick={onTeamClick}
+          onOpen={openFixture}
+        />
+      </section>
       {selectedFixture ? (
         <MatchDetailModal
           fixture={selectedFixture}
