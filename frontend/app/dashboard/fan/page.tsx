@@ -2,6 +2,7 @@
 
 import {
   CSSProperties,
+  FormEvent,
   ReactNode,
   useEffect,
   useMemo,
@@ -29,7 +30,11 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import { clearAuth, getStoredProfile } from "@/lib/auth";
+import {
+  clearAuth,
+  getStoredProfile,
+  updateStoredProfile,
+} from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
 // The fan experience mirrors the manager dashboard's shell (fixed sidebar,
@@ -514,6 +519,7 @@ export default function FanDashboardPage() {
               onRemoveFavorite={removeFavorite}
               onSetPrimary={setPrimaryFavorite}
               onError={(text) => setMessage(text)}
+              onProfileUpdated={(next) => setProfile(next)}
             />
           )}
         </div>
@@ -705,6 +711,7 @@ interface SectionProps {
   onRemoveFavorite: (teamId: string) => Promise<void>;
   onSetPrimary: (teamId: string) => Promise<void>;
   onError: (message: string) => void;
+  onProfileUpdated: (profile: Profile) => void;
 }
 
 function FanSectionView(props: SectionProps) {
@@ -714,7 +721,14 @@ function FanSectionView(props: SectionProps) {
   if (props.section === "Player Stats") return <PlayerStatsSection {...props} />;
   if (props.section === "My Teams") return <MyTeamsSection {...props} />;
   if (props.section === "Discover") return <DiscoverSection {...props} />;
-  return <ProfileSection profile={props.profile} favorites={props.favorites} />;
+  return (
+    <ProfileSection
+      profile={props.profile}
+      favorites={props.favorites}
+      onProfileUpdated={props.onProfileUpdated}
+      onError={props.onError}
+    />
+  );
 }
 
 // ===========================================================================
@@ -1483,13 +1497,90 @@ function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: Sect
   );
 }
 
-function ProfileSection({ profile, favorites }: { profile: Profile | null; favorites: Favorite[] }) {
+function ProfileSection({
+  profile,
+  favorites,
+  onProfileUpdated,
+  onError,
+}: {
+  profile: Profile | null;
+  favorites: Favorite[];
+  onProfileUpdated: (profile: Profile) => void;
+  onError: (message: string) => void;
+}) {
+  const [fullName, setFullName] = useState(profile?.full_name ?? "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setFullName(profile?.full_name ?? "");
+  }, [profile?.full_name]);
+
+  const trimmed = fullName.trim();
+  const dirty = trimmed !== (profile?.full_name ?? "").trim();
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!trimmed) {
+      onError("Full name is required.");
+      return;
+    }
+    setSaving(true);
+    setSaved(false);
+    try {
+      const { profile: updated } = await api<{ profile: Profile }>(
+        "/fan/profile",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ full_name: trimmed }),
+        },
+      );
+      updateStoredProfile(
+        updated as unknown as Parameters<typeof updateStoredProfile>[0],
+      );
+      onProfileUpdated(updated);
+      setSaved(true);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to save name");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageTitle title="Profile" subtitle="Your Scoreline fan account." />
       <Panel title="Account">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Detail label="Name" value={profile?.full_name ?? "Fan"} />
+        <form onSubmit={save} className="space-y-2">
+          <label className="text-xs font-bold uppercase tracking-widest text-slate-500">
+            Name
+          </label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none focus:border-[var(--fan-primary,#2563eb)]"
+              value={fullName}
+              maxLength={160}
+              placeholder="Your name"
+              onChange={(event) => {
+                setFullName(event.target.value);
+                setSaved(false);
+              }}
+            />
+            <button
+              type="submit"
+              disabled={saving || !dirty || !trimmed}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+          {saved && !dirty ? (
+            <p className="text-sm font-semibold text-emerald-600">
+              Name updated.
+            </p>
+          ) : null}
+        </form>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <Detail label="Email" value={profile?.email ?? "-"} />
           <Detail label="Role" value="Fan" />
           <Detail label="Teams followed" value={favorites.length} />

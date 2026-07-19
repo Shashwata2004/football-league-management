@@ -2382,6 +2382,75 @@ managerRouter.patch(
   }),
 );
 
+const managerMessageSchema = z.object({
+  message: z.string().trim().min(1, "Message is required").max(2000),
+  team_registration_id: z.string().uuid().optional(),
+  parent_message_id: z.string().uuid().optional(),
+});
+
+// A manager sends a free-form message to the admins, or replies within an
+// existing thread. Every row keeps manager_id = the manager the thread belongs
+// to (self) so both sides read the same conversation; sender_role marks the
+// message as manager-authored. The season/team scope is derived from the parent
+// message when replying, or from the chosen/only team registration otherwise.
+managerRouter.post(
+  "/messages",
+  asyncHandler(async (req, res) => {
+    const input = managerMessageSchema.parse(req.body);
+    const managerId = req.auth!.userId;
+
+    let seasonId: string;
+    let teamRegistrationId: string | null;
+
+    if (input.parent_message_id) {
+      const { data: parent, error: parentError } = await supabaseAdmin
+        .from("manager_messages")
+        .select("id,season_id,team_registration_id,manager_id")
+        .eq("id", input.parent_message_id)
+        .eq("manager_id", managerId)
+        .maybeSingle();
+      if (parentError) throw parentError;
+      if (!parent) throw new AppError(404, "Message thread not found");
+      seasonId = parent.season_id;
+      teamRegistrationId = parent.team_registration_id;
+    } else {
+      const teams = await loadManagerTeams(managerId);
+      const target = input.team_registration_id
+        ? teams.find((team) => team.id === input.team_registration_id)
+        : teams[0];
+      if (!target) {
+        throw new AppError(
+          400,
+          input.team_registration_id
+            ? "You do not manage this team registration."
+            : "Register a team before messaging the admins.",
+        );
+      }
+      seasonId = target.season_id;
+      teamRegistrationId = target.id;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("manager_messages")
+      .insert({
+        season_id: seasonId,
+        manager_id: managerId,
+        team_registration_id: teamRegistrationId,
+        related_type: "GENERAL_NOTICE",
+        message: input.message,
+        sender_role: UserRole.MANAGER,
+        parent_message_id: input.parent_message_id ?? null,
+        created_by: managerId,
+      })
+      .select(
+        "*,team_registrations(id,teams(name,short_name)),player_season_registrations(id,players(full_name)),fixtures(id,kickoff_at)",
+      )
+      .single();
+    if (error) throw error;
+    res.status(201).json({ message: data });
+  }),
+);
+
 managerRouter.get(
   "/profile",
   asyncHandler(async (req, res) => {
@@ -2403,9 +2472,18 @@ managerRouter.patch(
         ? req.body.full_name.trim().slice(0, 160)
         : undefined;
     if (!fullName) throw new AppError(400, "Full name is required");
+    const now = new Date().toISOString();
+    // app_managers is the source of truth: ensureProfile() copies its full_name
+    // into profiles on every login, so we must update it here or the edit would
+    // silently revert on the manager's next sign-in.
+    const { error: accountError } = await supabaseAdmin
+      .from("app_managers")
+      .update({ full_name: fullName, updated_at: now })
+      .eq("id", req.auth!.userId);
+    if (accountError) throw accountError;
     const { data, error } = await supabaseAdmin
       .from("profiles")
-      .update({ full_name: fullName, updated_at: new Date().toISOString() })
+      .update({ full_name: fullName, updated_at: now })
       .eq("id", req.auth!.userId)
       .select("id,email,full_name,role,created_at")
       .single();

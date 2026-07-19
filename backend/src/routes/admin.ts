@@ -1729,6 +1729,74 @@ adminRouter.post(
   }),
 );
 
+// Full message history for a season, in both directions (admin notices and
+// manager messages/replies), joined with the manager name and team so the admin
+// inbox can render who said what. Ordered oldest-first so threads read naturally.
+adminRouter.get(
+  "/seasons/:seasonId/messages",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    const { data, error } = await supabaseAdmin
+      .from("manager_messages")
+      .select(
+        "id,message,related_type,sender_role,parent_message_id,read_at,created_at,manager_id,team_registration_id,manager:profiles!manager_messages_manager_id_fkey(full_name,email),team_registrations(id,teams(name,short_name))",
+      )
+      .eq("season_id", seasonId)
+      .order("created_at", { ascending: true });
+    if (error) throw error;
+    res.json({ messages: data ?? [] });
+  }),
+);
+
+// Admin replies to a manager's message within the same thread. The reply
+// inherits the parent's manager/season/team scope so the conversation stays
+// grouped and the manager reads it through their existing messages feed.
+adminRouter.post(
+  "/manager-messages/:messageId/reply",
+  asyncHandler(async (req, res) => {
+    const message =
+      typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (!message) throw new AppError(400, "Message is required.");
+    const { data: parent, error: parentError } = await supabaseAdmin
+      .from("manager_messages")
+      .select("id,season_id,manager_id,team_registration_id")
+      .eq("id", routeParam(req.params.messageId, "messageId"))
+      .single();
+    if (parentError) throw parentError;
+    const { data, error } = await supabaseAdmin
+      .from("manager_messages")
+      .insert({
+        season_id: parent.season_id,
+        manager_id: parent.manager_id,
+        team_registration_id: parent.team_registration_id,
+        related_type: "GENERAL_NOTICE",
+        message,
+        sender_role: UserRole.ADMIN,
+        parent_message_id: parent.id,
+        created_by: req.auth!.userId,
+      })
+      .select("*")
+      .single();
+    if (error) throw error;
+    res.status(201).json({ message: data });
+  }),
+);
+
+// Admin marks an inbound (manager-authored) message as read.
+adminRouter.patch(
+  "/manager-messages/:messageId/read",
+  asyncHandler(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from("manager_messages")
+      .update({ read_at: new Date().toISOString() })
+      .eq("id", routeParam(req.params.messageId, "messageId"))
+      .select("*")
+      .single();
+    if (error) throw error;
+    res.json({ message: data });
+  }),
+);
+
 adminRouter.get(
   "/seasons/:seasonId/groups",
   asyncHandler(async (req, res) => {

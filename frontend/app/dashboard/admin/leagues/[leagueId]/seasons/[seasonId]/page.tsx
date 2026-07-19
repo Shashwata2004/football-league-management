@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -2475,7 +2475,7 @@ export default function AdminLeagueSeasonDashboard() {
             <TeamStatsView data={adminData} onOpenTeam={openAdminTeamProfile} />
           ) : null}
           {activeTab === "messages" ? (
-            <MessagesView messages={adminData.messages} />
+            <MessagesView seasonId={season.id} />
           ) : null}
           {activeTab === "divide-groups" ? (
             <DivideGroupsView
@@ -8185,28 +8185,266 @@ function LeaderboardModal({
   );
 }
 
-function MessagesView({ messages }: { messages: AdminMessageRow[] }) {
+interface AdminMessageApiRow {
+  id: string;
+  message: string;
+  related_type: string;
+  sender_role?: string | null;
+  parent_message_id?: string | null;
+  read_at: string | null;
+  created_at: string;
+  manager_id: string;
+  team_registration_id?: string | null;
+  manager?:
+    | { full_name?: string | null; email?: string | null }
+    | Array<{ full_name?: string | null; email?: string | null }>
+    | null;
+  team_registrations?:
+    | { id: string; teams?: { name?: string | null; short_name?: string | null } | null }
+    | Array<{ id: string; teams?: { name?: string | null; short_name?: string | null } | null }>
+    | null;
+}
+
+interface AdminMessageThread {
+  root: AdminMessageApiRow;
+  items: AdminMessageApiRow[];
+  manager: string;
+  team: string;
+  lastAt: string;
+  hasUnread: boolean;
+}
+
+function isAdminAuthored(row: AdminMessageApiRow) {
+  return (row.sender_role ?? "ADMIN").toUpperCase() === "ADMIN";
+}
+
+// Group the season's flat message list into per-conversation threads keyed by
+// their root message, most-recent-activity first. Manager-authored roots with
+// unread replies surface as actionable inbox items.
+function buildAdminThreads(rows: AdminMessageApiRow[]): AdminMessageThread[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const rootOf = (row: AdminMessageApiRow): AdminMessageApiRow => {
+    let current = row;
+    const seen = new Set<string>();
+    while (current.parent_message_id && byId.has(current.parent_message_id)) {
+      if (seen.has(current.id)) break;
+      seen.add(current.id);
+      current = byId.get(current.parent_message_id)!;
+    }
+    return current;
+  };
+  const threads = new Map<string, AdminMessageApiRow[]>();
+  for (const row of rows) {
+    const root = rootOf(row);
+    const list = threads.get(root.id) ?? [];
+    list.push(row);
+    threads.set(root.id, list);
+  }
+  return Array.from(threads.entries())
+    .map(([rootId, items]) => {
+      const sorted = [...items].sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+      const root: AdminMessageApiRow = byId.get(rootId) ?? sorted[0]!;
+      const manager = relatedOne(root.manager);
+      const teamReg = relatedOne(root.team_registrations);
+      return {
+        root,
+        items: sorted,
+        manager: manager?.full_name ?? manager?.email ?? "Manager",
+        team: teamReg?.teams?.name ?? "-",
+        lastAt: sorted[sorted.length - 1]?.created_at ?? "",
+        // Only inbound (manager-authored) messages that are unread need action.
+        hasUnread: sorted.some(
+          (item) => !item.read_at && !isAdminAuthored(item),
+        ),
+      };
+    })
+    .sort(
+      (a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime(),
+    );
+}
+
+function MessagesView({ seasonId }: { seasonId: string }) {
+  const [rows, setRows] = useState<AdminMessageApiRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedRootId, setSelectedRootId] = useState<string | null>(null);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  const reload = useCallback(async () => {
+    const { messages } = await api<{ messages: AdminMessageApiRow[] }>(
+      `/admin/seasons/${seasonId}/messages`,
+    );
+    setRows(messages);
+    return messages;
+  }, [seasonId]);
+
+  useEffect(() => {
+    setLoading(true);
+    void reload()
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load messages"),
+      )
+      .finally(() => setLoading(false));
+  }, [reload]);
+
+  const threads = buildAdminThreads(rows);
+  const selectedThread =
+    threads.find((thread) => thread.root.id === selectedRootId) ??
+    threads[0] ??
+    null;
+
+  async function openThread(thread: AdminMessageThread) {
+    setSelectedRootId(thread.root.id);
+    setReplyDraft("");
+    const unread = thread.items.filter(
+      (item) => !item.read_at && !isAdminAuthored(item),
+    );
+    if (unread.length) {
+      await Promise.all(
+        unread.map((item) =>
+          api(`/admin/manager-messages/${item.id}/read`, { method: "PATCH" }),
+        ),
+      ).catch(() => undefined);
+      await reload();
+    }
+  }
+
+  async function sendReply(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = replyDraft.trim();
+    if (!trimmed || !selectedThread) return;
+    setSending(true);
+    setError("");
+    try {
+      // Reply to the latest message in the thread so scope always resolves.
+      const target =
+        selectedThread.items[selectedThread.items.length - 1] ??
+        selectedThread.root;
+      await api(`/admin/manager-messages/${target.id}/reply`, {
+        method: "POST",
+        body: JSON.stringify({ message: trimmed }),
+      });
+      setReplyDraft("");
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send reply");
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
-    <CrudPage
-      title="Messages"
-      subtitle="Messages sent to managers after rejection, blocking, removal, or notices."
-      columns={[
-        "Manager Name",
-        "Team Name",
-        "Message",
-        "Related Type",
-        "Read Status",
-      ]}
-      rows={messages.map((row) => [
-        row.manager,
-        row.team,
-        row.message,
-        row.type,
-        <StatusPill key="read" tone={row.read === "Read" ? "green" : "orange"}>
-          {row.read}
-        </StatusPill>,
-      ])}
-    />
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-black text-slate-900">Messages</h2>
+        <p className="text-sm text-slate-500">
+          Conversations with managers, plus automated notices for rejections,
+          blocks, and removals.
+        </p>
+      </div>
+      {error ? (
+        <p className="text-sm font-semibold text-red-600">{error}</p>
+      ) : null}
+      {loading ? (
+        <EmptyState label="Loading messages..." />
+      ) : threads.length === 0 ? (
+        <EmptyState label="No messages yet." />
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+          <Panel title="Conversations">
+            <div className="space-y-2">
+              {threads.map((thread) => (
+                <button
+                  key={thread.root.id}
+                  className={`w-full rounded-2xl p-3 text-left text-sm transition hover:bg-slate-100 ${
+                    selectedThread?.root.id === thread.root.id
+                      ? "bg-slate-100"
+                      : "bg-slate-50"
+                  }`}
+                  onClick={() => void openThread(thread)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate font-bold text-slate-900">
+                      {thread.manager}
+                    </p>
+                    {thread.hasUnread ? (
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
+                    ) : null}
+                  </div>
+                  <p className="truncate text-xs text-slate-400">
+                    {thread.team}
+                  </p>
+                  <p className="mt-1 truncate text-slate-500">
+                    {thread.items[thread.items.length - 1]?.message}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </Panel>
+          <Panel title="Conversation">
+            {selectedThread ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="font-bold text-slate-900">
+                    {selectedThread.manager}
+                  </p>
+                  <p className="text-xs text-slate-400">{selectedThread.team}</p>
+                </div>
+                <div className="space-y-3">
+                  {selectedThread.items.map((item) => {
+                    const fromAdmin = isAdminAuthored(item);
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl p-3 ${
+                          fromAdmin ? "ml-6 bg-slate-100" : "mr-6 bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                            {fromAdmin
+                              ? "League office"
+                              : selectedThread.manager}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {safeDateTime(item.created_at)}
+                          </p>
+                        </div>
+                        <p className="mt-1 leading-7 text-slate-700">
+                          {item.message}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+                <form onSubmit={sendReply} className="space-y-2">
+                  <textarea
+                    className="min-h-[90px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-slate-400"
+                    value={replyDraft}
+                    maxLength={2000}
+                    placeholder="Reply to this manager..."
+                    onChange={(event) => setReplyDraft(event.target.value)}
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={sending || !replyDraft.trim()}
+                      className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {sending ? "Sending..." : "Reply"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            ) : null}
+          </Panel>
+        </div>
+      )}
+    </div>
   );
 }
 

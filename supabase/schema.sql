@@ -1823,6 +1823,8 @@ create table if not exists public.manager_messages (
   related_type public.manager_message_type not null,
   message text not null,
   created_by uuid references public.profiles(id),
+  sender_role public.user_role not null default 'ADMIN',
+  parent_message_id uuid references public.manager_messages(id) on delete cascade,
   read_at timestamptz,
   created_at timestamptz not null default now(),
   constraint manager_messages_content_check check (
@@ -1837,11 +1839,20 @@ create table if not exists public.manager_messages (
 alter table public.manager_messages add column if not exists player_registration_id uuid references public.player_season_registrations(id) on delete set null;
 alter table public.manager_messages add column if not exists fixture_id uuid references public.fixtures(id) on delete set null;
 alter table public.manager_messages add column if not exists notification_key text;
+alter table public.manager_messages add column if not exists sender_role public.user_role not null default 'ADMIN';
+alter table public.manager_messages add column if not exists parent_message_id uuid references public.manager_messages(id) on delete cascade;
 create unique index if not exists manager_messages_notification_key_uidx on public.manager_messages (notification_key);
 
 create index if not exists idx_manager_messages_team
   on public.manager_messages(team_registration_id, created_at desc)
   where team_registration_id is not null;
+
+create index if not exists idx_manager_messages_parent
+  on public.manager_messages(parent_message_id)
+  where parent_message_id is not null;
+
+create index if not exists idx_manager_messages_sender_role
+  on public.manager_messages(season_id, sender_role, created_at desc);
 
 create or replace function app_private.enforce_manager_message_scope()
 returns trigger

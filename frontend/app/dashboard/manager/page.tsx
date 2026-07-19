@@ -5,6 +5,7 @@ import {
   DragEvent,
   FormEvent,
   ReactNode,
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -36,7 +37,7 @@ import {
   RegistrationStatus,
 } from "@flms/shared";
 import { api } from "@/lib/api";
-import { clearAuth } from "@/lib/auth";
+import { clearAuth, updateStoredProfile } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
 
@@ -457,6 +458,9 @@ interface MessageRecord {
   message: string;
   read_at: string | null;
   created_at: string;
+  sender_role?: string | null;
+  parent_message_id?: string | null;
+  team_registration_id?: string | null;
   fixtures?:
     | {
         id: string;
@@ -1744,7 +1748,9 @@ function SectionView(props: {
   if (props.section === "Team Stats")
     return <StatsSection {...props} mode="team" />;
   if (props.section === "Messages") return <MessagesSection {...props} />;
-  return <ProfileSection profile={props.profile} />;
+  return (
+    <ProfileSection profile={props.profile} onRefresh={props.onRefresh} />
+  );
 }
 
 function DashboardSection({
@@ -3838,55 +3844,284 @@ function StatsSection({
   );
 }
 
+function isManagerAuthored(item: MessageRecord) {
+  return (item.sender_role ?? "ADMIN").toUpperCase() === "MANAGER";
+}
+
+// Group a flat message list into conversation threads. A thread is keyed by its
+// root message (one with no parent); replies attach under their root. Threads
+// are ordered by their most recent activity so active conversations float up.
+function buildMessageThreads(messages: MessageRecord[]) {
+  const byId = new Map(messages.map((item) => [item.id, item]));
+  const rootOf = (item: MessageRecord): MessageRecord => {
+    let current = item;
+    const seen = new Set<string>();
+    while (current.parent_message_id && byId.has(current.parent_message_id)) {
+      if (seen.has(current.id)) break;
+      seen.add(current.id);
+      current = byId.get(current.parent_message_id)!;
+    }
+    return current;
+  };
+  const threads = new Map<string, MessageRecord[]>();
+  for (const item of messages) {
+    const root = rootOf(item);
+    const list = threads.get(root.id) ?? [];
+    list.push(item);
+    threads.set(root.id, list);
+  }
+  return Array.from(threads.entries())
+    .map(([rootId, items]) => {
+      const sorted = [...items].sort(
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+      const root: MessageRecord = byId.get(rootId) ?? sorted[0]!;
+      return {
+        root,
+        items: sorted,
+        lastAt: sorted[sorted.length - 1]?.created_at ?? "",
+        hasUnread: sorted.some((item) => !item.read_at),
+      };
+    })
+    .sort(
+      (a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime(),
+    );
+}
+
 function MessagesSection({
-  messages,
+  messages: dashboardMessages,
+  activeTeam,
   onRefresh,
 }: Parameters<typeof SectionView>[0]) {
-  const [selected, setSelected] = useState<MessageRecord | null>(
-    messages[0] ?? null,
-  );
-  async function openMessage(item: MessageRecord) {
-    setSelected(item);
-    if (!item.read_at) {
-      await api(`/manager/messages/${item.id}/read`, { method: "PATCH" });
+  // The dashboard payload only carries the latest handful of messages; the
+  // Messages section loads the full history so threads stay intact. We seed from
+  // the dashboard slice so the list is never momentarily empty on entry.
+  const [messages, setMessages] = useState<MessageRecord[]>(dashboardMessages);
+  const [selectedRootId, setSelectedRootId] = useState<string | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [replyDraft, setReplyDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+
+  const reloadMessages = useCallback(async () => {
+    const { messages: full } = await api<{ messages: MessageRecord[] }>(
+      "/manager/messages",
+    );
+    setMessages(full);
+    return full;
+  }, []);
+
+  useEffect(() => {
+    void reloadMessages().catch((err) =>
+      setError(err instanceof Error ? err.message : "Failed to load messages"),
+    );
+  }, [reloadMessages]);
+
+  const threads = buildMessageThreads(messages);
+
+  const selectedThread =
+    threads.find((thread) => thread.root.id === selectedRootId) ??
+    threads[0] ??
+    null;
+
+  async function openThread(rootId: string) {
+    setSelectedRootId(rootId);
+    setReplyDraft("");
+    const thread = threads.find((item) => item.root.id === rootId);
+    const unread = (thread?.items ?? []).filter(
+      (item) => !item.read_at && !isManagerAuthored(item),
+    );
+    if (unread.length) {
+      await Promise.all(
+        unread.map((item) =>
+          api(`/manager/messages/${item.id}/read`, { method: "PATCH" }),
+        ),
+      );
+      await reloadMessages();
       onRefresh();
     }
   }
+
+  async function sendNew(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    setSending(true);
+    setError("");
+    try {
+      await api("/manager/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          message: trimmed,
+          team_registration_id: activeTeam?.id,
+        }),
+      });
+      setDraft("");
+      setComposeOpen(false);
+      const full = await reloadMessages();
+      const newest = buildMessageThreads(full)[0];
+      if (newest) setSelectedRootId(newest.root.id);
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send message");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function sendReply(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = replyDraft.trim();
+    if (!trimmed || !selectedThread) return;
+    setSending(true);
+    setError("");
+    try {
+      await api("/manager/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          message: trimmed,
+          parent_message_id: selectedThread.root.id,
+        }),
+      });
+      setReplyDraft("");
+      await reloadMessages();
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send reply");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const canMessageAdmin = Boolean(activeTeam?.id);
+
   return (
     <div className="space-y-6">
       <PageTitle
         title="Messages"
-        subtitle="Admin notices for teams, players, lineups, and matches."
+        subtitle="Admin notices and your conversations with the league office."
       />
-      {messages.length === 0 ? <EmptyState label="No messages yet." /> : null}
-      {messages.length ? (
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={!canMessageAdmin}
+          onClick={() => {
+            setComposeOpen((open) => !open);
+            setError("");
+          }}
+          className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-[var(--team-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {composeOpen ? "Cancel" : "Message admin"}
+        </button>
+        {!canMessageAdmin ? (
+          <p className="text-sm text-slate-500">
+            Register a team to message the league office.
+          </p>
+        ) : null}
+      </div>
+      {composeOpen ? (
+        <Panel title="New message to admin">
+          <form onSubmit={sendNew} className="space-y-3">
+            <textarea
+              className="manager-input min-h-[120px]"
+              value={draft}
+              maxLength={2000}
+              placeholder="Write your message to the league office..."
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={sending || !draft.trim()}
+                className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-[var(--team-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {sending ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </form>
+        </Panel>
+      ) : null}
+      {error ? (
+        <p className="text-sm font-semibold text-red-600">{error}</p>
+      ) : null}
+      {threads.length === 0 && !composeOpen ? (
+        <EmptyState label="No messages yet." />
+      ) : null}
+      {threads.length ? (
         <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
-          <Panel title="Inbox">
+          <Panel title="Conversations">
             <div className="space-y-2">
-              {messages.map((item) => (
+              {threads.map((thread) => (
                 <button
-                  key={item.id}
-                  className={`w-full rounded-2xl p-3 text-left text-sm transition hover:bg-purple-50 ${selected?.id === item.id ? "bg-purple-50" : "bg-slate-50"}`}
-                  onClick={() => void openMessage(item)}
+                  key={thread.root.id}
+                  className={`w-full rounded-2xl p-3 text-left text-sm transition hover:bg-purple-50 ${selectedThread?.root.id === thread.root.id ? "bg-purple-50" : "bg-slate-50"}`}
+                  onClick={() => void openThread(thread.root.id)}
                 >
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-bold">
-                      {item.related_type.replaceAll("_", " ")}
+                      {thread.root.related_type.replaceAll("_", " ")}
                     </p>
-                    {!item.read_at ? (
+                    {thread.hasUnread ? (
                       <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
                     ) : null}
                   </div>
-                  <p className="mt-1 truncate text-slate-500">{item.message}</p>
+                  <p className="mt-1 truncate text-slate-500">
+                    {thread.items[thread.items.length - 1]?.message}
+                  </p>
                 </button>
               ))}
             </div>
           </Panel>
-          <Panel title="Message Detail">
-            <p className="text-sm text-slate-500">
-              {selected ? formatDate(selected.created_at) : ""}
-            </p>
-            <p className="mt-4 leading-7 text-slate-700">{selected?.message}</p>
+          <Panel title="Conversation">
+            {selectedThread ? (
+              <div className="space-y-4">
+                <div className="space-y-3">
+                  {selectedThread.items.map((item) => {
+                    const mine = isManagerAuthored(item);
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl p-3 ${mine ? "ml-6 bg-purple-50" : "mr-6 bg-slate-50"}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                            {mine ? "You" : "League office"}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {formatDate(item.created_at)}
+                          </p>
+                        </div>
+                        <p className="mt-1 leading-7 text-slate-700">
+                          {item.message}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+                {canMessageAdmin ? (
+                  <form onSubmit={sendReply} className="space-y-2">
+                    <textarea
+                      className="manager-input min-h-[90px]"
+                      value={replyDraft}
+                      maxLength={2000}
+                      placeholder="Reply to the league office..."
+                      onChange={(event) => setReplyDraft(event.target.value)}
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={sending || !replyDraft.trim()}
+                        className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-[var(--team-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {sending ? "Sending..." : "Reply"}
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+              </div>
+            ) : null}
           </Panel>
         </div>
       ) : null}
@@ -3894,7 +4129,54 @@ function MessagesSection({
   );
 }
 
-function ProfileSection({ profile }: { profile: Profile | null }) {
+function ProfileSection({
+  profile,
+  onRefresh,
+}: {
+  profile: Profile | null;
+  onRefresh: () => void;
+}) {
+  const [fullName, setFullName] = useState(profile?.full_name ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setFullName(profile?.full_name ?? "");
+  }, [profile?.full_name]);
+
+  const trimmed = fullName.trim();
+  const dirty = trimmed !== (profile?.full_name ?? "").trim();
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!trimmed) {
+      setError("Full name is required.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      const { profile: updated } = await api<{ profile: Profile }>(
+        "/manager/profile",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ full_name: trimmed }),
+        },
+      );
+      updateStoredProfile(
+        updated as unknown as Parameters<typeof updateStoredProfile>[0],
+      );
+      setSaved(true);
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save name");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageTitle
@@ -3902,7 +4184,38 @@ function ProfileSection({ profile }: { profile: Profile | null }) {
         subtitle="Manager account information."
       />
       <Panel title="Profile">
-        <Detail label="Full Name" value={profile?.full_name ?? "Manager"} />
+        <form onSubmit={save} className="min-w-0 rounded-2xl bg-slate-50 p-4">
+          <label className="text-xs font-bold uppercase tracking-widest text-slate-500">
+            Full Name
+          </label>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <input
+              className="manager-input"
+              value={fullName}
+              maxLength={160}
+              onChange={(event) => {
+                setFullName(event.target.value);
+                setSaved(false);
+              }}
+              placeholder="Your full name"
+            />
+            <button
+              type="submit"
+              disabled={saving || !dirty || !trimmed}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-[var(--team-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+          {error ? (
+            <p className="mt-2 text-sm font-semibold text-red-600">{error}</p>
+          ) : null}
+          {saved && !dirty ? (
+            <p className="mt-2 text-sm font-semibold text-emerald-600">
+              Name updated.
+            </p>
+          ) : null}
+        </form>
         <Detail label="Email" value={profile?.email} />
         <Detail label="Role" value="Manager" />
         <Detail

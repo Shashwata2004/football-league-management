@@ -208,6 +208,34 @@ async function clearPrimaryFavorite(userId: string) {
   if (error) throw error;
 }
 
+// A fan may rename their own account. app_users is the source of truth (see the
+// manager equivalent): ensureProfile() copies its full_name into profiles on
+// every login, so both tables are updated together to make the change stick.
+fanRouter.patch(
+  "/profile",
+  asyncHandler(async (req, res) => {
+    const fullName =
+      typeof req.body?.full_name === "string"
+        ? req.body.full_name.trim().slice(0, 160)
+        : undefined;
+    if (!fullName) throw new AppError(400, "Full name is required");
+    const now = new Date().toISOString();
+    const { error: accountError } = await supabaseAdmin
+      .from("app_users")
+      .update({ full_name: fullName, updated_at: now })
+      .eq("id", req.auth!.userId);
+    if (accountError) throw accountError;
+    const { data, error } = await supabaseAdmin
+      .from("profiles")
+      .update({ full_name: fullName, updated_at: now })
+      .eq("id", req.auth!.userId)
+      .select("id,email,full_name,role,created_at")
+      .single();
+    if (error) throw error;
+    res.json({ profile: data });
+  }),
+);
+
 // ---------------------------------------------------------------------------
 // Discovery: leagues, seasons, teams
 // ---------------------------------------------------------------------------
