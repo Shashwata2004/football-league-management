@@ -38,6 +38,7 @@ import {
 import { api } from "@/lib/api";
 import { clearAuth } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
+import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
 
 type Section =
   | "Dashboard"
@@ -6797,8 +6798,18 @@ function ManagerLineupEventIcons({
             </span>
           </span>
         ) : null}
-        {meta.penaltyMiss || meta.penaltySaved ? (
-          <span className="absolute -right-1 bottom-5 inline-grid h-4 min-w-4 place-items-center rounded-full bg-white px-1 text-[9px] text-slate-950 shadow">
+        {meta.penaltyMiss ? (
+          <span
+            className="absolute -right-1 bottom-5 drop-shadow"
+            title="Penalty missed"
+          >
+            <PenaltyMissIcon />
+          </span>
+        ) : meta.penaltySaved ? (
+          <span
+            className="absolute -right-1 bottom-5 inline-grid h-4 min-w-4 place-items-center rounded-full bg-white px-1 text-[9px] text-slate-950 shadow"
+            title="Penalty saved"
+          >
             ⊗
           </span>
         ) : null}
@@ -6834,8 +6845,12 @@ function ManagerLineupEventIcons({
           </span>
         </span>
       ) : null}
-      {meta.penaltyMiss || meta.penaltySaved ? (
-        <span title="Penalty missed or saved">⊗</span>
+      {meta.penaltyMiss ? (
+        <span title="Penalty missed">
+          <PenaltyMissIcon className="h-4 w-4" />
+        </span>
+      ) : meta.penaltySaved ? (
+        <span title="Penalty saved">⊗</span>
       ) : null}
       {meta.injured ? (
         <span

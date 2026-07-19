@@ -47,6 +47,7 @@ import {
 import { api, publicApi } from "@/lib/api";
 import { clearAuth } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
+import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
 
 type TabId =
   | "dashboard"
@@ -1570,10 +1571,17 @@ function LineupEventIcons({
             </span>
           </span>
         ) : null}
-        {meta.penaltyMiss || meta.penaltySaved ? (
+        {meta.penaltyMiss ? (
+          <span
+            className="absolute -right-1 bottom-5 drop-shadow"
+            title="Penalty missed"
+          >
+            <PenaltyMissIcon />
+          </span>
+        ) : meta.penaltySaved ? (
           <span
             className={`${badgeBase} absolute -right-1 bottom-5 bg-white text-slate-950`}
-            title="Penalty missed or saved"
+            title="Penalty saved"
           >
             ⊗
           </span>
@@ -1619,10 +1627,14 @@ function LineupEventIcons({
           </span>
         </span>
       ) : null}
-      {meta.penaltyMiss || meta.penaltySaved ? (
+      {meta.penaltyMiss ? (
+        <span title="Penalty missed">
+          <PenaltyMissIcon className="h-4 w-4" />
+        </span>
+      ) : meta.penaltySaved ? (
         <span
           className={`${badgeBase} bg-white text-slate-950`}
-          title="Penalty missed or saved"
+          title="Penalty saved"
         >
           ⊗
         </span>
