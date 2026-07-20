@@ -17,6 +17,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronRight,
+  GitBranch,
   Home,
   LayoutDashboard,
   LogOut,
@@ -40,12 +41,17 @@ import { api } from "@/lib/api";
 import { clearAuth, updateStoredProfile } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
+import {
+  KnockoutBracket,
+  type KnockoutBracketFixture,
+} from "@/components/knockout-bracket";
 
 type Section =
   | "Dashboard"
   | "My Team"
   | "Players"
   | "Fixtures"
+  | "Knockout Bracket"
   | "Submit Lineup"
   | "Results"
   | "Standings"
@@ -614,6 +620,7 @@ const menu: { label: Section; icon: ReactNode }[] = [
   { label: "My Team", icon: <ShieldAlert size={18} /> },
   { label: "Players", icon: <Users size={18} /> },
   { label: "Fixtures", icon: <CalendarDays size={18} /> },
+  { label: "Knockout Bracket", icon: <GitBranch size={18} /> },
   { label: "Submit Lineup", icon: <Home size={18} /> },
   { label: "Results", icon: <Trophy size={18} /> },
   { label: "Standings", icon: <CheckCircle2 size={18} /> },
@@ -628,6 +635,7 @@ const managerSectionPaths: Record<Exclude<Section, "Other Teams">, string> = {
   "My Team": "/dashboard/manager/my-team",
   Players: "/dashboard/manager/players",
   Fixtures: "/dashboard/manager/fixtures",
+  "Knockout Bracket": "/dashboard/manager/knockout-bracket",
   "Submit Lineup": "/dashboard/manager/submit-lineup",
   Results: "/dashboard/manager/results",
   Standings: "/dashboard/manager/standings",
@@ -1389,6 +1397,7 @@ export default function ManagerDashboardPage() {
       <ManagerSidebar
         profile={payload?.profile ?? null}
         activeTeam={activeTeam}
+        activeSeason={activeSeason}
         section={section}
         unreadMessages={unreadMessages}
         onSection={navigateSection}
@@ -1513,6 +1522,7 @@ export default function ManagerDashboardPage() {
 function sectionFromPath(path: string): Section {
   if (path.includes("/my-team")) return "My Team";
   if (path.includes("/players")) return "Players";
+  if (path.includes("/knockout-bracket")) return "Knockout Bracket";
   if (path.includes("/fixtures")) return "Fixtures";
   if (path.includes("/submit-lineup")) return "Submit Lineup";
   if (path.includes("/player-stats")) return "Player Stats";
@@ -1528,6 +1538,7 @@ function sectionFromPath(path: string): Section {
 function ManagerSidebar({
   profile,
   activeTeam,
+  activeSeason,
   section,
   unreadMessages,
   onSection,
@@ -1536,12 +1547,18 @@ function ManagerSidebar({
 }: {
   profile: Profile | null;
   activeTeam: TeamRecord | null;
+  activeSeason: Season | null;
   section: Section;
   unreadMessages: number;
   onSection: (section: Section) => void;
   mobileOpen: boolean;
   onClose: () => void;
 }) {
+  const visibleMenu = menu.filter(
+    (item) =>
+      item.label !== "Knockout Bracket" ||
+      isManagerGroupKnockoutFormat(activeSeason?.format),
+  );
   return (
     <>
       <button
@@ -1560,72 +1577,72 @@ function ManagerSidebar({
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-      <div className="flex items-center gap-3 border-b border-[var(--team-sidebar-border)] px-6 py-6">
-        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--team-primary)]">
-          <Trophy size={22} />
-        </div>
-        <div>
-          <p className="text-lg font-black tracking-wide">Scoreline</p>
-          <p className="text-xs uppercase tracking-[0.3em] text-[var(--team-sidebar-muted)]">
-            Manager
-          </p>
-        </div>
-        <button
-          type="button"
-          aria-label="Close manager navigation"
-          className="ml-auto grid h-10 w-10 place-items-center rounded-xl border border-[var(--team-sidebar-border)] lg:hidden"
-          onClick={onClose}
-        >
-          <X size={18} />
-        </button>
-      </div>
-      <div className="mx-4 mt-5 rounded-3xl border border-[var(--team-sidebar-border)] bg-[var(--team-sidebar-panel)] p-4">
-        <div className="flex items-center gap-3">
-          <Avatar name={profile?.full_name ?? profile?.email ?? "Manager"} />
-          <div className="min-w-0">
-            <p className="truncate font-semibold">
-              {profile?.full_name ?? "Manager"}
-            </p>
-            <p className="truncate text-xs text-[var(--team-sidebar-muted)]">
-              {activeTeam?.teams?.name ?? "No team selected"}
+        <div className="flex items-center gap-3 border-b border-[var(--team-sidebar-border)] px-6 py-6">
+          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[var(--team-primary)]">
+            <Trophy size={22} />
+          </div>
+          <div>
+            <p className="text-lg font-black tracking-wide">Scoreline</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-[var(--team-sidebar-muted)]">
+              Manager
             </p>
           </div>
-        </div>
-      </div>
-      <nav className="mt-5 min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {menu.map((item) => (
           <button
-            key={item.label}
-            className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-black tracking-wide transition-all duration-200 ${
-              section === item.label
-                ? "bg-[var(--team-primary)] text-[var(--team-primary-text)] shadow-lg shadow-purple-950/30"
-                : "text-[var(--team-sidebar-text)] hover:bg-[var(--team-sidebar-hover)] hover:text-[var(--team-sidebar-text)]"
-            }`}
-            onClick={() => {
-              onClose();
-              onSection(item.label);
-            }}
+            type="button"
+            aria-label="Close manager navigation"
+            className="ml-auto grid h-10 w-10 place-items-center rounded-xl border border-[var(--team-sidebar-border)] lg:hidden"
+            onClick={onClose}
           >
-            {item.icon}
-            <span className="flex-1">{item.label}</span>
-            {item.label === "Messages" && unreadMessages > 0 ? (
-              <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs text-white">
-                {unreadMessages}
-              </span>
-            ) : null}
+            <X size={18} />
           </button>
-        ))}
-      </nav>
-      <button
-        className="m-4 flex items-center gap-3 rounded-2xl border border-[var(--team-sidebar-border)] px-4 py-3 text-sm font-black tracking-wide text-[var(--team-sidebar-text)] transition hover:bg-[var(--team-sidebar-hover)]"
-        onClick={() => {
-          clearAuth();
-          window.location.href = "/login";
-        }}
-      >
-        <LogOut size={18} />
-        Logout
-      </button>
+        </div>
+        <div className="mx-4 mt-5 rounded-3xl border border-[var(--team-sidebar-border)] bg-[var(--team-sidebar-panel)] p-4">
+          <div className="flex items-center gap-3">
+            <Avatar name={profile?.full_name ?? profile?.email ?? "Manager"} />
+            <div className="min-w-0">
+              <p className="truncate font-semibold">
+                {profile?.full_name ?? "Manager"}
+              </p>
+              <p className="truncate text-xs text-[var(--team-sidebar-muted)]">
+                {activeTeam?.teams?.name ?? "No team selected"}
+              </p>
+            </div>
+          </div>
+        </div>
+        <nav className="mt-5 min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {visibleMenu.map((item) => (
+            <button
+              key={item.label}
+              className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-black tracking-wide transition-all duration-200 ${
+                section === item.label
+                  ? "bg-[var(--team-primary)] text-[var(--team-primary-text)] shadow-lg shadow-purple-950/30"
+                  : "text-[var(--team-sidebar-text)] hover:bg-[var(--team-sidebar-hover)] hover:text-[var(--team-sidebar-text)]"
+              }`}
+              onClick={() => {
+                onClose();
+                onSection(item.label);
+              }}
+            >
+              {item.icon}
+              <span className="flex-1">{item.label}</span>
+              {item.label === "Messages" && unreadMessages > 0 ? (
+                <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs text-white">
+                  {unreadMessages}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </nav>
+        <button
+          className="m-4 flex items-center gap-3 rounded-2xl border border-[var(--team-sidebar-border)] px-4 py-3 text-sm font-black tracking-wide text-[var(--team-sidebar-text)] transition hover:bg-[var(--team-sidebar-hover)]"
+          onClick={() => {
+            clearAuth();
+            window.location.href = "/login";
+          }}
+        >
+          <LogOut size={18} />
+          Logout
+        </button>
       </aside>
     </>
   );
@@ -1739,6 +1756,8 @@ function SectionView(props: {
   if (props.section === "My Team") return <MyTeamSection {...props} />;
   if (props.section === "Players") return <PlayersSection {...props} />;
   if (props.section === "Fixtures") return <FixturesSection {...props} />;
+  if (props.section === "Knockout Bracket")
+    return <ManagerKnockoutBracketSection {...props} />;
   if (props.section === "Submit Lineup")
     return <SubmitLineupSection {...props} />;
   if (props.section === "Results") return <ResultsSection {...props} />;
@@ -1749,9 +1768,7 @@ function SectionView(props: {
   if (props.section === "Team Stats")
     return <StatsSection {...props} mode="team" />;
   if (props.section === "Messages") return <MessagesSection {...props} />;
-  return (
-    <ProfileSection profile={props.profile} onRefresh={props.onRefresh} />
-  );
+  return <ProfileSection profile={props.profile} onRefresh={props.onRefresh} />;
 }
 
 function DashboardSection({
@@ -2221,8 +2238,7 @@ function FixturesSection({
   useEffect(() => {
     if (!activeSeason?.id) return;
     let alive = true;
-    const queryTeamId =
-      teamFilter === "MY_TEAM" ? activeTeam?.id : teamFilter;
+    const queryTeamId = teamFilter === "MY_TEAM" ? activeTeam?.id : teamFilter;
     const query =
       queryTeamId === "ALL"
         ? `seasonId=${activeSeason.id}&teamId=ALL`
@@ -2358,6 +2374,70 @@ function FixturesSection({
           onTeamClick={onTeamClick}
         />
       ) : null}
+    </div>
+  );
+}
+
+function ManagerKnockoutBracketSection({
+  activeSeason,
+}: Parameters<typeof SectionView>[0]) {
+  const [fixtures, setFixtures] = useState<KnockoutBracketFixture[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (
+      !activeSeason?.id ||
+      !isManagerGroupKnockoutFormat(activeSeason.format)
+    ) {
+      setFixtures([]);
+      setLoading(false);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    setError("");
+    void api<{ fixtures: KnockoutBracketFixture[] }>(
+      `/manager/seasons/${activeSeason.id}/knockout-bracket`,
+    )
+      .then((payload) => {
+        if (active) setFixtures(payload.fixtures);
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load the knockout bracket.",
+        );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeSeason?.format, activeSeason?.id]);
+
+  return (
+    <div className="space-y-6">
+      <PageTitle
+        title="Knockout Bracket"
+        subtitle="Follow every knockout pairing from qualification through the final."
+      />
+      {loading ? (
+        <LoadingState label="Loading knockout bracket..." />
+      ) : error ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-bold text-red-700">
+          {error}
+        </div>
+      ) : (
+        <KnockoutBracket
+          fixtures={fixtures}
+          accentColor="var(--team-primary)"
+          emptyMessage="The knockout bracket will appear after the admin saves the qualified teams and fixtures."
+        />
+      )}
     </div>
   );
 }
@@ -3483,9 +3563,7 @@ function StandingsSection({
               .sort(
                 (a, b) =>
                   Number(a.standing?.position ?? Number.MAX_SAFE_INTEGER) -
-                    Number(
-                      b.standing?.position ?? Number.MAX_SAFE_INTEGER,
-                    ) ||
+                    Number(b.standing?.position ?? Number.MAX_SAFE_INTEGER) ||
                   String(a.team?.id ?? "").localeCompare(
                     String(b.team?.id ?? ""),
                   ),
@@ -7871,7 +7949,9 @@ function AvailabilityNoticeModal({
 function PageTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div>
-      <h1 className="break-words text-3xl font-black leading-tight sm:text-4xl">{title}</h1>
+      <h1 className="break-words text-3xl font-black leading-tight sm:text-4xl">
+        {title}
+      </h1>
       <p className="mt-2 text-slate-600">{subtitle}</p>
     </div>
   );

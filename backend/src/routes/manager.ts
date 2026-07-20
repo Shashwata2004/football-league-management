@@ -1189,6 +1189,26 @@ managerRouter.get(
 );
 
 managerRouter.get(
+  "/seasons/:seasonId/knockout-bracket",
+  asyncHandler(async (req, res) => {
+    const seasonId = routeParam(req.params.seasonId, "seasonId");
+    await assertManagerCanViewSeason(req.auth!.userId, seasonId);
+    const { data, error } = await supabaseAdmin
+      .from("fixtures")
+      .select(
+        "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url))",
+      )
+      .eq("season_id", seasonId)
+      .not("stage", "in", "(LEAGUE,GROUP)")
+      .order("round_no", { ascending: true })
+      .order("kickoff_at", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true });
+    if (error) throw error;
+    res.json({ fixtures: data ?? [] });
+  }),
+);
+
+managerRouter.get(
   "/seasons/:seasonId/groups",
   asyncHandler(async (req, res) => {
     const seasonId = routeParam(req.params.seasonId, "seasonId");

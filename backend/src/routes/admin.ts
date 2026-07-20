@@ -34,12 +34,10 @@ import {
   disciplinePhaseForStage,
   isStageInDisciplinePhase,
 } from "../domain/discipline.js";
-import {
-  applyFinalResultToStandings,
-  emptyStanding,
-} from "../domain/standings.js";
+import { emptyStanding } from "../domain/standings.js";
 import { totalExpectedGoals } from "../domain/team-statistics.js";
 import { loadSeasonStandings } from "../services/standings-report.js";
+import { rebuildSeasonDerivedAggregates } from "../services/season-aggregate-rebuilder.js";
 import {
   generateAbilityScores,
   simulateMatch,
@@ -791,13 +789,7 @@ adminRouter.get(
               "minutes",
               "number",
             ),
-            makeLeaderboard(
-              "rating",
-              "Rating",
-              playerRows,
-              "rating",
-              "rating",
-            ),
+            makeLeaderboard("rating", "Rating", playerRows, "rating", "rating"),
           ],
         },
         {
@@ -2571,31 +2563,6 @@ adminRouter.post(
     );
     if (!homeStats || !awayStats) throw new AppError(400, "Team stats missing");
 
-    const [homeStanding, awayStanding] = await Promise.all([
-      getOrCreateStanding(fixture.season_id, fixture.home_team_registration_id),
-      getOrCreateStanding(fixture.season_id, fixture.away_team_registration_id),
-    ]);
-    const [nextHome, nextAway] = applyFinalResultToStandings(
-      homeStanding,
-      awayStanding,
-      homeScore,
-      awayScore,
-      homeStats,
-      awayStats,
-    );
-    const { error: standingsError } = await supabaseAdmin
-      .from("standings")
-      .upsert(
-        [
-          { ...nextHome, season_id: fixture.season_id },
-          { ...nextAway, season_id: fixture.season_id },
-        ],
-        { onConflict: "season_id,team_registration_id" },
-      );
-    if (standingsError) throw standingsError;
-
-    await rollupPlayerStats(fixture.id, fixture.season_id);
-    await recordPostMatchDisciplineAndInjuries(fixture, req.auth!.userId);
     const winnerTeamRegistrationId =
       fixture.penalty_winner_team_registration_id ??
       (homeScore > awayScore
@@ -2604,6 +2571,10 @@ adminRouter.post(
           ? fixture.away_team_registration_id
           : null);
 
+    // Compare-and-set is the concurrency boundary. Only one request can move
+    // this fixture from pending/unconfirmed to final/confirmed. A concurrent
+    // request receives no row and cannot repeat any aggregate or discipline
+    // side effect.
     const { data, error } = await supabaseAdmin
       .from("fixtures")
       .update({
@@ -2614,9 +2585,22 @@ adminRouter.post(
         finalized_at: new Date().toISOString(),
       })
       .eq("id", fixture.id)
+      .eq("status", FixtureStatus.SIMULATED_PENDING_ADMIN_CONFIRMATION)
+      .eq("result_confirmed", false)
       .select("*")
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!data) {
+      throw new AppError(
+        409,
+        "This match is already being finalized or has already been finalized.",
+      );
+    }
+
+    // These aggregates are rebuilt from confirmed fixture and match-stat rows,
+    // rather than incremented. Re-running the rebuild produces the same data.
+    await rebuildSeasonDerivedAggregates(fixture.season_id);
+    await recordPostMatchDisciplineAndInjuries(data, req.auth!.userId);
     if (winnerTeamRegistrationId)
       await advanceKnockoutWinner(data, winnerTeamRegistrationId);
     await maybeSetChampion(fixture.season_id);
@@ -3947,89 +3931,6 @@ function seededRandomForFixtures(seed: string) {
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-async function getOrCreateStanding(
-  seasonId: string,
-  teamRegistrationId: string,
-) {
-  const { data, error } = await supabaseAdmin
-    .from("standings")
-    .select("*")
-    .eq("season_id", seasonId)
-    .eq("team_registration_id", teamRegistrationId)
-    .maybeSingle();
-  if (error) throw error;
-  if (data) return data;
-  const row = emptyStandingForSeason(seasonId, teamRegistrationId);
-  const { data: inserted, error: insertError } = await supabaseAdmin
-    .from("standings")
-    .insert(row)
-    .select("*")
-    .single();
-  if (insertError) throw insertError;
-  return inserted;
-}
-
-async function rollupPlayerStats(fixtureId: string, seasonId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("player_match_stats")
-    .select("*")
-    .eq("fixture_id", fixtureId);
-  if (error) throw error;
-  for (const stat of data ?? []) {
-    const { data: current, error: currentError } = await supabaseAdmin
-      .from("player_season_stats")
-      .select("*")
-      .eq("season_id", seasonId)
-      .eq("player_registration_id", stat.player_registration_id)
-      .maybeSingle();
-    if (currentError) throw currentError;
-    const appearances = (current?.appearances ?? 0) + 1;
-    const priorRatingTotal =
-      (current?.average_rating ?? 0) * (current?.appearances ?? 0);
-    const next = {
-      season_id: seasonId,
-      player_registration_id: stat.player_registration_id,
-      appearances,
-      starts: (current?.starts ?? 0) + (stat.minutes >= 45 ? 1 : 0),
-      minutes_played: (current?.minutes_played ?? 0) + stat.minutes,
-      goals: (current?.goals ?? 0) + stat.goals,
-      assists: (current?.assists ?? 0) + stat.assists,
-      shots: (current?.shots ?? 0) + stat.shots,
-      shots_on_target:
-        (current?.shots_on_target ?? 0) + (stat.shots_on_target ?? 0),
-      chances_created:
-        (current?.chances_created ?? 0) + (stat.chances_created ?? 0),
-      big_chances_created:
-        (current?.big_chances_created ?? 0) + (stat.big_chances_created ?? 0),
-      total_passes: (current?.total_passes ?? 0) + stat.passes,
-      accurate_passes: (current?.accurate_passes ?? 0) + stat.accurate_passes,
-      dribbles_attempted:
-        (current?.dribbles_attempted ?? 0) + stat.dribbles_attempted,
-      successful_dribbles:
-        (current?.successful_dribbles ?? 0) + stat.successful_dribbles,
-      dribbled_past: (current?.dribbled_past ?? 0) + (stat.dribbled_past ?? 0),
-      dispossessed: (current?.dispossessed ?? 0) + (stat.dispossessed ?? 0),
-      tackles: (current?.tackles ?? 0) + stat.tackles,
-      interceptions: (current?.interceptions ?? 0) + (stat.interceptions ?? 0),
-      yellow_cards: (current?.yellow_cards ?? 0) + stat.yellow_cards,
-      red_cards: (current?.red_cards ?? 0) + stat.red_cards,
-      average_rating: Number(
-        ((priorRatingTotal + stat.rating) / appearances).toFixed(2),
-      ),
-      best_match_rating: Math.max(current?.best_match_rating ?? 0, stat.rating),
-      lowest_match_rating: current?.lowest_match_rating
-        ? Math.min(current.lowest_match_rating, stat.rating)
-        : stat.rating,
-      player_of_match_count:
-        (current?.player_of_match_count ?? 0) + (stat.rating >= 8.8 ? 1 : 0),
-    };
-    const { error: upsertError } = await supabaseAdmin
-      .from("player_season_stats")
-      .upsert(next, { onConflict: "season_id,player_registration_id" });
-    if (upsertError) throw upsertError;
-  }
 }
 
 async function maybeSetChampion(seasonId: string) {

@@ -49,6 +49,7 @@ import { api, publicApi } from "@/lib/api";
 import { clearAuth } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
+import { KnockoutBracket } from "@/components/knockout-bracket";
 
 type TabId =
   | "dashboard"
@@ -2488,7 +2489,7 @@ export default function AdminLeagueSeasonDashboard() {
             />
           ) : null}
           {activeTab === "groups" ? <GroupsView season={season} /> : null}
-          {activeTab === "knockout" ? <KnockoutView /> : null}
+          {activeTab === "knockout" ? <KnockoutView season={season} /> : null}
           {activeTab === "settings" ? (
             <SettingsView
               league={league}
@@ -5124,8 +5125,8 @@ function FixturesView({ season }: { season: SeasonDto }) {
                   "Date",
                   "Stage",
                   "Group",
-                  "Home Team",
-                  "Away Team",
+                  isGroupKnockout ? "Team A" : "Home Team",
+                  isGroupKnockout ? "Team B" : "Away Team",
                   "Status",
                 ].map((header) => (
                   <th key={header} className="px-5 py-4 text-left font-black">
@@ -6624,8 +6625,12 @@ function CompletedMatchesView({
               </select>
             </label>
           </div>
-          <p className="text-sm font-semibold text-slate-500" aria-live="polite">
-            Showing {filteredMatches.length} of {matches.length} completed matches
+          <p
+            className="text-sm font-semibold text-slate-500"
+            aria-live="polite"
+          >
+            Showing {filteredMatches.length} of {matches.length} completed
+            matches
           </p>
           {filteredMatches.length === 0 ? (
             <EmptyState label="No completed matches match these filters." />
@@ -6639,11 +6644,17 @@ function CompletedMatchesView({
                     onClick={() => void openDetail(match)}
                   >
                     <div className="flex items-center justify-between gap-4">
-                      <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
+                      <TeamCompact
+                        name={match.home}
+                        logoUrl={match.homeLogoUrl}
+                      />
                       <span className="rounded-xl bg-green-100 px-4 py-2 text-lg font-black text-green-800">
                         {match.score}
                       </span>
-                      <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
+                      <TeamCompact
+                        name={match.away}
+                        logoUrl={match.awayLogoUrl}
+                      />
                     </div>
                     <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-center text-sm font-bold text-slate-600">
                       {match.kickoff} · {match.stage}
@@ -6843,9 +6854,7 @@ function MatchScorelineHeader({
         const type = String(event.type ?? "");
         return (
           event.side === side &&
-          (type === "GOAL" ||
-            type === "PENALTY_GOAL" ||
-            type === "OWN_GOAL")
+          (type === "GOAL" || type === "PENALTY_GOAL" || type === "OWN_GOAL")
         );
       })
       .map((event) => {
@@ -8287,8 +8296,14 @@ interface AdminMessageApiRow {
     | Array<{ full_name?: string | null; email?: string | null }>
     | null;
   team_registrations?:
-    | { id: string; teams?: { name?: string | null; short_name?: string | null } | null }
-    | Array<{ id: string; teams?: { name?: string | null; short_name?: string | null } | null }>
+    | {
+        id: string;
+        teams?: { name?: string | null; short_name?: string | null } | null;
+      }
+    | Array<{
+        id: string;
+        teams?: { name?: string | null; short_name?: string | null } | null;
+      }>
     | null;
 }
 
@@ -8373,7 +8388,9 @@ function MessagesView({ seasonId }: { seasonId: string }) {
     setLoading(true);
     void reload()
       .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load messages"),
+        setError(
+          err instanceof Error ? err.message : "Failed to load messages",
+        ),
       )
       .finally(() => setLoading(false));
   }, [reload]);
@@ -8479,7 +8496,9 @@ function MessagesView({ seasonId }: { seasonId: string }) {
                   <p className="font-bold text-slate-900">
                     {selectedThread.manager}
                   </p>
-                  <p className="text-xs text-slate-400">{selectedThread.team}</p>
+                  <p className="text-xs text-slate-400">
+                    {selectedThread.team}
+                  </p>
                 </div>
                 <div className="space-y-3">
                   {selectedThread.items.map((item) => {
@@ -8815,84 +8834,84 @@ function GroupsView({ season }: { season: SeasonDto }) {
               const bStanding = standingByTeam.get(b.id);
               return (
                 Number(aStanding?.position ?? Number.MAX_SAFE_INTEGER) -
-                  Number(
-                    bStanding?.position ?? Number.MAX_SAFE_INTEGER,
-                  ) || a.id.localeCompare(b.id)
+                  Number(bStanding?.position ?? Number.MAX_SAFE_INTEGER) ||
+                a.id.localeCompare(b.id)
               );
             });
             return (
-            <Panel
-              key={group.id}
-              title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}
-            >
-              {group.teams.length === 0 ? (
-                <EmptyState label="No teams in this group." />
-              ) : (
-                <div className="overflow-hidden rounded-2xl border border-slate-200">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500">
-                      <tr>
-                        <th className="px-4 py-3">Team</th>
-                        <th className="px-3 py-3 text-center">P</th>
-                        <th className="px-3 py-3 text-center">W</th>
-                        <th className="px-3 py-3 text-center">D</th>
-                        <th className="px-3 py-3 text-center">L</th>
-                        <th className="px-3 py-3 text-center">GF</th>
-                        <th className="px-3 py-3 text-center">GA</th>
-                        <th className="px-3 py-3 text-center">GD</th>
-                        <th className="px-3 py-3 text-center">PTS</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rankedTeams.map((team) => {
-                        const standing = standingByTeam.get(team.id);
-                        const goalsFor = standing?.goals_for ?? 0;
-                        const goalsAgainst = standing?.goals_against ?? 0;
-                        const goalDifference =
-                          standing?.goal_difference ?? goalsFor - goalsAgainst;
-                        return (
-                          <tr
-                            key={team.id}
-                            className="border-t border-slate-100"
-                          >
-                            <td className="px-4 py-3">
-                              <TeamCompact
-                                name={team.name ?? "Unnamed team"}
-                                logoUrl={team.logo_url ?? null}
-                              />
-                            </td>
-                            <td className="px-3 py-3 text-center font-bold">
-                              {standing?.played ?? 0}
-                            </td>
-                            <td className="px-3 py-3 text-center font-bold">
-                              {standing?.won ?? 0}
-                            </td>
-                            <td className="px-3 py-3 text-center font-bold">
-                              {standing?.drawn ?? 0}
-                            </td>
-                            <td className="px-3 py-3 text-center font-bold">
-                              {standing?.lost ?? 0}
-                            </td>
-                            <td className="px-3 py-3 text-center font-bold">
-                              {goalsFor}
-                            </td>
-                            <td className="px-3 py-3 text-center font-bold">
-                              {goalsAgainst}
-                            </td>
-                            <td className="px-3 py-3 text-center font-bold">
-                              {goalDifference}
-                            </td>
-                            <td className="px-3 py-3 text-center font-black text-indigo-700">
-                              {standing?.points ?? 0}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Panel>
+              <Panel
+                key={group.id}
+                title={`${group.name} (${group.teams.length}/${season.teams_per_group ?? 0})`}
+              >
+                {group.teams.length === 0 ? (
+                  <EmptyState label="No teams in this group." />
+                ) : (
+                  <div className="overflow-hidden rounded-2xl border border-slate-200">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-[0.12em] text-slate-500">
+                        <tr>
+                          <th className="px-4 py-3">Team</th>
+                          <th className="px-3 py-3 text-center">P</th>
+                          <th className="px-3 py-3 text-center">W</th>
+                          <th className="px-3 py-3 text-center">D</th>
+                          <th className="px-3 py-3 text-center">L</th>
+                          <th className="px-3 py-3 text-center">GF</th>
+                          <th className="px-3 py-3 text-center">GA</th>
+                          <th className="px-3 py-3 text-center">GD</th>
+                          <th className="px-3 py-3 text-center">PTS</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rankedTeams.map((team) => {
+                          const standing = standingByTeam.get(team.id);
+                          const goalsFor = standing?.goals_for ?? 0;
+                          const goalsAgainst = standing?.goals_against ?? 0;
+                          const goalDifference =
+                            standing?.goal_difference ??
+                            goalsFor - goalsAgainst;
+                          return (
+                            <tr
+                              key={team.id}
+                              className="border-t border-slate-100"
+                            >
+                              <td className="px-4 py-3">
+                                <TeamCompact
+                                  name={team.name ?? "Unnamed team"}
+                                  logoUrl={team.logo_url ?? null}
+                                />
+                              </td>
+                              <td className="px-3 py-3 text-center font-bold">
+                                {standing?.played ?? 0}
+                              </td>
+                              <td className="px-3 py-3 text-center font-bold">
+                                {standing?.won ?? 0}
+                              </td>
+                              <td className="px-3 py-3 text-center font-bold">
+                                {standing?.drawn ?? 0}
+                              </td>
+                              <td className="px-3 py-3 text-center font-bold">
+                                {standing?.lost ?? 0}
+                              </td>
+                              <td className="px-3 py-3 text-center font-bold">
+                                {goalsFor}
+                              </td>
+                              <td className="px-3 py-3 text-center font-bold">
+                                {goalsAgainst}
+                              </td>
+                              <td className="px-3 py-3 text-center font-bold">
+                                {goalDifference}
+                              </td>
+                              <td className="px-3 py-3 text-center font-black text-indigo-700">
+                                {standing?.points ?? 0}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Panel>
             );
           })}
         </div>
@@ -8901,16 +8920,74 @@ function GroupsView({ season }: { season: SeasonDto }) {
   );
 }
 
-function KnockoutView() {
+function KnockoutView({ season }: { season: SeasonDto }) {
+  const [data, setData] = useState<AdminFixturesResponse | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    void api<AdminFixturesResponse>(`/admin/seasons/${season.id}/fixtures`)
+      .then((result) => {
+        if (active) setData(result);
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Could not load the knockout bracket.",
+        );
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [season.id]);
+
+  const knockoutFixtures = useMemo(
+    () =>
+      (data?.fixtures ?? [])
+        .filter(
+          (fixture) => fixture.stage !== "GROUP" && fixture.stage !== "LEAGUE",
+        )
+        .sort((left, right) => {
+          const roundDifference =
+            Number(left.round_no ?? 0) - Number(right.round_no ?? 0);
+          if (roundDifference) return roundDifference;
+          const kickoffDifference = String(left.kickoff_at ?? "").localeCompare(
+            String(right.kickoff_at ?? ""),
+          );
+          if (kickoffDifference) return kickoffDifference;
+          return left.id.localeCompare(right.id);
+        }),
+    [data?.fixtures],
+  );
+
   return (
     <div>
       <PageTitle
         title="Knockout Bracket"
         subtitle="Generated after group stage is finished. Knockout matches cannot end in draw."
       />
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <EmptyState label="Knockout bracket will appear after qualifiers are generated from real group standings." />
-      </div>
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <EmptyState label="Loading saved knockout fixtures..." />
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 font-bold text-red-700 shadow-sm">
+          {error}
+        </div>
+      ) : (
+        <KnockoutBracket
+          fixtures={knockoutFixtures}
+          emptyMessage="No saved knockout fixtures yet. Generate them in Fixtures, then select Confirm & Save Fixtures."
+        />
+      )}
     </div>
   );
 }
@@ -9418,8 +9495,7 @@ function ReadyMatchCard({
   simulating: boolean;
   onSimulate: () => void;
 }) {
-  const canSimulate =
-    match.can_simulate ?? isSimulatableStatus(match.status);
+  const canSimulate = match.can_simulate ?? isSimulatableStatus(match.status);
   return (
     <div className="rounded-xl border border-slate-200 p-6 text-center">
       <div className="flex items-center justify-center gap-14">
