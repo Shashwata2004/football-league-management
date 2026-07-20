@@ -64,6 +64,7 @@ import {
 import {
   buildPlayerSeasonStatsFromMatchRows,
   loadLeagueRatings,
+  loadPlayerSeasonContributions,
 } from "../services/player-stats.js";
 import {
   avg,
@@ -663,7 +664,10 @@ async function loadYellowCardDiscipline(
   };
 }
 
-async function loadAvailableLineupPlayers(teamRegistrationId: string) {
+async function loadAvailableLineupPlayers(
+  teamRegistrationId: string,
+  seasonId: string,
+) {
   const players = await loadTeamPlayers(teamRegistrationId);
   const approved = players.filter(
     (player) =>
@@ -673,10 +677,16 @@ async function loadAvailableLineupPlayers(teamRegistrationId: string) {
       !player.active_injury &&
       !player.active_suspension,
   ) as LineupCandidate[];
-  const ratings = await loadLeagueRatings(approved.map((player) => player.id));
+  const playerRegistrationIds = approved.map((player) => player.id);
+  const [ratings, contributions] = await Promise.all([
+    loadLeagueRatings(playerRegistrationIds),
+    loadPlayerSeasonContributions(seasonId, playerRegistrationIds),
+  ]);
   return approved.map((player) => ({
     ...player,
     league_rating: ratings.get(player.id) ?? null,
+    season_goals: contributions.get(player.id)?.goals ?? 0,
+    season_assists: contributions.get(player.id)?.assists ?? 0,
   }));
 }
 
@@ -2643,8 +2653,10 @@ managerRouter.get(
           player.active_suspension ||
           player.player_status === PlayerLifecycleStatus.SUSPENDED),
     );
-    const approvedPlayers =
-      await loadAvailableLineupPlayers(teamRegistrationId);
+    const approvedPlayers = await loadAvailableLineupPlayers(
+      teamRegistrationId,
+      fixture.season_id,
+    );
     const benchSize = Number(season?.substitute_limit ?? 7);
     const existingLineup = await loadExistingLineup(
       teamRegistrationId,
@@ -2843,6 +2855,7 @@ managerRouter.post(
     const season = relatedOne(teamRegistration.seasons);
     const availablePlayers = await loadAvailableLineupPlayers(
       teamRegistration.id,
+      teamRegistration.season_id,
     );
     const picks = autoPickBestXI(
       availablePlayers,
@@ -2899,7 +2912,10 @@ managerRouter.get(
       (item) => item.slotKey === slotKey,
     );
     if (!slot) throw new AppError(404, "Formation slot not found");
-    const availablePlayers = await loadAvailableLineupPlayers(teamId);
+    const availablePlayers = await loadAvailableLineupPlayers(
+      teamId,
+      teamRegistration.season_id,
+    );
     const alternatives = availablePlayers
       .map((player) => ({
         player,

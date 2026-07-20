@@ -38,6 +38,8 @@ export interface LineupCandidate {
   } | null;
   player_abilities?: PlayerAbility[] | PlayerAbility | null;
   league_rating?: number | null;
+  season_goals?: number;
+  season_assists?: number;
 }
 
 export interface PlayerAbility {

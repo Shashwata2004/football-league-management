@@ -108,3 +108,46 @@ export async function loadLeagueRatings(playerRegistrationIds: string[]) {
   }
   return ratings;
 }
+
+export interface PlayerSeasonContribution {
+  goals: number;
+  assists: number;
+}
+
+export function indexPlayerSeasonContributions(
+  rows: Array<{
+    player_registration_id: string;
+    goals?: number | null;
+    assists?: number | null;
+  }>,
+) {
+  return new Map<string, PlayerSeasonContribution>(
+    rows.map((row) => [
+      row.player_registration_id,
+      {
+        goals: Math.max(0, Number(row.goals ?? 0)),
+        assists: Math.max(0, Number(row.assists ?? 0)),
+      },
+    ]),
+  );
+}
+
+// Player registration IDs are season-specific, but the explicit season
+// predicate prevents a future caller from accidentally mixing aggregates.
+export async function loadPlayerSeasonContributions(
+  seasonId: string,
+  playerRegistrationIds: string[],
+) {
+  if (playerRegistrationIds.length === 0) {
+    return new Map<string, PlayerSeasonContribution>();
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("player_season_stats")
+    .select("player_registration_id,goals,assists")
+    .eq("season_id", seasonId)
+    .in("player_registration_id", playerRegistrationIds);
+  if (error) throw error;
+
+  return indexPlayerSeasonContributions(data ?? []);
+}

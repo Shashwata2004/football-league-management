@@ -45,6 +45,9 @@ import {
   KnockoutBracket,
   type KnockoutBracketFixture,
 } from "@/components/knockout-bracket";
+import {
+  PlayerSeasonContributionBadges,
+} from "@/components/player-season-contribution-badges";
 
 type Section =
   | "Dashboard"
@@ -153,6 +156,8 @@ interface PlayerRecord {
     suspension_matches_remaining?: number | null;
   } | null;
   league_rating?: number | null;
+  season_goals?: number;
+  season_assists?: number;
   overall_rating?: number | null;
   players?: {
     full_name: string;
@@ -3020,20 +3025,29 @@ function SubmitLineupSection({
                               void openAlternatives(slot);
                             }}
                           >
-                            <div
-                              className={`relative grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full border-[3px] bg-white shadow-md transition group-hover:brightness-110 sm:h-14 sm:w-14 ${fitBorderClass(selected?.fit_label)}`}
-                            >
-                              {player.players?.avatar_url ? (
-                                <img
-                                  src={player.players.avatar_url}
-                                  alt={player.players?.full_name ?? "Player"}
-                                  className="h-[118%] w-full rounded-full object-cover object-top"
+                            <div className="relative h-12 w-12 shrink-0 sm:h-14 sm:w-14">
+                              <div
+                                className={`grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] bg-white shadow-md transition group-hover:brightness-110 ${fitBorderClass(selected?.fit_label)}`}
+                              >
+                                {player.players?.avatar_url ? (
+                                  <img
+                                    src={player.players.avatar_url}
+                                    alt={player.players?.full_name ?? "Player"}
+                                    className="h-[118%] w-full rounded-full object-cover object-top"
+                                  />
+                                ) : (
+                                  <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
+                                    {initials(player.players?.full_name)}
+                                  </span>
+                                )}
+                              </div>
+                              {showLeagueRatings ? (
+                                <PlayerSeasonContributionBadges
+                                  goals={player.season_goals ?? 0}
+                                  assists={player.season_assists ?? 0}
+                                  variant="overlay"
                                 />
-                              ) : (
-                                <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
-                                  {initials(player.players?.full_name)}
-                                </span>
-                              )}
+                              ) : null}
                             </div>
                             {showLeagueRatings &&
                             player.league_rating !== null &&
@@ -3166,6 +3180,7 @@ function SubmitLineupSection({
                               key={player.id}
                               player={player}
                               label="Bench"
+                              showLeagueStats={showLeagueRatings}
                               onOpen={() => onPlayerClick(player)}
                             />
                           );
@@ -3392,7 +3407,15 @@ function SubmitLineupSection({
                               playerOverall(item.player),
                               playerRatingTier(item.player),
                             )}
-                            {leagueRatingCapsule(item.player.league_rating)}
+                            {showLeagueRatings ? (
+                              <>
+                                {leagueRatingCapsule(item.player.league_rating)}
+                                <PlayerSeasonContributionBadges
+                                  goals={item.player.season_goals ?? 0}
+                                  assists={item.player.season_assists ?? 0}
+                                />
+                              </>
+                            ) : null}
                           </span>
                         </span>
                       </div>
@@ -3423,12 +3446,14 @@ function LineupPlayerRow({
   player,
   label,
   actionLabel,
+  showLeagueStats = true,
   onOpen,
   onAction,
 }: {
   player: PlayerRecord;
   label: string;
   actionLabel?: string;
+  showLeagueStats?: boolean;
   onOpen: () => void;
   onAction?: () => void;
 }) {
@@ -3459,7 +3484,15 @@ function LineupPlayerRow({
             <span>
               {naturalPlayerPosition(player)} · #{player.shirt_number ?? "-"}
             </span>
-            {leagueRatingCapsule(player.league_rating)}
+            {showLeagueStats ? (
+              <>
+                {leagueRatingCapsule(player.league_rating)}
+                <PlayerSeasonContributionBadges
+                  goals={player.season_goals ?? 0}
+                  assists={player.season_assists ?? 0}
+                />
+              </>
+            ) : null}
           </span>
         </span>
       </div>
