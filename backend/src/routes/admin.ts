@@ -711,28 +711,59 @@ adminRouter.patch(
 );
 
 // In carried-over seasons, an approved team's rolled-over players are already
-// rated and carry a full ability profile, so they can be approved immediately
-// without a fresh manager submission. Brand-new manager-added draft players
-// have no ability row yet, so they are left for the normal review flow.
+// rated (their ability_rating tier was copied from the prior season), so they
+// can be approved immediately without a fresh manager submission. Brand-new
+// manager-added draft players have no rating yet, so they are left for the
+// normal review flow. Any carried player missing a detailed ability row (e.g.
+// carried over before ability cloning existed) gets one backfilled from its
+// tier so it is match-ready on approval.
 async function autoApproveCarriedOverPlayers(
   teamRegistrationId: string,
   actorId: string,
 ): Promise<number> {
   const { data: players, error } = await supabaseAdmin
     .from("player_season_registrations")
-    .select("id,ability_rating,player_abilities(player_registration_id)")
+    .select(
+      "id,player_id,season_id,team_registration_id,position,football_position,ability_rating,player_abilities(player_registration_id)",
+    )
     .eq("team_registration_id", teamRegistrationId)
     .in("status", [RegistrationStatus.DRAFT, RegistrationStatus.PENDING])
     .neq("player_status", PlayerLifecycleStatus.REMOVED)
     .neq("player_status", PlayerLifecycleStatus.SUSPENDED);
   if (error) throw error;
-  const carried = (players ?? []).filter((player) => {
+  const carried = (players ?? []).filter((player) =>
+    Boolean(player.ability_rating),
+  );
+  if (carried.length === 0) return 0;
+
+  // Backfill detailed ability rows for carried players that are missing one so
+  // the ability-registration trigger and downstream simulation stay satisfied.
+  const missingAbility = carried.filter((player) => {
     const ability = Array.isArray(player.player_abilities)
       ? player.player_abilities[0]
       : player.player_abilities;
-    return Boolean(player.ability_rating) && Boolean(ability);
+    return !ability;
   });
-  if (carried.length === 0) return 0;
+  if (missingAbility.length > 0) {
+    const abilityRows = missingAbility.map((player) =>
+      buildAbilityUpsertRow(
+        {
+          id: player.id,
+          player_id: player.player_id,
+          season_id: player.season_id,
+          team_registration_id: player.team_registration_id,
+          position: player.position,
+          football_position: player.football_position,
+        },
+        player.ability_rating as BulkRatingTier,
+        actorId,
+      ),
+    );
+    const { error: abilityError } = await supabaseAdmin
+      .from("player_abilities")
+      .upsert(abilityRows, { onConflict: "player_registration_id" });
+    if (abilityError) throw abilityError;
+  }
 
   const ids = carried.map((player) => player.id);
   const { data: approved, error: approveError } = await supabaseAdmin
