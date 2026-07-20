@@ -125,6 +125,7 @@ interface PlayerMatchPerformance {
 
 interface AdminPlayer {
   id: string;
+  teamRegistrationId: string;
   code: string;
   fullName: string;
   avatar: string;
@@ -902,6 +903,101 @@ function abilityOverall(row: PlayerRegistrationApiRow) {
   return relatedOne(row.player_abilities)?.overall_rating ?? null;
 }
 
+type PlayerProfileTeamRef = {
+  id?: string | null;
+  teams?: { name?: string | null; short_name?: string | null } | null;
+} | null;
+
+type PlayerProfileMatchStatRow = {
+  minutes?: number | null;
+  goals?: number | null;
+  assists?: number | null;
+  shots?: number | null;
+  shots_on_target?: number | null;
+  chances_created?: number | null;
+  passes?: number | null;
+  accurate_passes?: number | null;
+  successful_dribbles?: number | null;
+  tackles?: number | null;
+  yellow_cards?: number | null;
+  red_cards?: number | null;
+  rating?: number | string | null;
+  fixtures?: {
+    kickoff_at?: string | null;
+    stage?: string | null;
+    status?: string | null;
+    home_score?: number | null;
+    away_score?: number | null;
+    extra_time_played?: boolean | null;
+    penalties_home?: number | null;
+    penalties_away?: number | null;
+    penalty_winner_team_registration_id?: string | null;
+    home_team_registration_id?: string | null;
+    away_team_registration_id?: string | null;
+    home_team?: PlayerProfileTeamRef;
+    away_team?: PlayerProfileTeamRef;
+  } | null;
+};
+
+type PlayerProfileResponse = {
+  match_stats?: PlayerProfileMatchStatRow[] | null;
+};
+
+function percentageLabel(numerator?: number | null, denominator?: number | null) {
+  const top = Number(numerator ?? 0);
+  const bottom = Number(denominator ?? 0);
+  if (!bottom || !Number.isFinite(top) || !Number.isFinite(bottom)) return "0%";
+  return `${Math.round((top / bottom) * 100)}%`;
+}
+
+// Converts the fan-profile match rows (which admins are authorised to read via
+// /fan/players/:id/profile) into the match-by-match shape the admin table
+// already renders. Rows arrive newest-first from the API.
+function buildPlayerPerformances(
+  rows: PlayerProfileMatchStatRow[],
+  playerTeamRegistrationId: string | null | undefined,
+): PlayerMatchPerformance[] {
+  return rows.map((row) => {
+    const fixture = row.fixtures ?? null;
+    const homeTeam = relatedOne(fixture?.home_team);
+    const awayTeam = relatedOne(fixture?.away_team);
+    const homeName = homeTeam?.teams?.name ?? "Home team";
+    const awayName = awayTeam?.teams?.name ?? "Away team";
+    const playerIsHome =
+      fixture?.home_team_registration_id === playerTeamRegistrationId;
+    const opponent = playerIsHome ? awayName : homeName;
+    const isFinal = fixture?.status === "FINAL";
+    const outcomeLabel = fixture ? fixtureOutcomeLabel(fixture) : null;
+    const result =
+      isFinal && fixture?.home_score != null && fixture?.away_score != null
+        ? `${homeName} ${fixture.home_score} - ${fixture.away_score} ${awayName}${
+            outcomeLabel ? ` · ${outcomeLabel}` : ""
+          }`
+        : statusLabel(fixture?.status);
+    const cards = `${row.yellow_cards ?? 0}Y / ${row.red_cards ?? 0}R`;
+    return {
+      match: fixture ? `${homeName} vs ${awayName}` : "Match",
+      date: safeDate(fixture?.kickoff_at),
+      opponent,
+      result,
+      minutes: row.minutes ?? 0,
+      goals: row.goals ?? 0,
+      assists: row.assists ?? 0,
+      shots: row.shots ?? 0,
+      shotsOnTarget: row.shots_on_target ?? 0,
+      chancesCreated: row.chances_created ?? 0,
+      passAccuracy: percentageLabel(row.accurate_passes, row.passes),
+      successfulDribbles: row.successful_dribbles ?? 0,
+      tackles: row.tackles ?? 0,
+      cards,
+      rating:
+        row.rating === null || row.rating === undefined
+          ? "-"
+          : String(row.rating),
+    };
+  });
+}
+
 function zeroLeagueStats(
   stat?: PlayerSeasonStatApiRow,
 ): AdminPlayer["leagueStats"] {
@@ -976,6 +1072,7 @@ function buildAdminSeasonData(input: {
     const stat = statsByRegistration.get(row.id);
     const player: AdminPlayer = {
       id: row.id,
+      teamRegistrationId: row.team_registration_id,
       code: `PLY-${row.id.slice(0, 8).toUpperCase()}`,
       fullName: playerName,
       avatar: initials(playerName),
@@ -1747,6 +1844,8 @@ export default function AdminLeagueSeasonDashboard() {
   const [profile, setProfile] = useState<ProfileDto | null>(null);
   const [league, setLeague] = useState<LeagueDto | null>(null);
   const [season, setSeason] = useState<SeasonDto | null>(null);
+  const [seasons, setSeasons] = useState<SeasonDto[]>([]);
+  const [seasonMenuOpen, setSeasonMenuOpen] = useState(false);
   const [adminData, setAdminData] =
     useState<AdminSeasonData>(emptyAdminSeasonData);
   const [groupsReady, setGroupsReady] = useState(false);
@@ -1799,6 +1898,7 @@ export default function AdminLeagueSeasonDashboard() {
     setLeague(
       leagueData.leagues.find((item) => item.id === params.leagueId) ?? null,
     );
+    setSeasons(seasonData.seasons);
     setSeason(selectedSeason);
     if (!selectedSeason) {
       setAdminData(emptyAdminSeasonData);
@@ -2265,12 +2365,52 @@ export default function AdminLeagueSeasonDashboard() {
               logoUrl={league.logo_url}
               size="lg"
             />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-bold">{league.name}</p>
-              <p className="mt-1 flex items-center gap-1 text-sm text-slate-300">
-                {season.name}
-                <ChevronDown size={14} />
-              </p>
+              <button
+                type="button"
+                onClick={() => setSeasonMenuOpen((open) => !open)}
+                aria-expanded={seasonMenuOpen}
+                aria-haspopup="listbox"
+                className="mt-1 flex w-full items-center gap-1 text-left text-sm text-slate-300 transition hover:text-white"
+              >
+                <span className="truncate">{season.name}</span>
+                <ChevronDown
+                  size={14}
+                  className={`shrink-0 transition-transform ${seasonMenuOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+              {seasonMenuOpen ? (
+                <ul
+                  role="listbox"
+                  className="mt-2 max-h-64 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-[#0b1526] p-1"
+                >
+                  {seasons.length === 0 ? (
+                    <li className="px-3 py-2 text-xs text-slate-400">
+                      No seasons
+                    </li>
+                  ) : (
+                    seasons.map((item) => (
+                      <li key={item.id} role="option" aria-selected={item.id === season.id}>
+                        <Link
+                          href={`/dashboard/admin/leagues/${params.leagueId}/seasons/${item.id}`}
+                          onClick={() => setSeasonMenuOpen(false)}
+                          className={`flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition ${
+                            item.id === season.id
+                              ? "bg-blue-600/30 font-bold text-white"
+                              : "text-slate-300 hover:bg-white/10 hover:text-white"
+                          }`}
+                        >
+                          <span className="truncate">{item.name}</span>
+                          {item.id === season.id ? (
+                            <CheckCircle2 size={14} className="shrink-0 text-blue-300" />
+                          ) : null}
+                        </Link>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              ) : null}
             </div>
           </div>
         </div>
@@ -3838,6 +3978,42 @@ function PlayerPersonalData({
 
 function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
   const stats = player.leagueStats;
+  const [performances, setPerformances] = useState<PlayerMatchPerformance[]>(
+    player.performances,
+  );
+  const [performancesLoading, setPerformancesLoading] = useState(true);
+  const [performancesError, setPerformancesError] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setPerformancesLoading(true);
+    setPerformancesError("");
+    api<PlayerProfileResponse>(`/fan/players/${player.id}/profile`)
+      .then((data) => {
+        if (!alive) return;
+        setPerformances(
+          buildPlayerPerformances(
+            data.match_stats ?? [],
+            player.teamRegistrationId,
+          ),
+        );
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setPerformancesError(
+          err instanceof Error
+            ? err.message
+            : "Could not load match-by-match performance",
+        );
+      })
+      .finally(() => {
+        if (alive) setPerformancesLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [player.id, player.teamRegistrationId]);
+
   const statRows = [
     ["Matches Played", stats.matchesPlayed],
     ["Starts", stats.starts],
@@ -3888,7 +4064,13 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
       </Panel>
 
       <Panel title="Match-by-Match Performance">
-        {player.performances.length > 0 ? (
+        {performancesLoading ? (
+          <p className="text-sm text-slate-500">
+            Loading match-by-match performance...
+          </p>
+        ) : performancesError ? (
+          <p className="text-sm text-red-600">{performancesError}</p>
+        ) : performances.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1100px] text-sm">
               <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -3917,7 +4099,7 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {player.performances.map((row) => (
+                {performances.map((row) => (
                   <tr
                     key={`${row.date}-${row.match}`}
                     className="hover:bg-slate-50"
