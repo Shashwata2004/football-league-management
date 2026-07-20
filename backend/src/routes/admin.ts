@@ -327,9 +327,12 @@ adminRouter.post(
   "/seasons",
   asyncHandler(async (req, res) => {
     const input = createSeasonSchema.parse(req.body);
+    // Lineup size is fixed at 11 across the app (validation and simulation
+    // require exactly 11 starters), so it is never a configurable setting.
+    const seasonInput = { ...input, lineup_size: 11 };
     const { data, error } = await supabaseAdmin
       .from("seasons")
-      .insert(input)
+      .insert(seasonInput)
       .select("*")
       .single();
     if (error && isSchemaCacheColumnError(error)) {

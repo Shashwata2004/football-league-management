@@ -1804,6 +1804,7 @@ function MatchDetailView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState("Summary");
+  const [selectedStat, setSelectedStat] = useState<any | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -1843,6 +1844,34 @@ function MatchDetailView({
     goals.filter((event) =>
       event.type === "OWN_GOAL" ? event.side !== side : event.side === side,
     );
+
+  // Per-player match stats and the position each player actually played, so a
+  // click opens the same single-match stat modal admins and managers see rather
+  // than jumping straight to the season profile.
+  const statByReg = new Map<string, any>();
+  for (const stat of detail.player_stats) {
+    statByReg.set(stat.player_registration_id, stat);
+  }
+  const roleByReg = new Map<string, string>();
+  for (const lineup of detail.lineups) {
+    for (const lp of lineup.lineup_players ?? []) {
+      const natural =
+        one<any>(lp.player_season_registrations)?.football_position ??
+        lp.football_position ??
+        null;
+      let role = lp.display_role ?? null;
+      if (!role || role === "SUB") role = natural;
+      if (role) roleByReg.set(lp.player_registration_id, role);
+    }
+  }
+
+  // A player click opens the match-stat modal when we have stats for them;
+  // otherwise (rare) fall back to the season profile page.
+  const handlePlayerClick = (registrationId: string) => {
+    const stat = statByReg.get(registrationId);
+    if (stat) setSelectedStat(stat);
+    else onOpenPlayer?.(registrationId);
+  };
 
   const tabs = ["Summary", "Lineups", "Stats", "Ratings"];
 
@@ -1923,7 +1952,7 @@ function MatchDetailView({
               homeId={homeId}
               home={home}
               away={away}
-              onOpenPlayer={onOpenPlayer}
+              onOpenPlayer={handlePlayerClick}
             />
           ) : null}
 
@@ -1945,11 +1974,27 @@ function MatchDetailView({
           {tab === "Ratings" ? (
             <MatchPlayerRatings
               playerStats={detail.player_stats}
-              onOpenPlayer={onOpenPlayer}
+              onOpenPlayer={handlePlayerClick}
             />
           ) : null}
         </>
       )}
+
+      {selectedStat ? (
+        <FanPlayerMatchStatModal
+          stat={selectedStat}
+          role={roleByReg.get(selectedStat.player_registration_id)}
+          onClose={() => setSelectedStat(null)}
+          onOpenProfile={
+            onOpenPlayer
+              ? (registrationId) => {
+                  setSelectedStat(null);
+                  onOpenPlayer(registrationId);
+                }
+              : undefined
+          }
+        />
+      ) : null}
     </div>
   );
 }
@@ -2473,6 +2518,248 @@ function MatchPlayerRatings({
     <Panel title="Player ratings">
       <div className="space-y-2">{sorted.map(row)}</div>
     </Panel>
+  );
+}
+
+// Single-match player stat modal, matching the admin/manager experience. Opens
+// when a fan clicks a player on the pitch, bench, or ratings list. Clicking the
+// player's name jumps to their full season profile page.
+function FanPlayerMatchStatModal({
+  stat,
+  role,
+  onClose,
+  onOpenProfile,
+}: {
+  stat: any;
+  role?: string | null | undefined;
+  onClose: () => void;
+  onOpenProfile?: ((playerRegistrationId: string) => void) | undefined;
+}) {
+  const player = one<any>(stat.player_season_registrations);
+  const person = one<any>(player?.players);
+  const name = person?.full_name ?? "Player";
+  const registrationId = player?.id ?? stat.player_registration_id;
+  const position =
+    role ??
+    stat.position_played ??
+    player?.football_position ??
+    player?.position ??
+    "POS";
+  const isGoalkeeper = position === "GK";
+  const defensiveContribution =
+    Number(stat.tackles ?? 0) +
+    Number(stat.interceptions ?? 0) +
+    Number(stat.clearances ?? 0) +
+    Number(stat.blocks ?? 0);
+  const sections: Array<{ title: string; items: Array<[string, unknown]> }> =
+    isGoalkeeper
+      ? [
+          {
+            title: "Top stats",
+            items: [
+              ["Minutes played", stat.minutes],
+              ["Rating", stat.rating],
+              ["Saves", stat.saves],
+              ["Goals conceded", stat.goals_conceded],
+            ],
+          },
+          {
+            title: "Distribution",
+            items: [
+              [
+                "Accurate passes",
+                `${fanStatValue(stat.accurate_passes)}/${fanStatValue(stat.passes)} (${fanPercentage(stat.accurate_passes, stat.passes)})`,
+              ],
+              ["Accurate long balls", stat.accurate_long_balls],
+            ],
+          },
+          {
+            title: "Goalkeeping",
+            items: [
+              ["Diving saves", stat.diving_saves],
+              ["Saves inside box", stat.saves_inside_box],
+              ["Clearances", stat.clearances],
+            ],
+          },
+          {
+            title: "Discipline",
+            items: [
+              ["Yellow cards", stat.yellow_cards],
+              ["Red cards", stat.red_cards],
+            ],
+          },
+        ]
+      : [
+          {
+            title: "Top stats",
+            items: [
+              ["Minutes played", stat.minutes],
+              ["Position played", position],
+              ["Rating", stat.rating],
+              ["Goals", stat.goals],
+              ["Assists", stat.assists],
+            ],
+          },
+          {
+            title: "Attack",
+            items: [
+              ["Shots", stat.shots],
+              ["Shots on target", stat.shots_on_target],
+              ["Shot accuracy", fanPercentage(stat.shots_on_target, stat.shots)],
+              ["Chances created", stat.chances_created],
+              ["Big chances created", stat.big_chances_created],
+              ["Big chances missed", stat.big_chances_missed],
+            ],
+          },
+          {
+            title: "Passing + dribbling",
+            items: [
+              ["Total passes", stat.passes],
+              [
+                "Accurate passes",
+                `${fanStatValue(stat.accurate_passes)}/${fanStatValue(stat.passes)} (${fanPercentage(stat.accurate_passes, stat.passes)})`,
+              ],
+              ["Dribbles attempted", stat.dribbles_attempted],
+              [
+                "Successful dribbles",
+                `${fanStatValue(stat.successful_dribbles)}/${fanStatValue(stat.dribbles_attempted)} (${fanPercentage(stat.successful_dribbles, stat.dribbles_attempted)})`,
+              ],
+              ["Dispossessed", stat.dispossessed],
+            ],
+          },
+          {
+            title: "Defense",
+            items: [
+              ["Defensive contribution", defensiveContribution],
+              ["Tackles", stat.tackles],
+              ["Interceptions", stat.interceptions],
+              ["Clearances", stat.clearances],
+              ["Blocks", stat.blocks],
+              ["Dribbled past", stat.dribbled_past],
+            ],
+          },
+          {
+            title: "Discipline",
+            items: [
+              ["Fouls committed", stat.fouls_committed],
+              ["Yellow cards", stat.yellow_cards],
+              ["Red cards", stat.red_cards],
+            ],
+          },
+        ];
+  const ratingNumeric = stat.rating != null ? Number(stat.rating) : null;
+  return (
+    <div
+      className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/60 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[88vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="bg-gradient-to-b from-emerald-200 to-white p-6">
+          <div className="flex items-start justify-between gap-4">
+            <span className="h-10 w-10" aria-hidden="true" />
+            <div className="text-center">
+              <div className="relative mx-auto grid h-20 w-20 place-items-center overflow-hidden rounded-full border-4 border-white bg-white text-xl font-black text-indigo-700 shadow">
+                {person?.avatar_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={person.avatar_url}
+                    alt={name}
+                    className="h-[120%] w-full object-cover object-top"
+                  />
+                ) : (
+                  initials(name)
+                )}
+              </div>
+              {ratingNumeric != null ? (
+                <span
+                  className={`mx-auto -mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-black text-white shadow ${ratingTone(ratingNumeric)}`}
+                >
+                  {fanFormatRating(stat.rating)}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                disabled={!onOpenProfile || !registrationId}
+                onClick={() =>
+                  onOpenProfile && registrationId
+                    ? onOpenProfile(registrationId)
+                    : undefined
+                }
+                className="mt-2 block w-full text-lg font-black text-slate-900 outline-none enabled:hover:text-[var(--team-primary)] enabled:hover:underline"
+                title="View full player profile"
+              >
+                {name}
+              </button>
+              <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+                <div>
+                  <p className="font-black">{position}</p>
+                  <p className="text-slate-500">Position</p>
+                </div>
+                <div>
+                  <p className="font-black">
+                    {player?.shirt_number ? `#${player.shirt_number}` : "-"}
+                  </p>
+                  <p className="text-slate-500">Number</p>
+                </div>
+                <div>
+                  <p className="font-black">{fanStatValue(stat.minutes)}</p>
+                  <p className="text-slate-500">Minutes</p>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-10 w-10 place-items-center rounded-full bg-white/70 text-xl font-black shadow transition hover:bg-white"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+        <div className="space-y-6 p-6">
+          {sections.map((section) => (
+            <section key={section.title}>
+              <h4 className="mb-3 text-lg font-black">{section.title}</h4>
+              <div className="divide-y divide-slate-100">
+                {section.items.map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="flex items-center justify-between gap-4 py-2.5 text-sm"
+                  >
+                    <span className="font-medium text-slate-700">{label}</span>
+                    <span className="text-right font-black">
+                      {label === "Rating"
+                        ? fanFormatRating(value)
+                        : fanStatValue(value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+          {onOpenProfile && registrationId ? (
+            <button
+              type="button"
+              onClick={() => onOpenProfile(registrationId)}
+              className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 transition hover:border-[var(--team-primary)] hover:text-[var(--team-primary)]"
+            >
+              View full player profile
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            className="sticky bottom-0 w-full rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-black text-white shadow transition hover:bg-emerald-700"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

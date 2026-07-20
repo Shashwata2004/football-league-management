@@ -259,7 +259,7 @@ export default function AdminDashboard() {
       total_teams: numberValue(seasonForm.total_teams),
       min_players_per_team: numberValue(seasonForm.min_players_per_team),
       max_players_per_team: numberValue(seasonForm.max_players_per_team),
-      lineup_size: numberValue(seasonForm.lineup_size),
+      lineup_size: 11,
       substitute_limit: numberValue(seasonForm.substitute_limit),
       lineup_submission_deadline_hours: numberValue(
         seasonForm.lineup_submission_deadline_hours
@@ -798,7 +798,6 @@ export default function AdminDashboard() {
             value={seasonForm.max_players_per_team}
             onChange={(value) => updateSeasonForm("max_players_per_team", value)}
           />
-          <TextInput label="Lineup Size" type="number" value={seasonForm.lineup_size} onChange={(value) => updateSeasonForm("lineup_size", value)} />
           <TextInput
             label="Substitute Limit"
             type="number"

@@ -172,7 +172,7 @@ create table if not exists public.seasons (
   total_teams integer,
   min_players_per_team integer,
   max_players_per_team integer,
-  lineup_size integer,
+  lineup_size integer not null default 11,
   substitute_limit integer,
   lineup_submission_deadline_hours integer,
   yellow_card_suspension_threshold integer not null default 3,
@@ -237,6 +237,9 @@ alter table public.seasons add column if not exists total_teams integer;
 alter table public.seasons add column if not exists min_players_per_team integer;
 alter table public.seasons add column if not exists max_players_per_team integer;
 alter table public.seasons add column if not exists lineup_size integer;
+update public.seasons set lineup_size = 11 where lineup_size is distinct from 11;
+alter table public.seasons alter column lineup_size set default 11;
+alter table public.seasons alter column lineup_size set not null;
 alter table public.seasons add column if not exists substitute_limit integer;
 alter table public.seasons add column if not exists lineup_submission_deadline_hours integer;
 alter table public.seasons add column if not exists teams_per_group integer;

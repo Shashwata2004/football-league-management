@@ -9038,7 +9038,7 @@ function SettingsView({
     format: season.format,
     phase: season.phase,
     total_teams: String(season.total_teams ?? ""),
-    lineup_size: String(season.lineup_size ?? ""),
+    lineup_size: "11",
     substitute_limit: String(season.substitute_limit ?? ""),
     yellow_card_suspension_threshold: String(
       season.yellow_card_suspension_threshold ?? 3,
@@ -9179,17 +9179,6 @@ function SettingsView({
                 setSeasonDraft((current) => ({
                   ...current,
                   total_teams: value,
-                }))
-              }
-            />
-            <EditableField
-              label="Lineup Size"
-              value={seasonDraft.lineup_size}
-              type="number"
-              onChange={(value) =>
-                setSeasonDraft((current) => ({
-                  ...current,
-                  lineup_size: value,
                 }))
               }
             />
