@@ -557,7 +557,7 @@ async function carryOverSeasonEntrants(
     const { data: sourcePlayers, error: playersError } = await supabaseAdmin
       .from("player_season_registrations")
       .select(
-        "player_id,position,football_position,position_category,shirt_number,ability_rating,preferred_foot,identity_mode,is_generated,created_by_manager_id",
+        "id,player_id,position,football_position,position_category,shirt_number,ability_rating,preferred_foot,identity_mode,is_generated,created_by_manager_id",
       )
       .eq("team_registration_id", sourceTeam.id)
       .in("status", [RegistrationStatus.APPROVED, RegistrationStatus.PENDING]);
@@ -585,9 +585,56 @@ async function carryOverSeasonEntrants(
       await supabaseAdmin
         .from("player_season_registrations")
         .insert(playerRows)
-        .select("id");
+        .select("id,player_id");
     if (insertPlayersError) throw insertPlayersError;
     playerCount += insertedPlayers?.length ?? 0;
+
+    // Clone each carried player's full ability profile so they remain
+    // match-ready the moment their team (and therefore they) get approved.
+    // player_abilities requires an exact identity match to the new
+    // registration, so we remap player_registration_id/team/season.
+    const newRegistrationByPlayerId = new Map(
+      (insertedPlayers ?? []).map((row) => [row.player_id, row.id]),
+    );
+    const sourcePlayerIds = sourcePlayers.map((player) => player.id);
+    const { data: sourceAbilities, error: sourceAbilitiesError } =
+      await supabaseAdmin
+        .from("player_abilities")
+        .select("*")
+        .in("player_registration_id", sourcePlayerIds);
+    if (sourceAbilitiesError) throw sourceAbilitiesError;
+    if (sourceAbilities && sourceAbilities.length > 0) {
+      const sourceRegistrationById = new Map(
+        sourcePlayers.map((player) => [player.id, player]),
+      );
+      const abilityRows = sourceAbilities
+        .map((ability) => {
+          const sourcePlayer = sourceRegistrationById.get(
+            ability.player_registration_id,
+          );
+          if (!sourcePlayer) return null;
+          const newRegistrationId = newRegistrationByPlayerId.get(
+            sourcePlayer.player_id,
+          );
+          if (!newRegistrationId) return null;
+          const { id, created_at, updated_at, ...abilityFields } = ability;
+          return {
+            ...abilityFields,
+            player_registration_id: newRegistrationId,
+            season_id: targetSeasonId,
+            team_registration_id: targetTeamRegistrationId,
+          };
+        })
+        .filter(
+          (row): row is NonNullable<typeof row> => row !== null,
+        );
+      if (abilityRows.length > 0) {
+        const { error: abilityInsertError } = await supabaseAdmin
+          .from("player_abilities")
+          .insert(abilityRows);
+        if (abilityInsertError) throw abilityInsertError;
+      }
+    }
 
     // Notify the manager that a new season has opened and their team plus
     // squad have been carried forward for review and re-submission.
@@ -599,7 +646,7 @@ async function carryOverSeasonEntrants(
         team_registration_id: targetTeamRegistrationId,
         related_type: "GENERAL_NOTICE",
         sender_role: UserRole.ADMIN,
-        message: `A new season "${targetSeasonName}" has opened. Your team has been carried over and is pending admin approval. Your previous players are waiting in your Players section as drafts — review, remove, or re-submit them for this season.`,
+        message: `A new season "${targetSeasonName}" has opened. Your team has been carried over and is pending admin approval. Once the admin approves your team, your carried-over players are approved automatically. They are waiting in your Players section as drafts in the meantime — you can still remove any you do not want.`,
         created_by: actorId,
         created_at: nowIso,
       });
@@ -644,16 +691,82 @@ adminRouter.patch(
       .select("*")
       .single();
     if (error) throw error;
+    let autoApprovedPlayers = 0;
     if (input.status === "APPROVED") {
       await supabaseAdmin
         .from("standings")
         .upsert(emptyStandingForSeason(data.season_id, data.id), {
           onConflict: "season_id,team_registration_id",
         });
+      autoApprovedPlayers = await autoApproveCarriedOverPlayers(
+        data.id,
+        req.auth!.userId,
+      );
     }
-    res.json({ team_registration: data });
+    res.json({
+      team_registration: data,
+      auto_approved_players: autoApprovedPlayers,
+    });
   }),
 );
+
+// In carried-over seasons, an approved team's rolled-over players are already
+// rated and carry a full ability profile, so they can be approved immediately
+// without a fresh manager submission. Brand-new manager-added draft players
+// have no ability row yet, so they are left for the normal review flow.
+async function autoApproveCarriedOverPlayers(
+  teamRegistrationId: string,
+  actorId: string,
+): Promise<number> {
+  const { data: players, error } = await supabaseAdmin
+    .from("player_season_registrations")
+    .select("id,ability_rating,player_abilities(player_registration_id)")
+    .eq("team_registration_id", teamRegistrationId)
+    .in("status", [RegistrationStatus.DRAFT, RegistrationStatus.PENDING])
+    .neq("player_status", PlayerLifecycleStatus.REMOVED)
+    .neq("player_status", PlayerLifecycleStatus.SUSPENDED);
+  if (error) throw error;
+  const carried = (players ?? []).filter((player) => {
+    const ability = Array.isArray(player.player_abilities)
+      ? player.player_abilities[0]
+      : player.player_abilities;
+    return Boolean(player.ability_rating) && Boolean(ability);
+  });
+  if (carried.length === 0) return 0;
+
+  const ids = carried.map((player) => player.id);
+  const { data: approved, error: approveError } = await supabaseAdmin
+    .from("player_season_registrations")
+    .update({
+      status: RegistrationStatus.APPROVED,
+      player_status: PlayerLifecycleStatus.ACTIVE,
+      reviewed_by: actorId,
+      reviewed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", ids)
+    .select("id,season_id");
+  if (approveError) throw approveError;
+
+  const statsRows = (approved ?? []).map((player) => ({
+    season_id: player.season_id,
+    player_registration_id: player.id,
+    appearances: 0,
+    goals: 0,
+    assists: 0,
+    yellow_cards: 0,
+    red_cards: 0,
+    average_rating: null,
+  }));
+  if (statsRows.length > 0) {
+    const { error: statsError } = await supabaseAdmin
+      .from("player_season_stats")
+      .upsert(statsRows, { onConflict: "season_id,player_registration_id" });
+    if (statsError) throw statsError;
+  }
+
+  return approved?.length ?? 0;
+}
 
 adminRouter.get(
   "/player-registrations",
