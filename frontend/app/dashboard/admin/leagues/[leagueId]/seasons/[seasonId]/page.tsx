@@ -23,6 +23,7 @@ import {
   Menu,
   MessageSquare,
   PlayCircle,
+  Search,
   Settings,
   Shield,
   ShieldCheck,
@@ -3756,8 +3757,9 @@ function PlayerPersonalData({
             </div>
           </div>
           <p className="mt-3 text-xs text-slate-500">
-            Ability scores stay hidden from managers and public users. Approval
-            is blocked until Low, Moderate, or High is assigned.
+            Ability scores are visible to administrators and the player&apos;s
+            owning manager, but remain hidden from opponents and public users.
+            Approval is blocked until Low, Moderate, or High is assigned.
           </p>
         </Panel>
 
@@ -6464,6 +6466,34 @@ function CompletedMatchesView({
   const [selectedStat, setSelectedStat] =
     useState<MatchDetailPlayerStat | null>(null);
   const [error, setError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [teamFilter, setTeamFilter] = useState("ALL");
+  const teamNames = useMemo(
+    () =>
+      [...new Set(matches.flatMap((match) => [match.home, match.away]))].sort(
+        (left, right) => left.localeCompare(right),
+      ),
+    [matches],
+  );
+  const filteredMatches = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+    return matches.filter((match) => {
+      const matchesTeam =
+        teamFilter === "ALL" ||
+        match.home === teamFilter ||
+        match.away === teamFilter;
+      if (!matchesTeam) return false;
+      if (!query) return true;
+      return [
+        match.home,
+        match.away,
+        match.score,
+        match.stage,
+        match.kickoff,
+        match.status,
+      ].some((value) => value.toLocaleLowerCase().includes(query));
+    });
+  }, [matches, searchQuery, teamFilter]);
 
   async function openDetail(match: CompletedMatchRow) {
     setSelectedMatch(match);
@@ -6561,27 +6591,68 @@ function CompletedMatchesView({
       {matches.length === 0 ? (
         <EmptyState label="No completed matches yet." />
       ) : (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {matches.map((match, index) => (
-            <Panel key={match.id} title={`Completed Match ${index + 1}`}>
-              <button
-                type="button"
-                className="block w-full rounded-2xl p-2 text-left transition hover:-translate-y-0.5 hover:bg-slate-50"
-                onClick={() => void openDetail(match)}
+        <div className="space-y-4">
+          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_minmax(220px,320px)]">
+            <label className="relative block">
+              <span className="sr-only">Search completed matches</span>
+              <Search
+                className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+                size={18}
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search team, score, stage, or date"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-11 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+              />
+            </label>
+            <label className="block">
+              <span className="sr-only">Filter completed matches by team</span>
+              <select
+                value={teamFilter}
+                onChange={(event) => setTeamFilter(event.target.value)}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
               >
-                <div className="flex items-center justify-between gap-4">
-                  <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
-                  <span className="rounded-xl bg-green-100 px-4 py-2 text-lg font-black text-green-800">
-                    {match.score}
-                  </span>
-                  <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
-                </div>
-                <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-center text-sm font-bold text-slate-600">
-                  {match.kickoff} · {match.stage}
-                </p>
-              </button>
-            </Panel>
-          ))}
+                <option value="ALL">All teams</option>
+                {teamNames.map((teamName) => (
+                  <option key={teamName} value={teamName}>
+                    {teamName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="text-sm font-semibold text-slate-500" aria-live="polite">
+            Showing {filteredMatches.length} of {matches.length} completed matches
+          </p>
+          {filteredMatches.length === 0 ? (
+            <EmptyState label="No completed matches match these filters." />
+          ) : (
+            <div className="grid gap-4 xl:grid-cols-2">
+              {filteredMatches.map((match, index) => (
+                <Panel key={match.id} title={`Completed Match ${index + 1}`}>
+                  <button
+                    type="button"
+                    className="block w-full rounded-2xl p-2 text-left transition hover:-translate-y-0.5 hover:bg-slate-50"
+                    onClick={() => void openDetail(match)}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <TeamCompact name={match.home} logoUrl={match.homeLogoUrl} />
+                      <span className="rounded-xl bg-green-100 px-4 py-2 text-lg font-black text-green-800">
+                        {match.score}
+                      </span>
+                      <TeamCompact name={match.away} logoUrl={match.awayLogoUrl} />
+                    </div>
+                    <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-center text-sm font-bold text-slate-600">
+                      {match.kickoff} · {match.stage}
+                    </p>
+                  </button>
+                </Panel>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -6728,10 +6799,16 @@ function MatchDetailPage({
               />
             ) : detail?.team_stats?.length ? (
               <MatchTeamStatsPanel
-                home={match.home}
-                away={match.away}
-                homeColor={match.homePrimaryColor}
-                awayColor={match.awayPrimaryColor}
+                leftTeamName={match.home}
+                rightTeamName={match.away}
+                leftTeamRegistrationId={
+                  detail.fixture.home_team_registration_id
+                }
+                rightTeamRegistrationId={
+                  detail.fixture.away_team_registration_id
+                }
+                leftTeamColor={match.homePrimaryColor}
+                rightTeamColor={match.awayPrimaryColor}
                 stats={detail.team_stats}
               />
             ) : (
@@ -7307,22 +7384,31 @@ function LineupSide({
 }
 
 function MatchTeamStatsPanel({
-  home,
-  away,
-  homeColor,
-  awayColor,
+  leftTeamName,
+  rightTeamName,
+  leftTeamRegistrationId,
+  rightTeamRegistrationId,
+  leftTeamColor,
+  rightTeamColor,
   stats,
 }: {
-  home: string;
-  away: string;
-  homeColor?: string | null | undefined;
-  awayColor?: string | null | undefined;
+  leftTeamName: string;
+  rightTeamName: string;
+  leftTeamRegistrationId: string | null | undefined;
+  rightTeamRegistrationId: string | null | undefined;
+  leftTeamColor?: string | null | undefined;
+  rightTeamColor?: string | null | undefined;
   stats: MatchDetailTeamStat[];
 }) {
-  const [first, second] = stats;
+  const first = stats.find(
+    (stat) => stat.team_registration_id === leftTeamRegistrationId,
+  );
+  const second = stats.find(
+    (stat) => stat.team_registration_id === rightTeamRegistrationId,
+  );
   if (!first || !second) return null;
-  const leftColor = safeStatColor(homeColor, "#C4003A");
-  const rightColor = safeStatColor(awayColor, "#0F172A");
+  const leftColor = safeStatColor(leftTeamColor, "#C4003A");
+  const rightColor = safeStatColor(rightTeamColor, "#0F172A");
   const sections: Array<{
     title: string;
     rows: Array<
@@ -7388,11 +7474,11 @@ function MatchTeamStatsPanel({
     <div className="overflow-hidden rounded-3xl bg-[#1f1f1f] text-white shadow-2xl">
       <div className="grid gap-3 border-b border-white/10 px-6 py-5 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
         <p className="font-black" style={{ color: leftColor }}>
-          {home}
+          {leftTeamName}
         </p>
         <h3 className="text-center text-lg font-black">Match stats</h3>
         <p className="text-right font-black" style={{ color: rightColor }}>
-          {away}
+          {rightTeamName}
         </p>
       </div>
 
@@ -7427,10 +7513,10 @@ function MatchTeamStatsPanel({
               className="h-3 w-3 rounded-full"
               style={{ background: leftColor }}
             />
-            {home}
+            {leftTeamName}
           </span>
           <span className="inline-flex items-center justify-end gap-2 text-right">
-            {away}
+            {rightTeamName}
             <span
               className="h-3 w-3 rounded-full"
               style={{ background: rightColor }}
@@ -7449,16 +7535,16 @@ function MatchTeamStatsPanel({
               <StatComparisonRow
                 key={`${section.title}-${label}`}
                 label={label}
-                homeValue={formatTeamStat(first, field, format)}
-                awayValue={formatTeamStat(second, field, format)}
-                homeWins={
+                leftValue={formatTeamStat(first, field, format)}
+                rightValue={formatTeamStat(second, field, format)}
+                leftWins={
                   Number(first[field] ?? 0) > Number(second[field] ?? 0)
                 }
-                awayWins={
+                rightWins={
                   Number(second[field] ?? 0) > Number(first[field] ?? 0)
                 }
-                homeColor={leftColor}
-                awayColor={rightColor}
+                leftColor={leftColor}
+                rightColor={rightColor}
               />
             ))}
           </div>
@@ -7470,20 +7556,20 @@ function MatchTeamStatsPanel({
 
 function StatComparisonRow({
   label,
-  homeValue,
-  awayValue,
-  homeWins,
-  awayWins,
-  homeColor,
-  awayColor,
+  leftValue,
+  rightValue,
+  leftWins,
+  rightWins,
+  leftColor,
+  rightColor,
 }: {
   label: string;
-  homeValue: string;
-  awayValue: string;
-  homeWins: boolean;
-  awayWins: boolean;
-  homeColor: string;
-  awayColor: string;
+  leftValue: string;
+  rightValue: string;
+  leftWins: boolean;
+  rightWins: boolean;
+  leftColor: string;
+  rightColor: string;
 }) {
   return (
     <div className="grid grid-cols-[86px_1fr_86px] items-center gap-3 text-sm">
@@ -7491,11 +7577,11 @@ function StatComparisonRow({
         <span
           className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black text-white"
           style={{
-            background: homeWins ? homeColor : `${homeColor}22`,
-            border: `1px solid ${homeColor}66`,
+            background: leftWins ? leftColor : `${leftColor}22`,
+            border: `1px solid ${leftColor}66`,
           }}
         >
-          {homeValue}
+          {leftValue}
         </span>
       </div>
       <p className="text-center font-medium text-white/90">{label}</p>
@@ -7503,16 +7589,17 @@ function StatComparisonRow({
         <span
           className="inline-flex min-w-8 justify-center rounded-full px-2.5 py-1 font-black"
           style={{
-            background: awayWins
-              ? awayColor === "#0F172A"
+            background: rightWins
+              ? rightColor === "#0F172A"
                 ? "#FFFFFF"
-                : awayColor
-              : `${awayColor}22`,
-            border: `1px solid ${awayColor}66`,
-            color: awayWins && awayColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
+                : rightColor
+              : `${rightColor}22`,
+            border: `1px solid ${rightColor}66`,
+            color:
+              rightWins && rightColor === "#0F172A" ? "#0F172A" : "#FFFFFF",
           }}
         >
-          {awayValue}
+          {rightValue}
         </span>
       </div>
     </div>

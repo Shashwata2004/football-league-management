@@ -579,6 +579,7 @@ interface PlayerProfilePayload extends PlayerLeagueStatsPayload {
   player: PlayerRecord;
   overall_rating: number | null;
   league_rating: number | null;
+  can_view_ability_scores: boolean;
 }
 
 interface StatEntry {
@@ -5397,9 +5398,9 @@ function PlayerDetailModal({
   onClose: () => void;
   onDeleted: () => void;
 }) {
-  const [tab, setTab] = useState<"League Stats" | "Personal Data">(
-    "League Stats",
-  );
+  const [tab, setTab] = useState<
+    "League Stats" | "Ability Scores" | "Personal Data"
+  >("League Stats");
   const [error, setError] = useState("");
   const [avatarUrl, setAvatarUrl] = useState(player.players?.avatar_url ?? "");
   const [savingAvatar, setSavingAvatar] = useState(false);
@@ -5432,6 +5433,10 @@ function PlayerDetailModal({
     playerOverall(activePlayer) ??
     playerOverall(player);
   const activeTier = ratingTierFromOverall(activeOverall);
+  const activeAbility =
+    one(activePlayer.player_abilities) ?? one(player.player_abilities);
+  const canViewAbilityScores =
+    profilePayload?.can_view_ability_scores ?? Boolean(activeAbility);
 
   useEffect(() => {
     let alive = true;
@@ -5547,10 +5552,22 @@ function PlayerDetailModal({
             </p>
           ) : null}
           <Tabs
-            values={["League Stats", "Personal Data"]}
+            values={
+              canViewAbilityScores
+                ? ["League Stats", "Ability Scores", "Personal Data"]
+                : ["League Stats", "Personal Data"]
+            }
             value={tab}
             onChange={(value) => setTab(value as typeof tab)}
           />
+          {tab === "Ability Scores" && canViewAbilityScores ? (
+            <div className="mt-5">
+              <AbilityScoresPanel
+                player={activePlayer}
+                ability={activeAbility ?? null}
+              />
+            </div>
+          ) : null}
           {tab === "Personal Data" ? (
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <Detail label="Player Code" value={activeCode} />
@@ -5640,7 +5657,8 @@ function PlayerDetailModal({
                 ) : null}
               </div>
             </div>
-          ) : (
+          ) : null}
+          {tab === "League Stats" ? (
             <div className="mt-5 space-y-5">
               {statsLoading ? (
                 <LoadingState label="Loading player league stats..." />
@@ -5787,7 +5805,7 @@ function PlayerDetailModal({
                 </>
               ) : null}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

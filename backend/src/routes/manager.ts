@@ -554,7 +554,7 @@ async function loadManagerVisiblePlayerRegistration(
   const { data, error } = await supabaseAdmin
     .from("player_season_registrations")
     .select(
-      "id,player_id,season_id,team_registration_id,status,shirt_number,position,football_position,position_category,preferred_foot,player_status,player_code,identity_mode,is_generated,created_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(overall_rating),team_registrations!inner(id,manager_id,season_id,team_id,teams(id,name,short_name,logo_url,primary_color,secondary_color,accent_color),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
+      "id,player_id,season_id,team_registration_id,status,shirt_number,position,football_position,position_category,preferred_foot,player_status,player_code,identity_mode,is_generated,created_at,rejection_reason,removal_reason,suspension_reason,suspension_type,suspension_until,suspension_matches_remaining,players(id,full_name,date_of_birth,id_type,id_number_last4,generated_identity_number,avatar_url),player_abilities(*),team_registrations!inner(id,manager_id,season_id,team_id,teams(id,name,short_name,logo_url,primary_color,secondary_color,accent_color),seasons!team_registrations_season_id_fkey(id,name,league_id,leagues(id,name)))",
     )
     .eq("id", playerRegistrationId)
     .single();
@@ -575,7 +575,9 @@ async function loadManagerVisiblePlayerRegistration(
     player: {
       ...data,
       overall_rating: Number.isFinite(overallRating) ? overallRating : null,
-      player_abilities: undefined,
+      // Detailed ability scores belong to the owning manager and admin only.
+      // Opposition managers still receive the public overall rating below.
+      player_abilities: ownsPlayer ? data.player_abilities : undefined,
       players: identity
         ? {
             ...identity,
@@ -586,6 +588,7 @@ async function loadManagerVisiblePlayerRegistration(
         : null,
     },
     overallRating: Number.isFinite(overallRating) ? overallRating : null,
+    canViewAbilityScores: ownsPlayer,
   };
 }
 
@@ -2021,7 +2024,7 @@ managerRouter.get(
 managerRouter.get(
   "/players/:playerId/profile",
   asyncHandler(async (req, res) => {
-    const { player, overallRating } =
+    const { player, overallRating, canViewAbilityScores } =
       await loadManagerVisiblePlayerRegistration(
         req.auth!.userId,
         routeParam(req.params.playerId, "playerId"),
@@ -2049,6 +2052,7 @@ managerRouter.get(
     res.json({
       player,
       overall_rating: overallRating,
+      can_view_ability_scores: canViewAbilityScores,
       league_rating: leagueRatings.get(player.id) ?? null,
       season_stats: buildPlayerSeasonStatsFromMatchRows(matchStats ?? []),
       stored_season_stats: seasonStats,
