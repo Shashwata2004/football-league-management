@@ -240,13 +240,7 @@ function AuthForm({
           placeholder="Repeat password"
           autoComplete="new-password"
         />
-      ) : (
-        <div className="flex justify-end">
-          <button type="button" className="scoreline-mono text-xs text-[#b3ff00] transition hover:text-[#d7ff72] hover:drop-shadow-[0_0_8px_rgba(179,255,0,0.55)]">
-            Forgot password?
-          </button>
-        </div>
-      )}
+      ) : null}
 
       {message ? <p className="scoreline-mono text-xs text-red-300">{message}</p> : null}
 
