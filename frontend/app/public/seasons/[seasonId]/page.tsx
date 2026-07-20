@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import type { FixtureDto, StandingDto } from "@flms/shared";
+import {
+  fixtureOutcomeLabel,
+  fixtureOutcomeScore,
+  type FixtureDto,
+  type StandingDto,
+} from "@flms/shared";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardTitle } from "@/components/ui/card";
 import { publicApi } from "@/lib/api";
@@ -13,8 +18,12 @@ export default function PublicSeasonPage() {
   const [standings, setStandings] = useState<StandingDto[]>([]);
 
   useEffect(() => {
-    void publicApi<{ fixtures: FixtureDto[] }>(`/public/seasons/${params.seasonId}/fixtures`).then((data) => setFixtures(data.fixtures));
-    void publicApi<{ standings: StandingDto[] }>(`/public/seasons/${params.seasonId}/standings`).then((data) => setStandings(data.standings));
+    void publicApi<{ fixtures: FixtureDto[] }>(
+      `/public/seasons/${params.seasonId}/fixtures`,
+    ).then((data) => setFixtures(data.fixtures));
+    void publicApi<{ standings: StandingDto[] }>(
+      `/public/seasons/${params.seasonId}/standings`,
+    ).then((data) => setStandings(data.standings));
   }, [params.seasonId]);
 
   return (
@@ -65,12 +74,20 @@ export default function PublicSeasonPage() {
                 <Badge>{fixture.status}</Badge>
               </div>
               <p className="mt-2 text-sm">
-                {fixture.home_team_registration_id} vs {fixture.away_team_registration_id}
+                {fixture.home_team_registration_id} vs{" "}
+                {fixture.away_team_registration_id}
               </p>
               <p className="mt-1 font-semibold">
-                {fixture.home_score ?? "-"} : {fixture.away_score ?? "-"}
+                {fixtureOutcomeScore(fixture) ?? "-"}
               </p>
-              <p className="text-xs text-muted-foreground">{fixture.venue ?? "Venue TBA"}</p>
+              {fixtureOutcomeLabel(fixture) ? (
+                <p className="text-xs font-medium text-muted-foreground">
+                  {fixtureOutcomeLabel(fixture)}
+                </p>
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                {fixture.venue ?? "Venue TBA"}
+              </p>
             </div>
           ))}
         </div>

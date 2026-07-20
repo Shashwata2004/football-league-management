@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { hideFixtureOutcome } from "@flms/shared";
 import { supabaseAdmin } from "../db/supabase.js";
 import { asyncHandler } from "../errors.js";
 import { loadSeasonStandings } from "../services/standings-report.js";
@@ -52,15 +53,13 @@ publicRouter.get(
     const { data, error } = await supabaseAdmin
       .from("fixtures")
       .select(
-        "id,season_id,round_no,stage,group_name,home_team_registration_id,away_team_registration_id,kickoff_at,venue,status,home_score,away_score",
+        "id,season_id,round_no,stage,group_name,home_team_registration_id,away_team_registration_id,kickoff_at,venue,status,home_score,away_score,extra_time_played,penalties_home,penalties_away,winner_team_registration_id,penalty_winner_team_registration_id",
       )
       .eq("season_id", req.params.seasonId)
       .order("round_no");
     if (error) throw error;
     const publicFixtures = (data ?? []).map((fixture) =>
-      fixture.status === "FINAL"
-        ? fixture
-        : { ...fixture, home_score: null, away_score: null },
+      fixture.status === "FINAL" ? fixture : hideFixtureOutcome(fixture),
     );
     res.json({ fixtures: publicFixtures });
   }),

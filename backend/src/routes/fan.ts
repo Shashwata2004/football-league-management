@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   addFavoriteTeamSchema,
   FixtureStatus,
+  hideFixtureOutcome,
   PlayerLifecycleStatus,
   RegistrationStatus,
   UserRole,
@@ -31,7 +32,10 @@ fanRouter.use(requireAuth, requireRole(UserRole.USER, UserRole.ADMIN));
 // still in flight, so scores are hidden until the match is finalised.
 const FAN_VISIBLE_SCORE_STATUSES: string[] = [FixtureStatus.FINAL];
 
-function routeParam(value: string | string[] | undefined, name: string): string {
+function routeParam(
+  value: string | string[] | undefined,
+  name: string,
+): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new AppError(400, `${name} is required`);
   }
@@ -40,9 +44,15 @@ function routeParam(value: string | string[] | undefined, name: string): string 
 
 // Hide scores for fixtures that are not finalised so fans can't peek at
 // in-progress or simulated-but-unconfirmed results.
-function sanitizeFixtureScore<T extends { status: string }>(fixture: T): T {
+function sanitizeFixtureScore<
+  T extends {
+    status: string;
+    home_score?: number | null;
+    away_score?: number | null;
+  },
+>(fixture: T) {
   if (FAN_VISIBLE_SCORE_STATUSES.includes(fixture.status)) return fixture;
-  return { ...fixture, home_score: null, away_score: null };
+  return hideFixtureOutcome(fixture);
 }
 
 const FIXTURE_TEAM_SELECT =
@@ -117,8 +127,7 @@ fanRouter.post(
 
     // First club a fan follows automatically becomes their primary so the
     // dashboard always has a team to theme around.
-    const shouldBePrimary =
-      is_primary || existingFavorites.length === 0;
+    const shouldBePrimary = is_primary || existingFavorites.length === 0;
 
     if (shouldBePrimary) {
       await clearPrimaryFavorite(req.auth!.userId);
@@ -293,7 +302,11 @@ fanRouter.get(
       .from("fixtures")
       .select(FIXTURE_TEAM_SELECT)
       .eq("season_id", seasonId)
-      .not("status", "in", `(${FixtureStatus.WAITING_FOR_TEAMS},${FixtureStatus.CANCELLED})`)
+      .not(
+        "status",
+        "in",
+        `(${FixtureStatus.WAITING_FOR_TEAMS},${FixtureStatus.CANCELLED})`,
+      )
       .order("kickoff_at", { ascending: true, nullsFirst: false });
     if (error) throw error;
     res.json({ fixtures: (data ?? []).map(sanitizeFixtureScore) });
@@ -345,9 +358,7 @@ fanRouter.get(
           .eq("status", RegistrationStatus.APPROVED),
         supabaseAdmin
           .from("player_season_registrations")
-          .select(
-            "id,team_registration_id,players(full_name,avatar_url)",
-          )
+          .select("id,team_registration_id,players(full_name,avatar_url)")
           .eq("season_id", seasonId),
       ]);
     if (teamRegistrationsResult.error) throw teamRegistrationsResult.error;
@@ -355,13 +366,13 @@ fanRouter.get(
 
     const teams = teamRegistrationsResult.data ?? [];
     const teamIds = teams.map((team) => team.id);
-    const playerRegistrations = (
-      playerRegistrationsResult.data ?? []
-    ).filter((player) => teamIds.includes(player.team_registration_id));
+    const playerRegistrations = (playerRegistrationsResult.data ?? []).filter(
+      (player) => teamIds.includes(player.team_registration_id),
+    );
     const playerIds = playerRegistrations.map((player) => player.id);
 
-    const [playerSeasonStatsResult, playerMatchStatsResult] =
-      await Promise.all([
+    const [playerSeasonStatsResult, playerMatchStatsResult] = await Promise.all(
+      [
         playerIds.length
           ? supabaseAdmin
               .from("player_season_stats")
@@ -375,7 +386,8 @@ fanRouter.get(
               .select("*")
               .in("player_registration_id", playerIds)
           : Promise.resolve({ data: [], error: null }),
-      ]);
+      ],
+    );
     if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
     if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
 
@@ -531,7 +543,11 @@ fanRouter.get(
           .or(
             `home_team_registration_id.eq.${team.id},away_team_registration_id.eq.${team.id}`,
           )
-          .not("status", "in", `(${FixtureStatus.WAITING_FOR_TEAMS},${FixtureStatus.CANCELLED})`)
+          .not(
+            "status",
+            "in",
+            `(${FixtureStatus.WAITING_FOR_TEAMS},${FixtureStatus.CANCELLED})`,
+          )
           .order("kickoff_at", { ascending: true, nullsFirst: false }),
         loadSeasonStandings(team.season_id),
       ]);
@@ -607,7 +623,7 @@ fanRouter.get(
       supabaseAdmin
         .from("player_match_stats")
         .select(
-          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
+          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,extra_time_played,penalties_home,penalties_away,penalty_winner_team_registration_id,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
         )
         .eq("player_registration_id", player.id)
         .order("created_at", { ascending: false }),

@@ -8,6 +8,7 @@ import {
   FootballPosition,
   generateFixturesSchema,
   MatchEventType,
+  isKnockoutStage,
   playerAbilityDecisionSchema,
   PlayerAbilityRating,
   PlayerLifecycleStatus,
@@ -2407,9 +2408,16 @@ adminRouter.post(
         // Group-stage and knockout fixtures are neutral. HOME/AWAY remain
         // participant slots for deterministic lineup, score, and event mapping.
         applyHomeAdvantage: fixture.stage === "LEAGUE",
+        requiresWinner: isKnockoutStage(fixture.stage),
       },
     );
     await persistSimulation(fixture.id, result);
+    const penaltyWinnerTeamRegistrationId =
+      result.penalty_winner_side === VenueSide.HOME
+        ? fixture.home_team_registration_id
+        : result.penalty_winner_side === VenueSide.AWAY
+          ? fixture.away_team_registration_id
+          : null;
     const { data, error } = await supabaseAdmin
       .from("fixtures")
       .update({
@@ -2421,6 +2429,7 @@ adminRouter.post(
         extra_time_played: result.extra_time_played ?? false,
         penalties_home: result.penalties_home ?? null,
         penalties_away: result.penalties_away ?? null,
+        penalty_winner_team_registration_id: penaltyWinnerTeamRegistrationId,
       })
       .eq("id", fixture.id)
       .select("*")
@@ -2527,7 +2536,14 @@ adminRouter.patch(
       );
     const { data, error } = await supabaseAdmin
       .from("fixtures")
-      .update({ home_score: input.home_score, away_score: input.away_score })
+      .update({
+        home_score: input.home_score,
+        away_score: input.away_score,
+        extra_time_played: false,
+        penalties_home: null,
+        penalties_away: null,
+        penalty_winner_team_registration_id: null,
+      })
       .eq("id", input.fixture_id)
       .select("*")
       .single();
@@ -2550,6 +2566,16 @@ adminRouter.post(
     }
     const homeScore = assertFound(fixture.home_score, "Home score missing");
     const awayScore = assertFound(fixture.away_score, "Away score missing");
+    if (
+      isKnockoutStage(fixture.stage) &&
+      homeScore === awayScore &&
+      !fixture.penalty_winner_team_registration_id
+    ) {
+      throw new AppError(
+        400,
+        "A tied knockout match must be resolved by a penalty shootout",
+      );
+    }
     const { data: teamStats, error: statsError } = await supabaseAdmin
       .from("team_match_stats")
       .select("*")

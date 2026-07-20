@@ -34,6 +34,8 @@ import {
 } from "lucide-react";
 import {
   FootballPosition,
+  fixtureOutcomeLabel,
+  fixtureOutcomeScore,
   PreferredFoot,
   RegistrationStatus,
 } from "@flms/shared";
@@ -45,9 +47,7 @@ import {
   KnockoutBracket,
   type KnockoutBracketFixture,
 } from "@/components/knockout-bracket";
-import {
-  PlayerSeasonContributionBadges,
-} from "@/components/player-season-contribution-badges";
+import { PlayerSeasonContributionBadges } from "@/components/player-season-contribution-badges";
 
 type Section =
   | "Dashboard"
@@ -299,6 +299,10 @@ interface FixtureRecord {
   status: string;
   home_score: number | null;
   away_score: number | null;
+  extra_time_played?: boolean | null;
+  penalties_home?: number | null;
+  penalties_away?: number | null;
+  penalty_winner_team_registration_id?: string | null;
   home_team_registration_id: string;
   away_team_registration_id: string;
   home_team?: { id: string; teams?: TeamRecord["teams"] } | null;
@@ -5840,8 +5844,11 @@ function PlayerDetailModal({
                                 fixture?.home_score !== undefined &&
                                 fixture?.away_score !== null &&
                                 fixture?.away_score !== undefined
-                                  ? `${fixture.home_score} - ${fixture.away_score}`
+                                  ? (fixtureOutcomeScore(fixture) ?? "-")
                                   : (fixture?.status ?? "Scheduled");
+                              const resolution = fixture
+                                ? fixtureOutcomeLabel(fixture)
+                                : null;
                               return (
                                 <tr
                                   key={`${row.id ?? index}`}
@@ -5867,7 +5874,7 @@ function PlayerDetailModal({
                                         </p>
                                         <p className="text-xs font-bold text-slate-500">
                                           {fixture
-                                            ? `${formatDate(fixture.kickoff_at)} · ${score}`
+                                            ? `${formatDate(fixture.kickoff_at)} · ${score}${resolution ? ` · ${resolution}` : ""}`
                                             : "Fixture detail unavailable"}
                                         </p>
                                       </div>
@@ -6342,9 +6349,16 @@ function FixtureTable({
                   <StatusBadge status={fixture.status} />
                 </td>
                 <td className="px-4 py-3 font-bold">
-                  {fixture.home_score === null
-                    ? "-"
-                    : `${fixture.home_score} - ${fixture.away_score}`}
+                  <span className="block">
+                    {fixture.home_score === null
+                      ? "-"
+                      : fixtureOutcomeScore(fixture)}
+                  </span>
+                  {fixtureOutcomeLabel(fixture) ? (
+                    <span className="block text-[11px] font-semibold text-slate-500">
+                      {fixtureOutcomeLabel(fixture)}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="px-4 py-3">
                   <button
@@ -6845,28 +6859,35 @@ function MatchDetailModal({
               ))}
             </div>
           </div>
-          <span className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 text-sm font-black shadow-sm">
-            {detailFixture.home_score === null ? (
-              "VS"
-            ) : (
-              <>
-                <span>{detailFixture.home_score}</span>
-                {homeRedCards.length ? (
-                  <span
-                    className="h-3.5 w-2.5 rounded-[2px] bg-red-600"
-                    title={`${homeRedCards.length} home red card${homeRedCards.length === 1 ? "" : "s"}`}
-                  />
-                ) : null}
-                <span>-</span>
-                <span>{detailFixture.away_score}</span>
-                {awayRedCards.length ? (
-                  <span
-                    className="h-3.5 w-2.5 rounded-[2px] bg-red-600"
-                    title={`${awayRedCards.length} away red card${awayRedCards.length === 1 ? "" : "s"}`}
-                  />
-                ) : null}
-              </>
-            )}
+          <span className="rounded-2xl bg-white px-5 py-2 text-center text-sm font-black shadow-sm">
+            <span className="inline-flex items-center gap-2">
+              {detailFixture.home_score === null ? (
+                "VS"
+              ) : (
+                <>
+                  <span>{detailFixture.home_score}</span>
+                  {homeRedCards.length ? (
+                    <span
+                      className="h-3.5 w-2.5 rounded-[2px] bg-red-600"
+                      title={`${homeRedCards.length} home red card${homeRedCards.length === 1 ? "" : "s"}`}
+                    />
+                  ) : null}
+                  <span>-</span>
+                  <span>{detailFixture.away_score}</span>
+                  {awayRedCards.length ? (
+                    <span
+                      className="h-3.5 w-2.5 rounded-[2px] bg-red-600"
+                      title={`${awayRedCards.length} away red card${awayRedCards.length === 1 ? "" : "s"}`}
+                    />
+                  ) : null}
+                </>
+              )}
+            </span>
+            {fixtureOutcomeLabel(detailFixture) ? (
+              <span className="mt-0.5 block text-[10px] font-semibold text-slate-500">
+                {fixtureOutcomeLabel(detailFixture)}
+              </span>
+            ) : null}
           </span>
           <div className="text-right">
             <TeamLogoName
@@ -7811,8 +7832,13 @@ function FixtureMini({
           teamId={fixture.away_team_registration_id}
         />
       </div>
-      <span className="rounded-2xl bg-white px-4 py-2 text-xl font-black text-slate-950 shadow-sm">
-        {fixture.home_score} - {fixture.away_score}
+      <span className="rounded-2xl bg-white px-4 py-2 text-center text-xl font-black text-slate-950 shadow-sm">
+        <span className="block">{fixtureOutcomeScore(fixture)}</span>
+        {fixtureOutcomeLabel(fixture) ? (
+          <span className="mt-0.5 block text-[10px] font-semibold text-slate-500">
+            {fixtureOutcomeLabel(fixture)}
+          </span>
+        ) : null}
       </span>
     </div>
   ) : (
@@ -7920,6 +7946,11 @@ function ResultMini({
           </span>
         </div>
       </div>
+      {fixtureOutcomeLabel(fixture) ? (
+        <p className="mt-2 text-center text-xs font-bold text-slate-500">
+          {fixtureOutcomeLabel(fixture)}
+        </p>
+      ) : null}
       <p className="mt-3 text-sm text-slate-500">
         {formatDate(fixture.kickoff_at)} · {fixture.venue ?? "TBA"}
       </p>

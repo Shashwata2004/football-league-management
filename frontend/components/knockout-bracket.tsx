@@ -2,6 +2,7 @@
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Trophy } from "lucide-react";
+import { fixtureOutcomeLabel } from "@flms/shared";
 
 const stageOrder = [
   "ROUND_OF_64",
@@ -47,6 +48,7 @@ export interface KnockoutBracketFixture {
   away_source?: string | null;
   home_score?: number | null;
   away_score?: number | null;
+  extra_time_played?: boolean | null;
   penalties_home?: number | null;
   penalties_away?: number | null;
   winner_team_registration_id?: string | null;
@@ -296,11 +298,7 @@ function BracketMatch({
     fixture.home_score !== undefined &&
     fixture.away_score !== null &&
     fixture.away_score !== undefined;
-  const hasPenalties =
-    fixture.penalties_home !== null &&
-    fixture.penalties_home !== undefined &&
-    fixture.penalties_away !== null &&
-    fixture.penalties_away !== undefined;
+  const outcomeLabel = fixtureOutcomeLabel(fixture);
   const stage = String(fixture.stage ?? "");
   const stageLabel = stageLabels[stage as keyof typeof stageLabels] ?? stage;
 
@@ -325,9 +323,9 @@ function BracketMatch({
                   {fixture.home_score} <span className="text-slate-400">–</span>{" "}
                   {fixture.away_score}
                 </div>
-                {hasPenalties ? (
-                  <div className="mt-1 text-[9px] font-bold uppercase tracking-wide text-slate-500">
-                    Pens {fixture.penalties_home}–{fixture.penalties_away}
+                {outcomeLabel ? (
+                  <div className="mt-1 whitespace-nowrap text-[9px] font-bold text-slate-500">
+                    {outcomeLabel}
                   </div>
                 ) : null}
               </>

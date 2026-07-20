@@ -124,6 +124,7 @@ export interface SimMatchSetPieceTakers {
 
 export interface SimMatchContext {
   applyHomeAdvantage?: boolean;
+  requiresWinner?: boolean;
 }
 
 export interface SimulationResult {
@@ -159,9 +160,10 @@ export function matchEventRequiresRelatedPlayer(type: MatchEventType) {
   return RELATED_PLAYER_REQUIRED_EVENT_TYPES.has(type);
 }
 
-export function expectedGoalBaselines(
-  applyHomeAdvantage: boolean,
-): { home: number; away: number } {
+export function expectedGoalBaselines(applyHomeAdvantage: boolean): {
+  home: number;
+  away: number;
+} {
   return {
     home:
       NEUTRAL_EXPECTED_GOALS_BASELINE +
@@ -1195,6 +1197,68 @@ function teamGoals(
   return clamp(goals, 0, cap);
 }
 
+function extraTimeGoals(expected: number, random: () => number) {
+  const finishingSwing = 0.76 + random() * 0.48;
+  const lambda = clampDecimal(expected * 0.33 * finishingSwing, 0.04, 1.15);
+  return clamp(poissonGoals(lambda, random), 0, 3);
+}
+
+function penaltyShootout(
+  homePlayers: SimPlayer[],
+  awayPlayers: SimPlayer[],
+  seed: string,
+) {
+  const random = rng(`${seed}:penalty-shootout`);
+  const shootingAverage = (players: SimPlayer[]) => {
+    const candidates = players
+      .filter((player) => detailedPosition(player) !== FootballPosition.GK)
+      .sort(
+        (left, right) =>
+          right.shooting - left.shooting ||
+          playerOverall(right) - playerOverall(left),
+      )
+      .slice(0, 5);
+    return avg(candidates, (player) => player.shooting);
+  };
+  const homeChance = clampDecimal(
+    0.73 +
+      (shootingAverage(homePlayers) - teamStrength(awayPlayers).keeper) * 0.004,
+    0.58,
+    0.9,
+  );
+  const awayChance = clampDecimal(
+    0.73 +
+      (shootingAverage(awayPlayers) - teamStrength(homePlayers).keeper) * 0.004,
+    0.58,
+    0.9,
+  );
+  let home = 0;
+  let away = 0;
+
+  for (let kick = 0; kick < 5; kick += 1) {
+    if (random() < homeChance) home += 1;
+    if (random() < awayChance) away += 1;
+  }
+  for (
+    let suddenDeath = 0;
+    home === away && suddenDeath < 10;
+    suddenDeath += 1
+  ) {
+    if (random() < homeChance) home += 1;
+    if (random() < awayChance) away += 1;
+  }
+  if (home === away) {
+    if (random() < 0.5) home += 1;
+    else away += 1;
+  }
+
+  return {
+    penalties_home: home,
+    penalties_away: away,
+    penalty_winner_side: home > away ? VenueSide.HOME : VenueSide.AWAY,
+  };
+}
+
 function makeTeamStats(
   own: Strength,
   opp: Strength,
@@ -1203,6 +1267,7 @@ function makeTeamStats(
   seed: string,
   side: VenueSide,
   matchTempo = 1,
+  durationMultiplier = 1,
 ): SimTeamStats {
   const random = rng(`${seed}:team:${side}`);
   const chanceEdge = own.attack - opp.defense * 0.72 - opp.keeper * 0.28;
@@ -1211,14 +1276,15 @@ function makeTeamStats(
   const shotNoise = (random() + random() - 1) * 4.2;
   const rareTempoSwing = random() > 0.965 ? 3 + random() * 3 : 0;
   let shots = clamp(
-    11.2 +
+    (11.2 +
       possessionEffect +
       strengthEffect +
       (matchTempo - 1) * 8 +
       shotNoise +
-      rareTempoSwing,
+      rareTempoSwing) *
+      durationMultiplier,
     Math.max(goals, 3),
-    random() > 0.985 ? 27 : 22,
+    (random() > 0.985 ? 27 : 22) * durationMultiplier,
   );
   const onTargetRate = Math.max(
     0.2,
@@ -1257,13 +1323,14 @@ function makeTeamStats(
   // attempts per team-match; 10th/90th percentiles 347/728). Possession is the
   // main driver, with midfield quality, tempo, and controlled match variance.
   const passes = clamp(
-    225 +
+    (225 +
       possession * 5.05 +
       own.midfield * 0.68 +
       (matchTempo - 1) * 72 +
-      (random() + random() - 1) * 105,
+      (random() + random() - 1) * 105) *
+      durationMultiplier,
     270,
-    random() > 0.992 ? 900 : 790,
+    (random() > 0.992 ? 900 : 790) * durationMultiplier,
   );
   // A balanced match should normally finish close to 78% completion. Team
   // midfield quality and opponent pressure move that baseline, while seeded
@@ -1274,9 +1341,10 @@ function makeTeamStats(
     92,
   );
   const fouls = clamp(
-    7 + random() * 9 + Math.max(0, opp.midfield - own.midfield) * 0.055,
+    (7 + random() * 9 + Math.max(0, opp.midfield - own.midfield) * 0.055) *
+      durationMultiplier,
     4,
-    random() > 0.985 ? 23 : 20,
+    (random() > 0.985 ? 23 : 20) * durationMultiplier,
   );
   let yellowCards = 0;
   for (let foul = 0; foul < fouls; foul += 1) {
@@ -1372,6 +1440,7 @@ function calculateExpectedGoalsFromStats(input: {
 function playerActiveWindow(
   player: SimPlayer,
   substitutions: SimSubstitution[],
+  matchDuration = 90,
 ) {
   const subIn = substitutions.find(
     (sub) => sub.player_in_registration_id === player.player_registration_id,
@@ -1380,7 +1449,7 @@ function playerActiveWindow(
     (sub) => sub.player_out_registration_id === player.player_registration_id,
   );
   const start = player.is_starter ? 0 : subIn?.minute;
-  const end = subOut?.minute ?? 90;
+  const end = subOut?.minute ?? matchDuration;
   return {
     start: start ?? null,
     end,
@@ -1393,8 +1462,9 @@ function isPlayerActiveAtMinute(
   player: SimPlayer,
   substitutions: SimSubstitution[],
   minute: number,
+  matchDuration = 90,
 ) {
-  const window = playerActiveWindow(player, substitutions);
+  const window = playerActiveWindow(player, substitutions, matchDuration);
   return (
     window.start !== null && minute >= window.start && minute <= window.end
   );
@@ -1405,16 +1475,17 @@ function selectSetPieceTaker(
   substitutions: SimSubstitution[],
   minute: number,
   orderedPlayerIds: string[] = [],
+  matchDuration = 90,
 ) {
   const activeOutfield = players.filter(
     (player) =>
       detailedPosition(player) !== FootballPosition.GK &&
-      isPlayerActiveAtMinute(player, substitutions, minute),
+      isPlayerActiveAtMinute(player, substitutions, minute, matchDuration),
   );
   const activePlayers = activeOutfield.length
     ? activeOutfield
     : players.filter((player) =>
-        isPlayerActiveAtMinute(player, substitutions, minute),
+        isPlayerActiveAtMinute(player, substitutions, minute, matchDuration),
       );
   if (!activePlayers.length) return null;
 
@@ -1437,10 +1508,12 @@ function selectSetPieceTaker(
 function distributeGoals(
   players: SimPlayer[],
   substitutions: SimSubstitution[],
-  goals: number,
+  regulationGoals: number,
+  extraTimeGoalCount: number,
   seed: string,
   side: VenueSide,
   setPieceTakers: SimSetPieceTakers = {},
+  matchDuration = 90,
 ) {
   const random = rng(`${seed}:goals:${side}`);
   const outfield = players.filter(
@@ -1448,7 +1521,7 @@ function distributeGoals(
   );
   const substituteImpact = (player: SimPlayer, minute: number) => {
     if (player.is_starter) return 1;
-    const window = playerActiveWindow(player, substitutions);
+    const window = playerActiveWindow(player, substitutions, matchDuration);
     if (window.start === null || minute < window.start) return 0;
     // Fresh attacking substitutes should have a meaningful, but controlled,
     // chance to decide a late match.
@@ -1502,71 +1575,91 @@ function distributeGoals(
   const scorers: string[] = [];
   const assists: string[] = [];
   const events: SimMatchEvent[] = [];
-  for (let i = 0; i < goals; i += 1) {
-    const earliestSubMinute = substitutions.length
-      ? Math.min(...substitutions.map((substitution) => substitution.minute))
-      : null;
-    const favorLateImpact = earliestSubMinute !== null && random() < 0.38;
-    const minute = clamp(
-      favorLateImpact
-        ? earliestSubMinute + 3 + random() * Math.max(1, 87 - earliestSubMinute)
-        : 8 + ((i + 1) * 78) / (goals + 1) + (random() - 0.5) * 12,
-      1,
-      90,
-    );
-    const activeOutfield = outfield.filter((player) =>
-      isPlayerActiveAtMinute(player, substitutions, minute),
-    );
-    const scoringPool = activeOutfield.length ? activeOutfield : outfield;
-    const isPenalty = random() < 0.08;
-    const isDirectFreeKick = !isPenalty && random() < 0.06;
-    const scorer =
-      (isPenalty
-        ? selectSetPieceTaker(
-            players,
-            substitutions,
-            minute,
-            setPieceTakers.penalty_taker_ids,
-          )
-        : isDirectFreeKick
+  const phases = [
+    { goals: regulationGoals, start: 1, end: 90 },
+    { goals: extraTimeGoalCount, start: 91, end: 120 },
+  ];
+  for (const phase of phases) {
+    for (let i = 0; i < phase.goals; i += 1) {
+      const earliestSubMinute = substitutions.length
+        ? Math.min(...substitutions.map((substitution) => substitution.minute))
+        : null;
+      const favorLateImpact =
+        phase.end === 90 && earliestSubMinute !== null && random() < 0.38;
+      const minute = clamp(
+        phase.start > 90
+          ? phase.start +
+              ((i + 1) * (phase.end - phase.start)) / (phase.goals + 1) +
+              (random() - 0.5) * 4
+          : favorLateImpact
+            ? earliestSubMinute +
+              3 +
+              random() * Math.max(1, 87 - earliestSubMinute)
+            : 8 + ((i + 1) * 78) / (phase.goals + 1) + (random() - 0.5) * 12,
+        phase.start,
+        phase.end,
+      );
+      const activeOutfield = outfield.filter((player) =>
+        isPlayerActiveAtMinute(player, substitutions, minute, matchDuration),
+      );
+      const scoringPool = activeOutfield.length ? activeOutfield : outfield;
+      const isPenalty = random() < 0.08;
+      const isDirectFreeKick = !isPenalty && random() < 0.06;
+      const scorer =
+        (isPenalty
           ? selectSetPieceTaker(
               players,
               substitutions,
               minute,
-              setPieceTakers.free_kick_taker_ids,
+              setPieceTakers.penalty_taker_ids,
+              matchDuration,
             )
-          : null) ??
-      pickWeighted(
-        scoringPool,
-        (player) => scoreWeight(player, minute),
-        random,
+          : isDirectFreeKick
+            ? selectSetPieceTaker(
+                players,
+                substitutions,
+                minute,
+                setPieceTakers.free_kick_taker_ids,
+                matchDuration,
+              )
+            : null) ??
+        pickWeighted(
+          scoringPool,
+          (player) => scoreWeight(player, minute),
+          random,
+        );
+      const assister = scoringPool.filter(
+        (player) =>
+          player.player_registration_id !== scorer.player_registration_id,
       );
-    const assister = scoringPool.filter(
-      (player) =>
-        player.player_registration_id !== scorer.player_registration_id,
-    );
-    scorers.push(scorer.player_registration_id);
-    if (!isPenalty && !isDirectFreeKick && assister.length && random() > 0.22) {
-      const assistPlayer = pickWeighted(
-        assister,
-        (player) => assistWeight(player, minute),
-        random,
-      );
-      assists.push(assistPlayer.player_registration_id);
-      events.push({
-        minute,
-        side,
-        type: MatchEventType.GOAL,
-        player_registration_id: scorer.player_registration_id,
-        related_player_registration_id: assistPlayer.player_registration_id,
-      });
-    } else {
-      events.push({
-        minute,
-        side,
-        type: isPenalty ? MatchEventType.PENALTY_GOAL : MatchEventType.GOAL,
-        player_registration_id: scorer.player_registration_id,
-      });
+      scorers.push(scorer.player_registration_id);
+      if (
+        !isPenalty &&
+        !isDirectFreeKick &&
+        assister.length &&
+        random() > 0.22
+      ) {
+        const assistPlayer = pickWeighted(
+          assister,
+          (player) => assistWeight(player, minute),
+          random,
+        );
+        assists.push(assistPlayer.player_registration_id);
+        events.push({
+          minute,
+          side,
+          type: MatchEventType.GOAL,
+          player_registration_id: scorer.player_registration_id,
+          related_player_registration_id: assistPlayer.player_registration_id,
+        });
+      } else {
+        events.push({
+          minute,
+          side,
+          type: isPenalty ? MatchEventType.PENALTY_GOAL : MatchEventType.GOAL,
+          player_registration_id: scorer.player_registration_id,
+        });
+      }
     }
   }
   return { scorers, assists, events };
@@ -1576,8 +1669,14 @@ function generateSubstitutions(
   players: SimPlayer[],
   seed: string,
   side: VenueSide,
+  matchDuration = 90,
 ): SimSubstitution[] {
   const random = rng(`${seed}:subs:${side}`);
+  // Stretch the substitution windows across the full match length so that when
+  // extra time is played (matchDuration = 120) substitutions can occur in the
+  // 91-120 window. For regulation matches the scale is 1, leaving the timing
+  // untouched. The overall substitution count cap below is independent of this.
+  const durationScale = matchDuration / 90;
   const starters = players.filter(
     (player) =>
       player.is_starter && detailedPosition(player) !== FootballPosition.GK,
@@ -1661,11 +1760,19 @@ function generateSubstitutions(
 
     const earlyPoorPerformance =
       reason === "LOW_RATING" || target.priority > 38;
-    const minute = earlyPoorPerformance
+    const baseMinute = earlyPoorPerformance
       ? clamp(45 + random() * 17 + substitutions.length * 2, 45, 64)
       : reason === "FATIGUE"
         ? clamp(56 + random() * 18 + substitutions.length * 2, 56, 78)
         : clamp(64 + random() * 20 + substitutions.length * 2, 64, 86);
+    // Scale the regulation-based minute onto the actual match length so that in
+    // extra-time matches some substitutions land in the 91-120 window, while
+    // never exceeding the final whistle. Regulation matches (scale = 1) keep
+    // their exact original timing.
+    const minute =
+      durationScale === 1
+        ? baseMinute
+        : clamp(Math.round(baseMinute * durationScale), 1, matchDuration);
 
     substitutions.push({
       minute,
@@ -1770,6 +1877,7 @@ function allocateStats(
   players: SimPlayer[],
   teamStats: SimTeamStats,
   ownGoals: number,
+  extraTimeGoalCount: number,
   opponentGoals: number,
   opponentShots: number,
   opponentShotsOnTarget: number,
@@ -1779,6 +1887,7 @@ function allocateStats(
   lost: boolean,
   substitutions: SimSubstitution[],
   setPieceTakers: SimSetPieceTakers = {},
+  matchDuration = 90,
 ) {
   const starters = players.filter((player) => player.is_starter);
   const benchIn = players.filter((player) =>
@@ -1788,14 +1897,16 @@ function allocateStats(
   );
   const active = [...starters, ...benchIn];
   const minutesFor = (player: SimPlayer) =>
-    playerActiveWindow(player, substitutions).minutes;
+    playerActiveWindow(player, substitutions, matchDuration).minutes;
   const { scorers, assists, events } = distributeGoals(
     players,
     substitutions,
-    ownGoals,
+    Math.max(0, ownGoals - extraTimeGoalCount),
+    extraTimeGoalCount,
     seed,
     side,
     setPieceTakers,
+    matchDuration,
   );
   const goalsByPlayer = countById(scorers);
   const assistsByPlayer = countById(assists);
@@ -1970,8 +2081,7 @@ function allocateStats(
     active,
     playerId,
     () => 0,
-    (player) =>
-      accuratePassCapByPlayer.get(player.player_registration_id) ?? 0,
+    (player) => accuratePassCapByPlayer.get(player.player_registration_id) ?? 0,
     (player) => {
       const position = detailedPosition(player);
       const passing =
@@ -2055,10 +2165,7 @@ function allocateStats(
   const opponentPressure = Math.min(1.35, opponentShots / 16);
   const rareDefensiveChaos = defensiveRandom() > 0.965;
   const totalTackles = clamp(
-    8 +
-      defensivePressure * 3 +
-      opponentPressure * 2 +
-      defensiveRandom() * 4.5,
+    8 + defensivePressure * 3 + opponentPressure * 2 + defensiveRandom() * 4.5,
     6,
     rareDefensiveChaos ? 23 : 18,
   );
@@ -2474,8 +2581,8 @@ function allocateStats(
       (item) => item.player_registration_id === stat.player_registration_id,
     );
     const window = player
-      ? playerActiveWindow(player, substitutions)
-      : { start: 0, end: 90 };
+      ? playerActiveWindow(player, substitutions, matchDuration)
+      : { start: 0, end: matchDuration };
     const eventMinute = (minimumFraction: number) =>
       clamp(
         Number(window.start ?? 0) +
@@ -2596,6 +2703,7 @@ function applyOwnGoalConversions({
   awayStats,
   homeEvents,
   awayEvents,
+  matchDuration,
 }: {
   seed: string;
   homePlayers: SimPlayer[];
@@ -2606,6 +2714,7 @@ function applyOwnGoalConversions({
   awayStats: SimPlayerStats[];
   homeEvents: SimMatchEvent[];
   awayEvents: SimMatchEvent[];
+  matchDuration: number;
 }) {
   const random = rng(`${seed}:own-goals`);
   const candidates = [
@@ -2639,6 +2748,7 @@ function applyOwnGoalConversions({
         player,
         candidate.defendingSubstitutions,
         candidate.event.minute,
+        matchDuration,
       ),
     );
     if (!activeDefenders.length) continue;
@@ -2894,6 +3004,39 @@ export function validateSimulationConsistency(
   homePlayerIds?: Set<string>,
   awayPlayerIds?: Set<string>,
 ) {
+  const matchDuration = result.extra_time_played ? 120 : 90;
+  const hasHomePenalties = result.penalties_home !== undefined;
+  const hasAwayPenalties = result.penalties_away !== undefined;
+  const hasPenaltyWinner = result.penalty_winner_side !== undefined;
+  if (
+    hasHomePenalties !== hasAwayPenalties ||
+    hasHomePenalties !== hasPenaltyWinner
+  ) {
+    throw new AppError(400, "Penalty shootout result is incomplete");
+  }
+  if (hasHomePenalties) {
+    if (!result.extra_time_played || result.home_score !== result.away_score) {
+      throw new AppError(
+        400,
+        "A penalty shootout requires a tied extra-time score",
+      );
+    }
+    if (result.penalties_home === result.penalties_away) {
+      throw new AppError(400, "A penalty shootout must produce a winner");
+    }
+    const expectedWinner =
+      Number(result.penalties_home) > Number(result.penalties_away)
+        ? VenueSide.HOME
+        : VenueSide.AWAY;
+    if (result.penalty_winner_side !== expectedWinner) {
+      throw new AppError(400, "Penalty winner does not match shootout score");
+    }
+  } else if (
+    result.extra_time_played &&
+    result.home_score === result.away_score
+  ) {
+    throw new AppError(400, "A tied extra-time match requires a shootout");
+  }
   if (result.home_stats.possession + result.away_stats.possession !== 100) {
     throw new AppError(400, "Possession must sum to 100");
   }
@@ -2921,7 +3064,7 @@ export function validateSimulationConsistency(
       throw new AppError(400, `${label} offsides cannot be negative`);
   }
   for (const player of result.player_stats) {
-    if (player.minutes <= 0 || player.minutes > 90)
+    if (player.minutes <= 0 || player.minutes > matchDuration)
       throw new AppError(400, "A player's minutes are outside match bounds");
     if (player.successful_dribbles > player.dribbles_attempted)
       throw new AppError(
@@ -2974,6 +3117,9 @@ export function validateSimulationConsistency(
     );
   };
   for (const event of result.events) {
+    if (event.minute < 1 || event.minute > matchDuration) {
+      throw new AppError(400, "A match event is outside match bounds");
+    }
     if (
       matchEventRequiresRelatedPlayer(event.type) &&
       !event.related_player_registration_id
@@ -3230,8 +3376,35 @@ export function simulateMatch(
     0.78,
     1.45,
   );
-  const homeScore = teamGoals(homeExpected, random, mismatch, matchTempo);
-  const awayScore = teamGoals(awayExpected, random, mismatch, matchTempo);
+  const regulationHomeScore = teamGoals(
+    homeExpected,
+    random,
+    mismatch,
+    matchTempo,
+  );
+  const regulationAwayScore = teamGoals(
+    awayExpected,
+    random,
+    mismatch,
+    matchTempo,
+  );
+  let extraTimeHomeGoals = 0;
+  let extraTimeAwayGoals = 0;
+  let shootout: ReturnType<typeof penaltyShootout> | null = null;
+  const extraTimePlayed =
+    Boolean(context.requiresWinner) &&
+    regulationHomeScore === regulationAwayScore;
+  if (extraTimePlayed) {
+    extraTimeHomeGoals = extraTimeGoals(homeExpected, random);
+    extraTimeAwayGoals = extraTimeGoals(awayExpected, random);
+    if (extraTimeHomeGoals === extraTimeAwayGoals) {
+      shootout = penaltyShootout(homePlayers, awayPlayers, seed);
+    }
+  }
+  const homeScore = regulationHomeScore + extraTimeHomeGoals;
+  const awayScore = regulationAwayScore + extraTimeAwayGoals;
+  const matchDuration = extraTimePlayed ? 120 : 90;
+  const durationMultiplier = matchDuration / 90;
   const homePossession = clamp(
     50 + (home.midfield - away.midfield) * 0.42 + (random() - 0.5) * 9,
     35,
@@ -3246,6 +3419,7 @@ export function simulateMatch(
     seed,
     VenueSide.HOME,
     matchTempo,
+    durationMultiplier,
   );
   const awayStats = makeTeamStats(
     away,
@@ -3255,13 +3429,25 @@ export function simulateMatch(
     seed,
     VenueSide.AWAY,
     matchTempo,
+    durationMultiplier,
   );
-  const homeSubs = generateSubstitutions(homePlayers, seed, VenueSide.HOME);
-  const awaySubs = generateSubstitutions(awayPlayers, seed, VenueSide.AWAY);
+  const homeSubs = generateSubstitutions(
+    homePlayers,
+    seed,
+    VenueSide.HOME,
+    matchDuration,
+  );
+  const awaySubs = generateSubstitutions(
+    awayPlayers,
+    seed,
+    VenueSide.AWAY,
+    matchDuration,
+  );
   const homeAllocated = allocateStats(
     homePlayers,
     homeStats,
     homeScore,
+    extraTimeHomeGoals,
     awayScore,
     awayStats.shots,
     awayStats.shots_on_target,
@@ -3271,11 +3457,13 @@ export function simulateMatch(
     homeScore < awayScore,
     homeSubs,
     setPieceTakers.home,
+    matchDuration,
   );
   const awayAllocated = allocateStats(
     awayPlayers,
     awayStats,
     awayScore,
+    extraTimeAwayGoals,
     homeScore,
     homeStats.shots,
     homeStats.shots_on_target,
@@ -3285,6 +3473,7 @@ export function simulateMatch(
     awayScore < homeScore,
     awaySubs,
     setPieceTakers.away,
+    matchDuration,
   );
   const homeSpecialEvents = generateSpecialEvents(
     homePlayers,
@@ -3320,6 +3509,7 @@ export function simulateMatch(
     awayStats: awayAllocated.stats,
     homeEvents: homeAllocated.events,
     awayEvents: awayAllocated.events,
+    matchDuration,
   });
   const sumPlayerStats = (
     stats: SimPlayerStats[],
@@ -3454,6 +3644,8 @@ export function simulateMatch(
       (a, b) => a.minute - b.minute,
     ),
     simulation_seed: seed,
+    extra_time_played: extraTimePlayed,
+    ...(shootout ?? {}),
   };
   validateSimulationConsistency(
     result,

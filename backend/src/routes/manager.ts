@@ -2036,7 +2036,7 @@ managerRouter.get(
       supabaseAdmin
         .from("player_match_stats")
         .select(
-          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
+          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,extra_time_played,penalties_home,penalties_away,penalty_winner_team_registration_id,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
         )
         .eq("player_registration_id", player.id)
         .order("created_at", { ascending: false }),
@@ -2071,7 +2071,7 @@ managerRouter.get(
       supabaseAdmin
         .from("player_match_stats")
         .select(
-          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
+          "*,fixtures(id,kickoff_at,stage,status,home_score,away_score,extra_time_played,penalties_home,penalties_away,penalty_winner_team_registration_id,home_team_registration_id,away_team_registration_id,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(name,short_name,logo_url)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(name,short_name,logo_url)))",
         )
         .eq("player_registration_id", player.id)
         .order("created_at", { ascending: false }),

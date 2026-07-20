@@ -7,7 +7,7 @@ import type {
   RegistrationStatus,
   SeasonFormat,
   SeasonPhase,
-  UserRole
+  UserRole,
 } from "./enums.js";
 
 export interface ProfileDto {
@@ -87,6 +87,11 @@ export interface FixtureDto {
   status: FixtureStatus;
   home_score: number | null;
   away_score: number | null;
+  extra_time_played: boolean;
+  penalties_home: number | null;
+  penalties_away: number | null;
+  winner_team_registration_id: string | null;
+  penalty_winner_team_registration_id: string | null;
 }
 
 export interface StandingDto {

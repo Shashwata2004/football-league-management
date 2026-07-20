@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  fixtureOutcomeLabel,
+  fixtureOutcomeScore,
   FootballPosition,
+  hideFixtureOutcome,
+  isKnockoutStage,
   MatchEventType,
   PlayerPosition,
   VenueSide,
@@ -107,6 +111,51 @@ function assertTeamTotals(
 }
 
 describe("match-stat simulator", () => {
+  it("identifies winner-required stages and formats stored outcomes", () => {
+    expect(isKnockoutStage("ROUND_OF_64")).toBe(true);
+    expect(isKnockoutStage("ROUND_OF_32")).toBe(true);
+    expect(isKnockoutStage("ROUND_OF_16")).toBe(true);
+    expect(isKnockoutStage("QUARTER_FINAL")).toBe(true);
+    expect(isKnockoutStage("SEMI_FINAL")).toBe(true);
+    expect(isKnockoutStage("FINAL")).toBe(true);
+    expect(isKnockoutStage("GROUP")).toBe(false);
+    expect(fixtureOutcomeScore({ home_score: 1, away_score: 0 })).toBe("1 - 0");
+    expect(fixtureOutcomeLabel({ extra_time_played: true })).toBe(
+      "After extra time",
+    );
+    expect(
+      fixtureOutcomeLabel({
+        extra_time_played: true,
+        penalties_home: 4,
+        penalties_away: 3,
+      }),
+    ).toBe("Pen: 4 - 3");
+  });
+
+  it("removes every result field from non-final audience payloads", () => {
+    expect(
+      hideFixtureOutcome({
+        id: "pending-fixture",
+        home_score: 1,
+        away_score: 1,
+        extra_time_played: true,
+        penalties_home: 5,
+        penalties_away: 4,
+        winner_team_registration_id: "home-team",
+        penalty_winner_team_registration_id: "home-team",
+      }),
+    ).toEqual({
+      id: "pending-fixture",
+      home_score: null,
+      away_score: null,
+      extra_time_played: false,
+      penalties_home: null,
+      penalties_away: null,
+      winner_team_registration_id: null,
+      penalty_winner_team_registration_id: null,
+    });
+  });
+
   it("caps player pass accuracy at 95%, with 98% reserved for rare elite performances", () => {
     expect(STANDARD_PLAYER_PASS_ACCURACY_CAP).toBe(0.95);
     expect(EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP).toBe(0.98);
@@ -121,18 +170,11 @@ describe("match-stat simulator", () => {
     const neutralBaselines = expectedGoalBaselines(false);
 
     expect(leagueBaselines.home).toBeCloseTo(
-      NEUTRAL_EXPECTED_GOALS_BASELINE +
-        LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS,
+      NEUTRAL_EXPECTED_GOALS_BASELINE + LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS,
     );
-    expect(leagueBaselines.away).toBeCloseTo(
-      NEUTRAL_EXPECTED_GOALS_BASELINE,
-    );
-    expect(neutralBaselines.home).toBeCloseTo(
-      NEUTRAL_EXPECTED_GOALS_BASELINE,
-    );
-    expect(neutralBaselines.away).toBeCloseTo(
-      NEUTRAL_EXPECTED_GOALS_BASELINE,
-    );
+    expect(leagueBaselines.away).toBeCloseTo(NEUTRAL_EXPECTED_GOALS_BASELINE);
+    expect(neutralBaselines.home).toBeCloseTo(NEUTRAL_EXPECTED_GOALS_BASELINE);
+    expect(neutralBaselines.away).toBeCloseTo(NEUTRAL_EXPECTED_GOALS_BASELINE);
   });
 
   it("identifies event types that require a related player", () => {
@@ -140,9 +182,9 @@ describe("match-stat simulator", () => {
     expect(matchEventRequiresRelatedPlayer(MatchEventType.SUBSTITUTION)).toBe(
       true,
     );
-    expect(
-      matchEventRequiresRelatedPlayer(MatchEventType.PENALTY_SAVED),
-    ).toBe(true);
+    expect(matchEventRequiresRelatedPlayer(MatchEventType.PENALTY_SAVED)).toBe(
+      true,
+    );
     expect(matchEventRequiresRelatedPlayer(MatchEventType.GOAL)).toBe(false);
     expect(matchEventRequiresRelatedPlayer(MatchEventType.OWN_GOAL)).toBe(
       false,
@@ -169,6 +211,157 @@ describe("match-stat simulator", () => {
         2,
       ).simulation_seed,
     ).not.toBe(first.simulation_seed);
+  });
+
+  it("resolves a tied knockout through extra time without changing regulation matches", () => {
+    const home = players(VenueSide.HOME);
+    const away = players(VenueSide.AWAY);
+    let extraTimeWinner: ReturnType<typeof simulateMatch> | null = null;
+    let regulationDraw: ReturnType<typeof simulateMatch> | null = null;
+
+    for (
+      let index = 0;
+      index < 500 && (!extraTimeWinner || !regulationDraw);
+      index += 1
+    ) {
+      const fixtureId = `knockout-extra-time-${index}`;
+      const ordinary = simulateMatch(home, away, fixtureId);
+      const knockout = simulateMatch(
+        home,
+        away,
+        fixtureId,
+        1,
+        {},
+        {
+          requiresWinner: true,
+        },
+      );
+      if (ordinary.home_score === ordinary.away_score)
+        regulationDraw = ordinary;
+      if (
+        knockout.extra_time_played &&
+        knockout.home_score !== knockout.away_score
+      ) {
+        extraTimeWinner = knockout;
+      }
+    }
+
+    expect(regulationDraw).toBeTruthy();
+    expect(regulationDraw!.extra_time_played).toBe(false);
+    expect(regulationDraw!.penalties_home).toBeUndefined();
+    expect(extraTimeWinner).toBeTruthy();
+    expect(extraTimeWinner!.penalties_home).toBeUndefined();
+    expect(
+      extraTimeWinner!.events.some(
+        (event) => event.minute >= 91 && event.minute <= 120,
+      ),
+    ).toBe(true);
+    expect(
+      extraTimeWinner!.player_stats.some((player) => player.minutes > 90),
+    ).toBe(true);
+    expect(
+      Math.max(
+        ...extraTimeWinner!.player_stats.map((player) => player.minutes),
+      ),
+    ).toBeLessThanOrEqual(120);
+  });
+
+  it("allows substitutions during extra time without exceeding the limit", () => {
+    const home = players(VenueSide.HOME);
+    const away = players(VenueSide.AWAY);
+    let extraTimeSub: ReturnType<typeof simulateMatch> | null = null;
+
+    for (let index = 0; index < 500 && !extraTimeSub; index += 1) {
+      const result = simulateMatch(
+        home,
+        away,
+        `knockout-extra-time-sub-${index}`,
+        1,
+        {},
+        {
+          requiresWinner: true,
+        },
+      );
+      if (
+        result.extra_time_played &&
+        result.substitutions.some((sub) => sub.minute > 90)
+      ) {
+        extraTimeSub = result;
+      }
+    }
+
+    expect(extraTimeSub).toBeTruthy();
+    // At least one substitution landed in the 91-120 window.
+    expect(
+      extraTimeSub!.substitutions.some((sub) => sub.minute > 90),
+    ).toBe(true);
+    // No substitution occurs past the final whistle of extra time.
+    expect(
+      extraTimeSub!.substitutions.every((sub) => sub.minute <= 120),
+    ).toBe(true);
+    // The per-side substitution limit of five is still respected.
+    for (const side of [VenueSide.HOME, VenueSide.AWAY]) {
+      expect(
+        extraTimeSub!.substitutions.filter((sub) => sub.side === side).length,
+      ).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("uses a separate deterministic shootout for a tied knockout", () => {
+    const home = players(VenueSide.HOME);
+    const away = players(VenueSide.AWAY);
+    let shootout: ReturnType<typeof simulateMatch> | null = null;
+    let fixtureId = "";
+
+    for (let index = 0; index < 500 && !shootout; index += 1) {
+      fixtureId = `knockout-shootout-${index}`;
+      const result = simulateMatch(
+        home,
+        away,
+        fixtureId,
+        1,
+        {},
+        {
+          requiresWinner: true,
+        },
+      );
+      if (result.penalties_home !== undefined) shootout = result;
+    }
+
+    expect(shootout).toBeTruthy();
+    expect(shootout!.extra_time_played).toBe(true);
+    expect(shootout!.home_score).toBe(shootout!.away_score);
+    expect(shootout!.penalties_home).not.toBe(shootout!.penalties_away);
+    expect(shootout!.penalty_winner_side).toBe(
+      Number(shootout!.penalties_home) > Number(shootout!.penalties_away)
+        ? VenueSide.HOME
+        : VenueSide.AWAY,
+    );
+    const matchGoalEvents = shootout!.events.filter((event) =>
+      [
+        MatchEventType.GOAL,
+        MatchEventType.PENALTY_GOAL,
+        MatchEventType.OWN_GOAL,
+      ].includes(event.type),
+    );
+    expect(matchGoalEvents).toHaveLength(
+      shootout!.home_score + shootout!.away_score,
+    );
+    expect(sum(shootout!.player_stats, "goals")).toBeLessThanOrEqual(
+      shootout!.home_score + shootout!.away_score,
+    );
+
+    const repeated = simulateMatch(
+      home,
+      away,
+      fixtureId,
+      1,
+      {},
+      {
+        requiresWinner: true,
+      },
+    );
+    expect(repeated).toEqual(shootout);
   });
 
   it("keeps team and player totals mathematically consistent", () => {
@@ -333,9 +526,7 @@ describe("match-stat simulator", () => {
           continue;
         }
         attempts.add(stat.dribbles_attempted);
-        outcomes.add(
-          `${stat.successful_dribbles}/${stat.dribbles_attempted}`,
-        );
+        outcomes.add(`${stat.successful_dribbles}/${stat.dribbles_attempted}`);
       }
     }
     expect(attempts.size).toBeGreaterThanOrEqual(5);
@@ -569,9 +760,7 @@ describe("match-stat simulator", () => {
           );
     expect(savedPenalty.related_player_registration_id).toBeTruthy();
     expect(
-      savedPenaltyOpponentIds.has(
-        savedPenalty.related_player_registration_id!,
-      ),
+      savedPenaltyOpponentIds.has(savedPenalty.related_player_registration_id!),
     ).toBe(true);
   });
 
@@ -669,7 +858,11 @@ describe("match-stat simulator", () => {
         );
         const start = player.is_starter ? 0 : subIn?.minute;
         const end = subOut?.minute ?? 90;
-        return start !== undefined && penalty.minute >= start && penalty.minute <= end;
+        return (
+          start !== undefined &&
+          penalty.minute >= start &&
+          penalty.minute <= end
+        );
       };
       expect(penalty.player_registration_id).toBe(order.find(active));
       checkedPenalty = true;

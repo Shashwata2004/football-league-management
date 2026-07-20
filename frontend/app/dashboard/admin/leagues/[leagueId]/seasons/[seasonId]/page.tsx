@@ -38,6 +38,8 @@ import {
 } from "lucide-react";
 import {
   FixtureStatus,
+  fixtureOutcomeLabel,
+  fixtureOutcomeScore,
   RegistrationStatus,
   SeasonFormat,
   SeasonPhase,
@@ -226,6 +228,7 @@ interface CompletedMatchRow {
   kickoff: string;
   status: string;
   score: string;
+  outcomeLabel: string | null;
 }
 
 interface AdminMessageRow {
@@ -494,6 +497,10 @@ type FixtureApiRow = {
   status: string;
   home_score?: number | null;
   away_score?: number | null;
+  extra_time_played?: boolean | null;
+  penalties_home?: number | null;
+  penalties_away?: number | null;
+  penalty_winner_team_registration_id?: string | null;
   result_confirmed?: boolean | null;
   home_team?: {
     id: string;
@@ -1191,7 +1198,8 @@ function buildAdminSeasonData(input: {
         ? safeDateTime(fixture.kickoff_at)
         : "Kickoff not set",
       status: statusLabel(fixture.status),
-      score: `${fixture.home_score ?? 0} - ${fixture.away_score ?? 0}`,
+      score: fixtureOutcomeScore(fixture) ?? "-",
+      outcomeLabel: fixtureOutcomeLabel(fixture),
     }));
 
   const standings = input.standings.map((row) => {
@@ -4796,7 +4804,11 @@ function FixturesView({ season }: { season: SeasonDto }) {
       row.away_score === undefined
     )
       return null;
-    return `${row.home_score} - ${row.away_score}`;
+    return fixtureOutcomeScore(row);
+  }
+
+  function rowOutcomeLabel(row: FixtureApiRow | FixturePreviewRow) {
+    return "home_score" in row ? fixtureOutcomeLabel(row) : null;
   }
 
   function rowGroupName(row: FixtureApiRow | FixturePreviewRow) {
@@ -5176,7 +5188,14 @@ function FixturesView({ season }: { season: SeasonDto }) {
                     <td className="px-5 py-4">
                       {(row.status === "FINAL" || row.status === "COMPLETED") &&
                       rowScore(row) ? (
-                        <StatusPill tone="green">{rowScore(row)}</StatusPill>
+                        <div className="text-center">
+                          <StatusPill tone="green">{rowScore(row)}</StatusPill>
+                          {rowOutcomeLabel(row) ? (
+                            <p className="mt-1 text-[10px] font-semibold text-slate-500">
+                              {rowOutcomeLabel(row)}
+                            </p>
+                          ) : null}
+                        </div>
                       ) : (
                         <StatusPill
                           tone={
@@ -6648,8 +6667,13 @@ function CompletedMatchesView({
                         name={match.home}
                         logoUrl={match.homeLogoUrl}
                       />
-                      <span className="rounded-xl bg-green-100 px-4 py-2 text-lg font-black text-green-800">
-                        {match.score}
+                      <span className="rounded-xl bg-green-100 px-4 py-2 text-center text-lg font-black text-green-800">
+                        <span className="block">{match.score}</span>
+                        {match.outcomeLabel ? (
+                          <span className="mt-0.5 block text-[10px] font-bold text-green-700">
+                            {match.outcomeLabel}
+                          </span>
+                        ) : null}
                       </span>
                       <TeamCompact
                         name={match.away}
@@ -6929,9 +6953,10 @@ function MatchScorelineHeader({
               />
             ) : null}
           </p>
-          <p className="mt-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
-            {detail?.fixture?.status
-              ? statusLabel(String(detail.fixture.status))
+          <p className="mt-2 text-xs font-bold tracking-[0.12em] text-slate-500">
+            {detail?.fixture
+              ? (fixtureOutcomeLabel(detail.fixture) ??
+                statusLabel(String(detail.fixture.status)))
               : "Not simulated"}
           </p>
         </div>

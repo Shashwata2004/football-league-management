@@ -30,11 +30,8 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import {
-  clearAuth,
-  getStoredProfile,
-  updateStoredProfile,
-} from "@/lib/auth";
+import { fixtureOutcomeLabel, fixtureOutcomeScore } from "@flms/shared";
+import { clearAuth, getStoredProfile, updateStoredProfile } from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
 // The fan experience mirrors the manager dashboard's shell (fixed sidebar,
@@ -104,6 +101,10 @@ interface FixtureRecord {
   status: string;
   home_score: number | null;
   away_score: number | null;
+  extra_time_played?: boolean | null;
+  penalties_home?: number | null;
+  penalties_away?: number | null;
+  penalty_winner_team_registration_id?: string | null;
   home_team?: TeamRef | null;
   away_team?: TeamRef | null;
 }
@@ -141,7 +142,12 @@ interface StandingRow {
   position: number;
   team_registrations?: {
     id: string;
-    teams: { id: string; name: string; short_name: string | null; logo_url: string | null } | null;
+    teams: {
+      id: string;
+      name: string;
+      short_name: string | null;
+      logo_url: string | null;
+    } | null;
   } | null;
 }
 
@@ -170,7 +176,10 @@ const defaultFanTheme: FanTheme = {
 
 const fanThemeStorageKey = "scoreline-fan-team-theme";
 
-function normalizeThemeColor(color: string | null | undefined, fallback: string): string {
+function normalizeThemeColor(
+  color: string | null | undefined,
+  fallback: string,
+): string {
   return color && /^#[0-9a-f]{6}$/iu.test(color.trim())
     ? color.trim().toUpperCase()
     : fallback;
@@ -184,7 +193,10 @@ function readCachedFanTheme(): FanTheme {
     ) as Partial<FanTheme> | null;
     return {
       primary: normalizeThemeColor(cached?.primary, defaultFanTheme.primary),
-      secondary: normalizeThemeColor(cached?.secondary, defaultFanTheme.secondary),
+      secondary: normalizeThemeColor(
+        cached?.secondary,
+        defaultFanTheme.secondary,
+      ),
       accent: normalizeThemeColor(cached?.accent, defaultFanTheme.accent),
     };
   } catch {
@@ -195,7 +207,10 @@ function readCachedFanTheme(): FanTheme {
 function themeFromTeam(team: TeamSummary | null | undefined): FanTheme {
   return {
     primary: normalizeThemeColor(team?.primary_color, defaultFanTheme.primary),
-    secondary: normalizeThemeColor(team?.secondary_color, defaultFanTheme.secondary),
+    secondary: normalizeThemeColor(
+      team?.secondary_color,
+      defaultFanTheme.secondary,
+    ),
     accent: normalizeThemeColor(team?.accent_color, defaultFanTheme.accent),
   };
 }
@@ -333,7 +348,8 @@ export default function FanDashboardPage() {
     : undefined;
 
   const primaryFavorite = useMemo(
-    () => favorites.find((favorite) => favorite.is_primary) ?? favorites[0] ?? null,
+    () =>
+      favorites.find((favorite) => favorite.is_primary) ?? favorites[0] ?? null,
     [favorites],
   );
 
@@ -359,7 +375,9 @@ export default function FanDashboardPage() {
   useEffect(() => {
     setProfile(getStoredProfile() as Profile | null);
     void load().catch((error) => {
-      setMessage(error instanceof Error ? error.message : "Failed to load fan dashboard");
+      setMessage(
+        error instanceof Error ? error.message : "Failed to load fan dashboard",
+      );
       setLoading(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -374,7 +392,10 @@ export default function FanDashboardPage() {
     const nextTheme = themeFromTeam(primaryFavorite?.team);
     setTheme(nextTheme);
     try {
-      window.localStorage.setItem(fanThemeStorageKey, JSON.stringify(nextTheme));
+      window.localStorage.setItem(
+        fanThemeStorageKey,
+        JSON.stringify(nextTheme),
+      );
     } catch {
       // In-memory palette still keeps the UI themed.
     }
@@ -395,9 +416,12 @@ export default function FanDashboardPage() {
   }
 
   async function removeFavorite(teamId: string) {
-    const data = await api<{ favorites: Favorite[] }>(`/fan/favorites/${teamId}`, {
-      method: "DELETE",
-    });
+    const data = await api<{ favorites: Favorite[] }>(
+      `/fan/favorites/${teamId}`,
+      {
+        method: "DELETE",
+      },
+    );
     setFavorites(data.favorites);
     await load().catch(() => undefined);
   }
@@ -530,7 +554,11 @@ export default function FanDashboardPage() {
           onSkip={() => setOnboardingDismissed(true)}
           onPick={async (teamId) => {
             await addFavorite(teamId, true).catch((error) =>
-              setMessage(error instanceof Error ? error.message : "Failed to follow team"),
+              setMessage(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to follow team",
+              ),
             );
             setOnboardingDismissed(true);
           }}
@@ -570,7 +598,9 @@ function FanSidebar({
         type="button"
         aria-label="Close fan navigation"
         className={`fixed inset-0 z-30 bg-slate-950/45 backdrop-blur-sm transition-opacity lg:hidden ${
-          mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+          mobileOpen
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0"
         }`}
         onClick={onClose}
       />
@@ -603,7 +633,9 @@ function FanSidebar({
           <div className="flex items-center gap-3">
             <Avatar name={profile?.full_name ?? profile?.email ?? "Fan"} />
             <div className="min-w-0">
-              <p className="truncate font-semibold">{profile?.full_name ?? "Fan"}</p>
+              <p className="truncate font-semibold">
+                {profile?.full_name ?? "Fan"}
+              </p>
               <p className="truncate text-xs text-[var(--team-sidebar-muted)]">
                 {primaryFavorite?.team?.name ?? "No favourite yet"}
               </p>
@@ -718,7 +750,8 @@ function FanSectionView(props: SectionProps) {
   if (props.section === "Home") return <HomeSection {...props} />;
   if (props.section === "Matches") return <MatchesSection {...props} />;
   if (props.section === "Standings") return <StandingsSection {...props} />;
-  if (props.section === "Player Stats") return <PlayerStatsSection {...props} />;
+  if (props.section === "Player Stats")
+    return <PlayerStatsSection {...props} />;
   if (props.section === "My Teams") return <MyTeamsSection {...props} />;
   if (props.section === "Discover") return <DiscoverSection {...props} />;
   return (
@@ -735,8 +768,14 @@ function FanSectionView(props: SectionProps) {
 // SECTIONS
 // ===========================================================================
 
-function HomeSection({ dashboard, favorites, onOpenMatch, onSection }: SectionProps) {
-  const primary = favorites.find((favorite) => favorite.is_primary) ?? favorites[0] ?? null;
+function HomeSection({
+  dashboard,
+  favorites,
+  onOpenMatch,
+  onSection,
+}: SectionProps) {
+  const primary =
+    favorites.find((favorite) => favorite.is_primary) ?? favorites[0] ?? null;
   const upcoming = dashboard?.upcoming_fixtures ?? [];
   const results = dashboard?.recent_results ?? [];
 
@@ -767,7 +806,11 @@ function HomeSection({ dashboard, favorites, onOpenMatch, onSection }: SectionPr
           ) : (
             <div className="grid gap-3">
               {upcoming.slice(0, 6).map((fixture) => (
-                <FixtureMini key={fixture.id} fixture={fixture} onOpen={() => onOpenMatch(fixture.id)} />
+                <FixtureMini
+                  key={fixture.id}
+                  fixture={fixture}
+                  onOpen={() => onOpenMatch(fixture.id)}
+                />
               ))}
             </div>
           )}
@@ -778,7 +821,12 @@ function HomeSection({ dashboard, favorites, onOpenMatch, onSection }: SectionPr
           ) : (
             <div className="grid gap-3">
               {results.slice(0, 6).map((fixture) => (
-                <FixtureMini key={fixture.id} fixture={fixture} onOpen={() => onOpenMatch(fixture.id)} showScore />
+                <FixtureMini
+                  key={fixture.id}
+                  fixture={fixture}
+                  onOpen={() => onOpenMatch(fixture.id)}
+                  showScore
+                />
               ))}
             </div>
           )}
@@ -805,9 +853,14 @@ function FanHero({
       }}
     >
       <div className="flex flex-wrap items-center gap-4">
-        <Avatar name={primaryFavorite?.team?.name ?? "Scoreline"} src={primaryFavorite?.team?.logo_url} />
+        <Avatar
+          name={primaryFavorite?.team?.name ?? "Scoreline"}
+          src={primaryFavorite?.team?.logo_url}
+        />
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.3em] opacity-80">Your club</p>
+          <p className="text-xs uppercase tracking-[0.3em] opacity-80">
+            Your club
+          </p>
           <h1 className="break-words text-2xl font-black leading-tight sm:text-3xl">
             {primaryFavorite?.team?.name ?? "Follow a team to begin"}
           </h1>
@@ -844,7 +897,9 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
         setSeasonId((current) => current || data.seasons[0]?.id || "");
       })
       .catch((error) =>
-        onError(error instanceof Error ? error.message : "Failed to load seasons"),
+        onError(
+          error instanceof Error ? error.message : "Failed to load seasons",
+        ),
       );
     return () => {
       alive = false;
@@ -861,7 +916,9 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
         if (alive) setFixtures(data.fixtures);
       })
       .catch((error) =>
-        onError(error instanceof Error ? error.message : "Failed to load fixtures"),
+        onError(
+          error instanceof Error ? error.message : "Failed to load fixtures",
+        ),
       )
       .finally(() => {
         if (alive) setLoading(false);
@@ -877,7 +934,10 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
       if (scope === "MY_TEAMS") {
         const homeId = fixture.home_team?.teams?.id;
         const awayId = fixture.away_team?.teams?.id;
-        if (!(homeId && favoriteTeamIds.has(homeId)) && !(awayId && favoriteTeamIds.has(awayId))) {
+        if (
+          !(homeId && favoriteTeamIds.has(homeId)) &&
+          !(awayId && favoriteTeamIds.has(awayId))
+        ) {
           return false;
         }
       }
@@ -899,7 +959,10 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Matches" subtitle="Browse fixtures and final results across the league." />
+      <PageTitle
+        title="Matches"
+        subtitle="Browse fixtures and final results across the league."
+      />
 
       <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
         <select
@@ -921,7 +984,10 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
         <FilterPill active={scope === "ALL"} onClick={() => setScope("ALL")}>
           All Matches
         </FilterPill>
-        <FilterPill active={scope === "MY_TEAMS"} onClick={() => setScope("MY_TEAMS")}>
+        <FilterPill
+          active={scope === "MY_TEAMS"}
+          onClick={() => setScope("MY_TEAMS")}
+        >
           My Teams
         </FilterPill>
         <select
@@ -933,7 +999,9 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
           <option value="">All dates</option>
           {availableDays.map((day) => (
             <option key={day} value={day}>
-              {new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(day))}
+              {new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(
+                new Date(day),
+              )}
             </option>
           ))}
         </select>
@@ -975,7 +1043,11 @@ function StandingsSection({ favorites, onOpenTeam, onError }: SectionProps) {
         setSeasons(data.seasons);
         setSeasonId((current) => current || data.seasons[0]?.id || "");
       })
-      .catch((error) => onError(error instanceof Error ? error.message : "Failed to load seasons"));
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : "Failed to load seasons",
+        ),
+      );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -987,7 +1059,11 @@ function StandingsSection({ favorites, onOpenTeam, onError }: SectionProps) {
       .then((data) => {
         if (alive) setStandings(data.standings);
       })
-      .catch((error) => onError(error instanceof Error ? error.message : "Failed to load standings"))
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : "Failed to load standings",
+        ),
+      )
       .finally(() => {
         if (alive) setLoading(false);
       });
@@ -1009,7 +1085,10 @@ function StandingsSection({ favorites, onOpenTeam, onError }: SectionProps) {
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Standings" subtitle="League tables update as results are confirmed." />
+      <PageTitle
+        title="Standings"
+        subtitle="League tables update as results are confirmed."
+      />
       <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
         <select
           aria-label="Season"
@@ -1035,8 +1114,15 @@ function StandingsSection({ favorites, onOpenTeam, onError }: SectionProps) {
         <EmptyState label="No standings available for this season yet." />
       ) : (
         groups.map(([groupName, rows]) => (
-          <Panel key={groupName || "table"} title={groupName ? `Group ${groupName}` : "Table"}>
-            <StandingsTable rows={rows} favoriteTeamIds={favoriteTeamIds} onOpenTeam={onOpenTeam} />
+          <Panel
+            key={groupName || "table"}
+            title={groupName ? `Group ${groupName}` : "Table"}
+          >
+            <StandingsTable
+              rows={rows}
+              favoriteTeamIds={favoriteTeamIds}
+              onOpenTeam={onOpenTeam}
+            />
           </Panel>
         ))
       )}
@@ -1079,7 +1165,11 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
         setSeasons(data.seasons);
         setSeasonId((current) => current || data.seasons[0]?.id || "");
       })
-      .catch((error) => onError(error instanceof Error ? error.message : "Failed to load seasons"));
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : "Failed to load seasons",
+        ),
+      );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1087,11 +1177,19 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
     if (!seasonId) return;
     let alive = true;
     setLoading(true);
-    api<{ player_sections: FanStatSection[] }>(`/fan/seasons/${seasonId}/stat-leaderboards`)
+    api<{ player_sections: FanStatSection[] }>(
+      `/fan/seasons/${seasonId}/stat-leaderboards`,
+    )
       .then((data) => {
         if (alive) setSections(data.player_sections ?? []);
       })
-      .catch((error) => onError(error instanceof Error ? error.message : "Failed to load player stats"))
+      .catch((error) =>
+        onError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load player stats",
+        ),
+      )
       .finally(() => {
         if (alive) setLoading(false);
       });
@@ -1101,13 +1199,19 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
   }, [seasonId, onError]);
 
   const hasData = useMemo(
-    () => sections.some((section) => section.cards.some((card) => card.entries.length > 0)),
+    () =>
+      sections.some((section) =>
+        section.cards.some((card) => card.entries.length > 0),
+      ),
     [sections],
   );
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Player Stats" subtitle="Season leaderboards across the whole league." />
+      <PageTitle
+        title="Player Stats"
+        subtitle="Season leaderboards across the whole league."
+      />
       <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
         <select
           aria-label="Season"
@@ -1134,14 +1238,22 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
       ) : (
         <div className="space-y-6">
           {sections.map((section) => {
-            const cards = section.cards.filter((card) => card.entries.length > 0);
+            const cards = section.cards.filter(
+              (card) => card.entries.length > 0,
+            );
             if (cards.length === 0) return null;
             return (
               <div key={section.title}>
-                <h3 className="mb-3 text-lg font-black text-slate-900">{section.title}</h3>
+                <h3 className="mb-3 text-lg font-black text-slate-900">
+                  {section.title}
+                </h3>
                 <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
                   {cards.map((card) => (
-                    <FanLeaderboardCard key={card.id} card={card} onOpen={() => setOpenCard(card)} />
+                    <FanLeaderboardCard
+                      key={card.id}
+                      card={card}
+                      onOpen={() => setOpenCard(card)}
+                    />
                   ))}
                 </div>
               </div>
@@ -1151,13 +1263,23 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
       )}
 
       {openCard ? (
-        <FanLeaderboardModal card={openCard} onOpenPlayer={onOpenPlayer} onClose={() => setOpenCard(null)} />
+        <FanLeaderboardModal
+          card={openCard}
+          onOpenPlayer={onOpenPlayer}
+          onClose={() => setOpenCard(null)}
+        />
       ) : null}
     </div>
   );
 }
 
-function FanLeaderboardCard({ card, onOpen }: { card: FanStatCard; onOpen: () => void }) {
+function FanLeaderboardCard({
+  card,
+  onOpen,
+}: {
+  card: FanStatCard;
+  onOpen: () => void;
+}) {
   const topEntries = card.entries.slice(0, 3);
   return (
     <button
@@ -1190,13 +1312,19 @@ function FanLeaderboardRow({
   const content = (
     <>
       <div className="flex min-w-0 items-center gap-3">
-        <span className="w-5 shrink-0 text-sm font-black text-slate-400">{rank}</span>
+        <span className="w-5 shrink-0 text-sm font-black text-slate-400">
+          {rank}
+        </span>
         <Avatar name={entry.name} src={entry.logoUrl} small />
         <div className="min-w-0">
           <p className="truncate font-black text-slate-900">{entry.name}</p>
           <div className="mt-0.5 flex items-center gap-2 text-xs font-semibold text-slate-500">
             {entry.teamLogoUrl ? (
-              <img src={entry.teamLogoUrl} alt="" className="h-4 w-4 rounded-full object-cover" />
+              <img
+                src={entry.teamLogoUrl}
+                alt=""
+                className="h-4 w-4 rounded-full object-cover"
+              />
             ) : null}
             <span className="truncate">{entry.subLabel}</span>
           </div>
@@ -1220,7 +1348,11 @@ function FanLeaderboardRow({
       </button>
     );
   }
-  return <div className="flex items-center justify-between gap-4 py-3">{content}</div>;
+  return (
+    <div className="flex items-center justify-between gap-4 py-3">
+      {content}
+    </div>
+  );
 }
 
 function FanLeaderboardModal({
@@ -1233,7 +1365,10 @@ function FanLeaderboardModal({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[90] grid place-items-center bg-slate-950/45 p-5 backdrop-blur-sm"
+      onClick={onClose}
+    >
       <div
         className="max-h-[86vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
@@ -1243,7 +1378,9 @@ function FanLeaderboardModal({
             <p className="text-xs font-black uppercase tracking-[0.3em] text-[var(--team-primary)]">
               Full Leaderboard
             </p>
-            <h2 className="mt-1 text-2xl font-black text-slate-900">{card.title}</h2>
+            <h2 className="mt-1 text-2xl font-black text-slate-900">
+              {card.title}
+            </h2>
           </div>
           <button
             type="button"
@@ -1294,7 +1431,10 @@ function MyTeamsSection({
 
   return (
     <div className="space-y-6">
-      <PageTitle title="My Teams" subtitle="The clubs you follow. Your primary club themes your dashboard." />
+      <PageTitle
+        title="My Teams"
+        subtitle="The clubs you follow. Your primary club themes your dashboard."
+      />
       {favorites.length === 0 ? (
         <Panel title="No favourites yet">
           <p className="text-sm text-slate-600">
@@ -1315,7 +1455,10 @@ function MyTeamsSection({
               key={favorite.id}
               className="flex items-center gap-3 rounded-3xl border border-[#E5E7EB] bg-white p-4 shadow-sm"
             >
-              <Avatar name={favorite.team?.name ?? "Team"} src={favorite.team?.logo_url} />
+              <Avatar
+                name={favorite.team?.name ?? "Team"}
+                src={favorite.team?.logo_url}
+              />
               <div className="min-w-0 flex-1">
                 <button
                   className="block truncate text-left font-black text-slate-900 hover:text-[var(--team-primary)] hover:underline"
@@ -1325,7 +1468,9 @@ function MyTeamsSection({
                   {favorite.team?.name ?? "Team"}
                 </button>
                 <p className="truncate text-xs font-bold text-slate-500">
-                  {favorite.is_primary ? "Primary club" : favorite.team?.short_name ?? ""}
+                  {favorite.is_primary
+                    ? "Primary club"
+                    : (favorite.team?.short_name ?? "")}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -1333,7 +1478,12 @@ function MyTeamsSection({
                   <button
                     className="rounded-xl bg-slate-100 px-3 py-2 text-xs font-black text-slate-700 transition hover:bg-purple-50 hover:text-[var(--team-primary)] disabled:opacity-50"
                     disabled={busy === favorite.team_id}
-                    onClick={() => run(() => onSetPrimary(favorite.team_id), favorite.team_id)}
+                    onClick={() =>
+                      run(
+                        () => onSetPrimary(favorite.team_id),
+                        favorite.team_id,
+                      )
+                    }
                   >
                     Set primary
                   </button>
@@ -1346,7 +1496,12 @@ function MyTeamsSection({
                   aria-label="Unfollow"
                   className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-red-300 hover:text-red-600 disabled:opacity-50"
                   disabled={busy === favorite.team_id}
-                  onClick={() => run(() => onRemoveFavorite(favorite.team_id), favorite.team_id)}
+                  onClick={() =>
+                    run(
+                      () => onRemoveFavorite(favorite.team_id),
+                      favorite.team_id,
+                    )
+                  }
                 >
                   <X size={16} />
                 </button>
@@ -1359,7 +1514,12 @@ function MyTeamsSection({
   );
 }
 
-function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: SectionProps) {
+function DiscoverSection({
+  favorites,
+  onOpenTeam,
+  onAddFavorite,
+  onError,
+}: SectionProps) {
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [seasonId, setSeasonId] = useState("");
   const [teams, setTeams] = useState<any[]>([]);
@@ -1377,7 +1537,11 @@ function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: Sect
         setSeasons(data.seasons);
         setSeasonId((current) => current || data.seasons[0]?.id || "");
       })
-      .catch((error) => onError(error instanceof Error ? error.message : "Failed to load seasons"));
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : "Failed to load seasons",
+        ),
+      );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1389,7 +1553,11 @@ function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: Sect
       .then((data) => {
         if (alive) setTeams(data.teams);
       })
-      .catch((error) => onError(error instanceof Error ? error.message : "Failed to load teams"))
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : "Failed to load teams",
+        ),
+      )
       .finally(() => {
         if (alive) setLoading(false);
       });
@@ -1423,7 +1591,10 @@ function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: Sect
 
   return (
     <div className="space-y-6">
-      <PageTitle title="Discover" subtitle="Explore clubs across the league and follow your favourites." />
+      <PageTitle
+        title="Discover"
+        subtitle="Explore clubs across the league and follow your favourites."
+      />
       <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
         <select
           aria-label="Season"
@@ -1442,7 +1613,10 @@ function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: Sect
           })}
         </select>
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+            size={16}
+          />
           <input
             className="manager-input pl-9"
             placeholder="Search teams"
@@ -1474,7 +1648,9 @@ function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: Sect
                   >
                     {club?.name ?? "Team"}
                   </button>
-                  <p className="truncate text-xs font-bold text-slate-500">{club?.short_name ?? ""}</p>
+                  <p className="truncate text-xs font-bold text-slate-500">
+                    {club?.short_name ?? ""}
+                  </p>
                 </div>
                 <button
                   className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-black transition disabled:opacity-50 ${
@@ -1485,7 +1661,10 @@ function DiscoverSection({ favorites, onOpenTeam, onAddFavorite, onError }: Sect
                   disabled={busy === club?.id || !club?.id}
                   onClick={() => club?.id && follow(club.id)}
                 >
-                  <Heart size={14} className={isFavorite ? "fill-current" : ""} />
+                  <Heart
+                    size={14}
+                    className={isFavorite ? "fill-current" : ""}
+                  />
                   {isFavorite ? "Following" : "Follow"}
                 </button>
               </div>
@@ -1612,7 +1791,11 @@ function eventPlayerName(event: any): string {
   return one<any>(reg?.players)?.full_name ?? "Player";
 }
 
-function MatchDetailView({ matchId, onBack, onOpenPlayer }: {
+function MatchDetailView({
+  matchId,
+  onBack,
+  onOpenPlayer,
+}: {
   matchId: string;
   onBack: () => void;
   onOpenPlayer?: ((playerRegistrationId: string) => void) | undefined;
@@ -1630,7 +1813,8 @@ function MatchDetailView({ matchId, onBack, onOpenPlayer }: {
         if (alive) setDetail(data);
       })
       .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : "Failed to load match");
+        if (alive)
+          setError(err instanceof Error ? err.message : "Failed to load match");
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -1652,12 +1836,12 @@ function MatchDetailView({ matchId, onBack, onOpenPlayer }: {
 
   // Split goal events by side so we can list scorers under each crest. Own
   // goals count for the opposing team, exactly as they show up on the scoreline.
-  const goals = detail.events.filter((event) => GOAL_EVENT_TYPES.includes(event.type));
+  const goals = detail.events.filter((event) =>
+    GOAL_EVENT_TYPES.includes(event.type),
+  );
   const scorerFor = (side: "HOME" | "AWAY") =>
     goals.filter((event) =>
-      event.type === "OWN_GOAL"
-        ? event.side !== side
-        : event.side === side,
+      event.type === "OWN_GOAL" ? event.side !== side : event.side === side,
     );
 
   const tabs = ["Summary", "Lineups", "Stats", "Ratings"];
@@ -1671,14 +1855,18 @@ function MatchDetailView({ matchId, onBack, onOpenPlayer }: {
         <div className="flex items-center justify-between gap-2 bg-[var(--team-secondary)] px-5 py-3 text-xs font-bold text-[var(--team-secondary-text)]">
           <span className="inline-flex items-center gap-2">
             <StageBadge stage={fixture.stage} />
-            {fixture.group_name ? <span>Group {fixture.group_name}</span> : null}
+            {fixture.group_name ? (
+              <span>Group {fixture.group_name}</span>
+            ) : null}
           </span>
           <span>{formatDate(fixture.kickoff_at)}</span>
         </div>
         <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-3 p-6">
           <div className="flex min-w-0 flex-col items-center gap-2 text-center">
             <Avatar name={teamName(home)} src={home?.logo_url} />
-            <p className="truncate font-black text-slate-900">{teamName(home)}</p>
+            <p className="truncate font-black text-slate-900">
+              {teamName(home)}
+            </p>
           </div>
           <div className="shrink-0 px-2 text-center">
             {isFinal ? (
@@ -1691,12 +1879,16 @@ function MatchDetailView({ matchId, onBack, onOpenPlayer }: {
               <p className="text-2xl font-black text-slate-400">vs</p>
             )}
             <p className="mt-2 text-[11px] font-black uppercase tracking-widest text-slate-400">
-              {isFinal ? "Full time" : String(fixture.status ?? "").replaceAll("_", " ")}
+              {isFinal
+                ? (fixtureOutcomeLabel(fixture) ?? "Full time")
+                : String(fixture.status ?? "").replaceAll("_", " ")}
             </p>
           </div>
           <div className="flex min-w-0 flex-col items-center gap-2 text-center">
             <Avatar name={teamName(away)} src={away?.logo_url} />
-            <p className="truncate font-black text-slate-900">{teamName(away)}</p>
+            <p className="truncate font-black text-slate-900">
+              {teamName(away)}
+            </p>
           </div>
         </div>
         {isFinal && goals.length > 0 ? (
@@ -1762,10 +1954,18 @@ function MatchDetailView({ matchId, onBack, onOpenPlayer }: {
   );
 }
 
-function ScorerList({ events, align }: { events: any[]; align: "left" | "right" }) {
+function ScorerList({
+  events,
+  align,
+}: {
+  events: any[];
+  align: "left" | "right";
+}) {
   if (events.length === 0) return <div />;
   return (
-    <ul className={`space-y-1 ${align === "right" ? "text-right" : "text-left"}`}>
+    <ul
+      className={`space-y-1 ${align === "right" ? "text-right" : "text-left"}`}
+    >
       {events.map((event) => (
         <li
           key={event.id}
@@ -1805,24 +2005,69 @@ function eventVisual(type: string) {
   switch (type) {
     case "GOAL":
     case "PENALTY_GOAL":
-      return { icon: <Goal size={15} />, ring: "ring-emerald-200", text: "text-emerald-600", label: type === "PENALTY_GOAL" ? "Penalty goal" : "Goal" };
+      return {
+        icon: <Goal size={15} />,
+        ring: "ring-emerald-200",
+        text: "text-emerald-600",
+        label: type === "PENALTY_GOAL" ? "Penalty goal" : "Goal",
+      };
     case "OWN_GOAL":
-      return { icon: <Goal size={15} />, ring: "ring-red-200", text: "text-red-600", label: "Own goal" };
+      return {
+        icon: <Goal size={15} />,
+        ring: "ring-red-200",
+        text: "text-red-600",
+        label: "Own goal",
+      };
     case "YELLOW_CARD":
-      return { icon: <Square size={13} className="fill-current" />, ring: "ring-amber-200", text: "text-amber-500", label: "Yellow card" };
+      return {
+        icon: <Square size={13} className="fill-current" />,
+        ring: "ring-amber-200",
+        text: "text-amber-500",
+        label: "Yellow card",
+      };
     case "RED_CARD":
-      return { icon: <Square size={13} className="fill-current" />, ring: "ring-red-200", text: "text-red-600", label: "Red card" };
+      return {
+        icon: <Square size={13} className="fill-current" />,
+        ring: "ring-red-200",
+        text: "text-red-600",
+        label: "Red card",
+      };
     case "SUBSTITUTION":
-      return { icon: <ArrowLeftRight size={14} />, ring: "ring-slate-200", text: "text-slate-500", label: "Substitution" };
+      return {
+        icon: <ArrowLeftRight size={14} />,
+        ring: "ring-slate-200",
+        text: "text-slate-500",
+        label: "Substitution",
+      };
     case "PENALTY_MISS":
     case "PENALTY_SAVED":
-      return { icon: <ShieldAlert size={14} />, ring: "ring-slate-200", text: "text-slate-500", label: type === "PENALTY_SAVED" ? "Penalty saved" : "Penalty missed" };
+      return {
+        icon: <ShieldAlert size={14} />,
+        ring: "ring-slate-200",
+        text: "text-slate-500",
+        label: type === "PENALTY_SAVED" ? "Penalty saved" : "Penalty missed",
+      };
     case "INJURY":
-      return { icon: <ShieldAlert size={14} />, ring: "ring-red-200", text: "text-red-500", label: "Injury" };
+      return {
+        icon: <ShieldAlert size={14} />,
+        ring: "ring-red-200",
+        text: "text-red-500",
+        label: "Injury",
+      };
     case "HIT_WOODWORK":
-      return { icon: <Goal size={14} />, ring: "ring-slate-200", text: "text-slate-400", label: "Hit woodwork" };
+      return {
+        icon: <Goal size={14} />,
+        ring: "ring-slate-200",
+        text: "text-slate-400",
+        label: "Hit woodwork",
+      };
     default:
-      return { icon: <ChevronRight size={14} />, ring: "ring-slate-200", text: "text-slate-500", label: type.replaceAll("_", " ") };
+      return {
+        icon: <ChevronRight size={14} />,
+        ring: "ring-slate-200",
+        text: "text-slate-500",
+        label: type.replaceAll("_", " "),
+      };
   }
 }
 
@@ -1841,7 +2086,11 @@ function MatchTimeline({
   const merged = useMemo(() => {
     const eventItems = events
       .filter((event) => event.type !== "SUBSTITUTION")
-      .map((event) => ({ kind: "event" as const, minute: event.minute ?? 0, data: event }));
+      .map((event) => ({
+        kind: "event" as const,
+        minute: event.minute ?? 0,
+        data: event,
+      }));
     const subItems = substitutions.map((sub) => ({
       kind: "sub" as const,
       minute: sub.minute ?? 0,
@@ -1861,8 +2110,11 @@ function MatchTimeline({
           if (item.kind === "sub") {
             const sub = item.data;
             const isHome = sub.team_registration_id === homeId;
-            const inName = one<any>(one<any>(sub.player_in)?.players)?.full_name ?? "Player";
-            const outName = one<any>(one<any>(sub.player_out)?.players)?.full_name ?? "Player";
+            const inName =
+              one<any>(one<any>(sub.player_in)?.players)?.full_name ?? "Player";
+            const outName =
+              one<any>(one<any>(sub.player_out)?.players)?.full_name ??
+              "Player";
             return (
               <li
                 key={`sub-${sub.id ?? index}`}
@@ -1877,8 +2129,12 @@ function MatchTimeline({
                   <ArrowLeftRight size={14} />
                 </span>
                 <div className={`min-w-0 ${isHome ? "" : "text-right"}`}>
-                  <p className="truncate text-sm font-bold text-emerald-600">↑ {inName}</p>
-                  <p className="truncate text-xs font-bold text-slate-400">↓ {outName}</p>
+                  <p className="truncate text-sm font-bold text-emerald-600">
+                    ↑ {inName}
+                  </p>
+                  <p className="truncate text-xs font-bold text-slate-400">
+                    ↓ {outName}
+                  </p>
                 </div>
               </li>
             );
@@ -1886,7 +2142,9 @@ function MatchTimeline({
           const event = item.data;
           const isHome = event.side === "HOME";
           const visual = eventVisual(event.type);
-          const assist = one<any>(one<any>(event.related_player)?.players)?.full_name;
+          const assist = one<any>(
+            one<any>(event.related_player)?.players,
+          )?.full_name;
           return (
             <li
               key={`ev-${event.id ?? index}`}
@@ -1908,7 +2166,8 @@ function MatchTimeline({
                 </p>
                 <p className="truncate text-xs font-bold text-slate-400">
                   {visual.label}
-                  {assist && (event.type === "GOAL" || event.type === "PENALTY_GOAL")
+                  {assist &&
+                  (event.type === "GOAL" || event.type === "PENALTY_GOAL")
                     ? ` · assist ${assist}`
                     : ""}
                 </p>
@@ -1957,7 +2216,11 @@ function PitchPlayer({
         <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full border-2 border-white bg-white/95 text-xs font-black text-slate-900 shadow-md sm:h-11 sm:w-11">
           {person?.avatar_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={person.avatar_url} alt={person.full_name ?? "Player"} className="h-full w-full object-cover" />
+            <img
+              src={person.avatar_url}
+              alt={person.full_name ?? "Player"}
+              className="h-full w-full object-cover"
+            />
           ) : (
             <span>{reg?.shirt_number ?? player?.shirt_number ?? "-"}</span>
           )}
@@ -2027,14 +2290,20 @@ function LineupPitch({
               className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
               style={{ left: `${slot.x}%`, top: `${top}%` }}
             >
-              <PitchPlayer player={player} stat={stat} onOpenPlayer={onOpenPlayer} />
+              <PitchPlayer
+                player={player}
+                stat={stat}
+                onOpenPlayer={onOpenPlayer}
+              />
             </div>
           );
         })}
       </div>
       {bench.length > 0 ? (
         <div className="mt-3">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">Bench</p>
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">
+            Bench
+          </p>
           <div className="flex flex-wrap gap-2">
             {bench.map((lp) => {
               const reg = one<any>(lp.player_season_registrations);
@@ -2050,10 +2319,16 @@ function LineupPitch({
                   onClick={() => clickable && onOpenPlayer!(registrationId)}
                   className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 transition enabled:hover:bg-purple-50 enabled:hover:text-[var(--team-primary)]"
                 >
-                  <span className="text-slate-400">{reg?.shirt_number ?? lp.shirt_number ?? "-"}</span>
-                  <span className="truncate">{person?.full_name ?? "Player"}</span>
+                  <span className="text-slate-400">
+                    {reg?.shirt_number ?? lp.shirt_number ?? "-"}
+                  </span>
+                  <span className="truncate">
+                    {person?.full_name ?? "Player"}
+                  </span>
                   {stat?.rating != null ? (
-                    <span className={`rounded px-1 text-[10px] font-black text-white ${ratingTone(Number(stat.rating))}`}>
+                    <span
+                      className={`rounded px-1 text-[10px] font-black text-white ${ratingTone(Number(stat.rating))}`}
+                    >
                       {Number(stat.rating).toFixed(1)}
                     </span>
                   ) : null}
@@ -2092,8 +2367,10 @@ function MatchLineups({
     return <EmptyState label="No lineups were submitted for this match." />;
   }
 
-  const homeLineup = lineups.find((l) => l.team_registration_id === homeId) ?? lineups[0];
-  const awayLineup = lineups.find((l) => l.team_registration_id !== homeId) ?? lineups[1];
+  const homeLineup =
+    lineups.find((l) => l.team_registration_id === homeId) ?? lineups[0];
+  const awayLineup =
+    lineups.find((l) => l.team_registration_id !== homeId) ?? lineups[1];
 
   const renderTeam = (
     lineup: any,
@@ -2104,9 +2381,16 @@ function MatchLineups({
       <Panel title={teamName(team)}>
         <p className="mb-3 text-xs font-black uppercase tracking-widest text-slate-500">
           {lineup.formation ?? "Formation N/A"}
-          {lineup.playing_style ? ` · ${String(lineup.playing_style).replaceAll("_", " ")}` : ""}
+          {lineup.playing_style
+            ? ` · ${String(lineup.playing_style).replaceAll("_", " ")}`
+            : ""}
         </p>
-        <LineupPitch lineup={lineup} statsByReg={statsByReg} flip={flip} onOpenPlayer={onOpenPlayer} />
+        <LineupPitch
+          lineup={lineup}
+          statsByReg={statsByReg}
+          flip={flip}
+          onOpenPlayer={onOpenPlayer}
+        />
       </Panel>
     ) : null;
 
@@ -2154,9 +2438,15 @@ function MatchPlayerRatings({
         <span className="w-6 text-center text-xs font-black text-slate-400">
           {reg?.shirt_number ?? "-"}
         </span>
-        <Avatar name={person?.full_name ?? "Player"} src={person?.avatar_url} small />
+        <Avatar
+          name={person?.full_name ?? "Player"}
+          src={person?.avatar_url}
+          small
+        />
         <div className="min-w-0 flex-1">
-          <p className="truncate font-bold text-slate-900">{person?.full_name ?? "Player"}</p>
+          <p className="truncate font-bold text-slate-900">
+            {person?.full_name ?? "Player"}
+          </p>
           <p className="truncate text-xs font-bold text-slate-500">
             {[
               stat.goals ? `${stat.goals} G` : null,
@@ -2164,11 +2454,14 @@ function MatchPlayerRatings({
               stat.minutes != null ? `${stat.minutes}'` : null,
             ]
               .filter(Boolean)
-              .join(" · ") || String(reg?.football_position ?? "").replaceAll("_", " ")}
+              .join(" · ") ||
+              String(reg?.football_position ?? "").replaceAll("_", " ")}
           </p>
         </div>
         {rating != null ? (
-          <span className={`rounded-lg px-2 py-1 text-sm font-black text-white ${ratingTone(rating)}`}>
+          <span
+            className={`rounded-lg px-2 py-1 text-sm font-black text-white ${ratingTone(rating)}`}
+          >
             {rating.toFixed(1)}
           </span>
         ) : null}
@@ -2195,8 +2488,10 @@ function MatchStatsCompare({
   away: string;
 }) {
   const homeId = fixture.home_team_registration_id;
-  const homeStat = stats.find((stat) => stat.team_registration_id === homeId) ?? stats[0];
-  const awayStat = stats.find((stat) => stat.team_registration_id !== homeId) ?? stats[1];
+  const homeStat =
+    stats.find((stat) => stat.team_registration_id === homeId) ?? stats[0];
+  const awayStat =
+    stats.find((stat) => stat.team_registration_id !== homeId) ?? stats[1];
   const rows: { label: string; key: string; bar?: boolean }[] = [
     { label: "Possession %", key: "possession", bar: true },
     { label: "Expected goals (xG)", key: "expected_goals" },
@@ -2229,20 +2524,22 @@ function MatchStatsCompare({
         return (
           <div key={row.key}>
             <div className="flex items-center justify-between gap-3 text-sm">
-              <span className="w-12 text-left font-black text-slate-900">{fmt(h)}</span>
+              <span className="w-12 text-left font-black text-slate-900">
+                {fmt(h)}
+              </span>
               <span className="flex-1 text-center text-xs font-bold uppercase tracking-wide text-slate-500">
                 {row.label}
               </span>
-              <span className="w-12 text-right font-black text-slate-900">{fmt(a)}</span>
+              <span className="w-12 text-right font-black text-slate-900">
+                {fmt(a)}
+              </span>
             </div>
             <div className="mt-1 flex h-1.5 gap-1 overflow-hidden rounded-full">
               <div
                 className="rounded-full bg-[var(--team-primary)] transition-all"
                 style={{ width: `${homePct}%` }}
               />
-              <div
-                className="flex-1 rounded-full bg-slate-300"
-              />
+              <div className="flex-1 rounded-full bg-slate-300" />
             </div>
           </div>
         );
@@ -2297,7 +2594,8 @@ function TeamProfileView({
         if (alive) setPayload(data);
       })
       .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : "Failed to load team");
+        if (alive)
+          setError(err instanceof Error ? err.message : "Failed to load team");
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -2363,7 +2661,11 @@ function TeamProfileView({
         </div>
       </section>
 
-      <Tabs tabs={["Overview", "Squad", "Fixtures"]} active={tab} onChange={(next) => setTab(next as typeof tab)} />
+      <Tabs
+        tabs={["Overview", "Squad", "Fixtures"]}
+        active={tab}
+        onChange={(next) => setTab(next as typeof tab)}
+      />
 
       {tab === "Overview" ? (
         payload.standings.length === 0 ? (
@@ -2372,10 +2674,15 @@ function TeamProfileView({
           </Panel>
         ) : (
           standingGroups.map(([groupName, rows]) => (
-            <Panel key={groupName || "table"} title={groupName ? `Group ${groupName}` : "Standings"}>
+            <Panel
+              key={groupName || "table"}
+              title={groupName ? `Group ${groupName}` : "Standings"}
+            >
               <StandingsTable
                 rows={rows}
-                favoriteTeamIds={new Set(favorites.map((favorite) => favorite.team_id))}
+                favoriteTeamIds={
+                  new Set(favorites.map((favorite) => favorite.team_id))
+                }
                 onOpenTeam={() => undefined}
                 highlightRegistrationId={payload.team.id}
               />
@@ -2401,7 +2708,11 @@ function TeamProfileView({
                     <span className="w-6 shrink-0 text-center font-black text-slate-400">
                       {player.shirt_number ?? "-"}
                     </span>
-                    <Avatar name={identity?.full_name ?? "Player"} src={identity?.avatar_url} small />
+                    <Avatar
+                      name={identity?.full_name ?? "Player"}
+                      src={identity?.avatar_url}
+                      small
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-black text-slate-900">
                         {identity?.full_name ?? "Player"}
@@ -2482,7 +2793,10 @@ function PlayerProfileView({
         if (alive) setPayload(data);
       })
       .catch((err) => {
-        if (alive) setError(err instanceof Error ? err.message : "Failed to load player");
+        if (alive)
+          setError(
+            err instanceof Error ? err.message : "Failed to load player",
+          );
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -2509,7 +2823,10 @@ function PlayerProfileView({
       <BackButton label="Back" onClick={onBack} />
       <section className="rounded-3xl border border-[#E5E7EB] bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center gap-4">
-          <Avatar name={identity?.full_name ?? "Player"} src={identity?.avatar_url} />
+          <Avatar
+            name={identity?.full_name ?? "Player"}
+            src={identity?.avatar_url}
+          />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="break-words text-2xl font-black leading-tight sm:text-3xl">
@@ -2545,7 +2862,11 @@ function PlayerProfileView({
 
       <PlayerSeasonHighlights stats={stats} isGoalkeeper={isGoalkeeper} />
 
-      <Tabs tabs={["Season stats", "Match by match"]} active={tab} onChange={setTab} />
+      <Tabs
+        tabs={["Season stats", "Match by match"]}
+        active={tab}
+        onChange={setTab}
+      />
 
       {tab === "Season stats" ? (
         <PlayerStatsBreakdown stats={stats} isGoalkeeper={isGoalkeeper} />
@@ -2586,14 +2907,24 @@ function PlayerSeasonHighlights({
         { label: "Assists", value: fanStatValue(stats?.assists) },
         { label: "Avg rating", value: fanFormatRating(stats?.average_rating) },
         { label: "Minutes", value: fanStatValue(stats?.minutes_played) },
-        { label: "Cards", value: `${fanStatValue(stats?.yellow_cards)}Y / ${fanStatValue(stats?.red_cards)}R` },
+        {
+          label: "Cards",
+          value: `${fanStatValue(stats?.yellow_cards)}Y / ${fanStatValue(stats?.red_cards)}R`,
+        },
       ];
   return (
     <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
       {cards.map((card) => (
-        <div key={card.label} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
-          <p className="text-xs font-bold uppercase tracking-widest text-slate-400">{card.label}</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{card.value}</p>
+        <div
+          key={card.label}
+          className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-100"
+        >
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
+            {card.label}
+          </p>
+          <p className="mt-1 text-2xl font-black text-slate-900">
+            {card.value}
+          </p>
         </div>
       ))}
     </div>
@@ -2608,101 +2939,102 @@ function PlayerStatsBreakdown({
   stats: Record<string, number | string | null> | null;
   isGoalkeeper: boolean;
 }) {
-  const sections: Array<{ title: string; items: Array<[string, string]> }> = isGoalkeeper
-    ? [
-        {
-          title: "General",
-          items: [
-            ["Matches Played", "matches_played"],
-            ["Starts", "starts"],
-            ["Minutes Played", "minutes_played"],
-            ["Average Rating", "average_rating"],
-            ["Best Rating", "best_match_rating"],
-            ["Lowest Rating", "lowest_match_rating"],
-          ],
-        },
-        {
-          title: "Goalkeeping",
-          items: [
-            ["Saves", "saves"],
-            ["Diving Saves", "diving_saves"],
-            ["Saves Inside Box", "saves_inside_box"],
-            ["Goals Conceded", "goals_conceded"],
-            ["Clean Sheets", "clean_sheets"],
-          ],
-        },
-        {
-          title: "Distribution",
-          items: [
-            ["Accurate Passes", "accurate_passes"],
-            ["Accurate Long Balls", "accurate_long_balls"],
-            ["Clearances", "clearances"],
-          ],
-        },
-        {
-          title: "Discipline",
-          items: [
-            ["Fouls Committed", "fouls_committed"],
-            ["Yellow Cards", "yellow_cards"],
-            ["Red Cards", "red_cards"],
-          ],
-        },
-      ]
-    : [
-        {
-          title: "General",
-          items: [
-            ["Matches Played", "matches_played"],
-            ["Starts", "starts"],
-            ["Minutes Played", "minutes_played"],
-            ["Average Rating", "average_rating"],
-            ["Best Rating", "best_match_rating"],
-            ["Lowest Rating", "lowest_match_rating"],
-          ],
-        },
-        {
-          title: "Attack",
-          items: [
-            ["Goals", "goals"],
-            ["Assists", "assists"],
-            ["Shots", "shots"],
-            ["Shots on Target", "shots_on_target"],
-            ["Shot Accuracy", "shot_accuracy"],
-            ["Chances Created", "chances_created"],
-            ["Big Chances Created", "big_chances_created"],
-            ["Big Chances Missed", "big_chances_missed"],
-          ],
-        },
-        {
-          title: "Passing + Dribbling",
-          items: [
-            ["Total Passes", "total_passes"],
-            ["Accurate Passes", "accurate_passes"],
-            ["Pass Accuracy", "pass_accuracy"],
-            ["Dribbles Attempted", "dribbles_attempted"],
-            ["Successful Dribbles", "successful_dribbles"],
-            ["Dribble Success Rate", "dribble_success_rate"],
-            ["Dispossessed", "dispossessed"],
-          ],
-        },
-        {
-          title: "Defense",
-          items: [
-            ["Tackles", "tackles"],
-            ["Interceptions", "interceptions"],
-            ["Clearances", "clearances"],
-            ["Blocks", "blocks"],
-          ],
-        },
-        {
-          title: "Discipline",
-          items: [
-            ["Fouls Committed", "fouls_committed"],
-            ["Yellow Cards", "yellow_cards"],
-            ["Red Cards", "red_cards"],
-          ],
-        },
-      ];
+  const sections: Array<{ title: string; items: Array<[string, string]> }> =
+    isGoalkeeper
+      ? [
+          {
+            title: "General",
+            items: [
+              ["Matches Played", "matches_played"],
+              ["Starts", "starts"],
+              ["Minutes Played", "minutes_played"],
+              ["Average Rating", "average_rating"],
+              ["Best Rating", "best_match_rating"],
+              ["Lowest Rating", "lowest_match_rating"],
+            ],
+          },
+          {
+            title: "Goalkeeping",
+            items: [
+              ["Saves", "saves"],
+              ["Diving Saves", "diving_saves"],
+              ["Saves Inside Box", "saves_inside_box"],
+              ["Goals Conceded", "goals_conceded"],
+              ["Clean Sheets", "clean_sheets"],
+            ],
+          },
+          {
+            title: "Distribution",
+            items: [
+              ["Accurate Passes", "accurate_passes"],
+              ["Accurate Long Balls", "accurate_long_balls"],
+              ["Clearances", "clearances"],
+            ],
+          },
+          {
+            title: "Discipline",
+            items: [
+              ["Fouls Committed", "fouls_committed"],
+              ["Yellow Cards", "yellow_cards"],
+              ["Red Cards", "red_cards"],
+            ],
+          },
+        ]
+      : [
+          {
+            title: "General",
+            items: [
+              ["Matches Played", "matches_played"],
+              ["Starts", "starts"],
+              ["Minutes Played", "minutes_played"],
+              ["Average Rating", "average_rating"],
+              ["Best Rating", "best_match_rating"],
+              ["Lowest Rating", "lowest_match_rating"],
+            ],
+          },
+          {
+            title: "Attack",
+            items: [
+              ["Goals", "goals"],
+              ["Assists", "assists"],
+              ["Shots", "shots"],
+              ["Shots on Target", "shots_on_target"],
+              ["Shot Accuracy", "shot_accuracy"],
+              ["Chances Created", "chances_created"],
+              ["Big Chances Created", "big_chances_created"],
+              ["Big Chances Missed", "big_chances_missed"],
+            ],
+          },
+          {
+            title: "Passing + Dribbling",
+            items: [
+              ["Total Passes", "total_passes"],
+              ["Accurate Passes", "accurate_passes"],
+              ["Pass Accuracy", "pass_accuracy"],
+              ["Dribbles Attempted", "dribbles_attempted"],
+              ["Successful Dribbles", "successful_dribbles"],
+              ["Dribble Success Rate", "dribble_success_rate"],
+              ["Dispossessed", "dispossessed"],
+            ],
+          },
+          {
+            title: "Defense",
+            items: [
+              ["Tackles", "tackles"],
+              ["Interceptions", "interceptions"],
+              ["Clearances", "clearances"],
+              ["Blocks", "blocks"],
+            ],
+          },
+          {
+            title: "Discipline",
+            items: [
+              ["Fouls Committed", "fouls_committed"],
+              ["Yellow Cards", "yellow_cards"],
+              ["Red Cards", "red_cards"],
+            ],
+          },
+        ];
 
   return (
     <div className="space-y-5">
@@ -2718,7 +3050,13 @@ function PlayerStatsBreakdown({
                 <Detail
                   key={key}
                   label={label}
-                  value={isRating ? <RatingCapsule value={stats?.[key]} /> : fanFormatStat(stats, key)}
+                  value={
+                    isRating ? (
+                      <RatingCapsule value={stats?.[key]} />
+                    ) : (
+                      fanFormatStat(stats, key)
+                    )
+                  }
                 />
               );
             })}
@@ -2769,7 +3107,8 @@ function PlayerMatchLog({
             const fixture = one<any>(row.fixtures);
             const homeTeam = one<any>(fixture?.home_team);
             const awayTeam = one<any>(fixture?.away_team);
-            const playerIsHome = fixture?.home_team_registration_id === playerTeamRegistrationId;
+            const playerIsHome =
+              fixture?.home_team_registration_id === playerTeamRegistrationId;
             const opponentTeam = playerIsHome ? awayTeam : homeTeam;
             const ownTeam = playerIsHome ? homeTeam : awayTeam;
             const homeName = homeTeam?.teams?.name ?? "Home";
@@ -2777,8 +3116,10 @@ function PlayerMatchLog({
             const matchName = fixture ? `${homeName} vs ${awayName}` : "Match";
             const final = fixture?.status === "FINAL";
             const score =
-              final && fixture?.home_score != null && fixture?.away_score != null
-                ? `${fixture.home_score} - ${fixture.away_score}`
+              final &&
+              fixture?.home_score != null &&
+              fixture?.away_score != null
+                ? `${fixtureOutcomeScore(fixture)}${fixtureOutcomeLabel(fixture) ? ` · ${fixtureOutcomeLabel(fixture)}` : ""}`
                 : (fixture?.status ?? "Scheduled");
             const clickable = Boolean(onOpenMatch && fixture?.id);
             return (
@@ -2790,30 +3131,51 @@ function PlayerMatchLog({
                 <td className="px-3 py-2">
                   <div className="flex min-w-[220px] items-center gap-3">
                     <Avatar
-                      name={opponentTeam?.teams?.name ?? ownTeam?.teams?.name ?? "Opponent"}
-                      src={opponentTeam?.teams?.logo_url ?? ownTeam?.teams?.logo_url}
+                      name={
+                        opponentTeam?.teams?.name ??
+                        ownTeam?.teams?.name ??
+                        "Opponent"
+                      }
+                      src={
+                        opponentTeam?.teams?.logo_url ??
+                        ownTeam?.teams?.logo_url
+                      }
                       small
                     />
                     <div className="min-w-0">
-                      <p className="truncate font-black text-slate-900">{matchName}</p>
+                      <p className="truncate font-black text-slate-900">
+                        {matchName}
+                      </p>
                       <p className="text-xs font-bold text-slate-500">
-                        {fixture ? `${formatDate(fixture.kickoff_at)} · ${score}` : "Fixture unavailable"}
+                        {fixture
+                          ? `${formatDate(fixture.kickoff_at)} · ${score}`
+                          : "Fixture unavailable"}
                       </p>
                     </div>
                   </div>
                 </td>
-                <td className="px-3 py-2">{fanStatValue(row.minutes ?? row.minutes_played)}</td>
                 <td className="px-3 py-2">
-                  {isGoalkeeper ? fanStatValue(row.goals_conceded) : fanStatValue(row.goals)}
+                  {fanStatValue(row.minutes ?? row.minutes_played)}
                 </td>
                 <td className="px-3 py-2">
-                  {isGoalkeeper ? fanStatValue(row.saves) : fanStatValue(row.assists)}
+                  {isGoalkeeper
+                    ? fanStatValue(row.goals_conceded)
+                    : fanStatValue(row.goals)}
                 </td>
                 <td className="px-3 py-2">
-                  {fanPercentage(row.accurate_passes, row.passes ?? row.total_passes)}
+                  {isGoalkeeper
+                    ? fanStatValue(row.saves)
+                    : fanStatValue(row.assists)}
                 </td>
                 <td className="px-3 py-2">
-                  {fanStatValue(row.yellow_cards)}Y / {fanStatValue(row.red_cards)}R
+                  {fanPercentage(
+                    row.accurate_passes,
+                    row.passes ?? row.total_passes,
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  {fanStatValue(row.yellow_cards)}Y /{" "}
+                  {fanStatValue(row.red_cards)}R
                 </td>
                 <td className="px-3 py-2">
                   <RatingCapsule value={row.rating} />
@@ -2833,7 +3195,8 @@ function RatingCapsule({ value, label }: { value: unknown; label?: string }) {
     return <span className="text-slate-400">-</span>;
   }
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return <span className="text-slate-400">-</span>;
+  if (!Number.isFinite(numeric))
+    return <span className="text-slate-400">-</span>;
   const tone =
     numeric >= 8
       ? "bg-emerald-600"
@@ -2843,7 +3206,9 @@ function RatingCapsule({ value, label }: { value: unknown; label?: string }) {
           ? "bg-amber-500"
           : "bg-red-500";
   return (
-    <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-black text-white ${tone}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-black text-white ${tone}`}
+    >
       {label ? <span className="opacity-80">{label}</span> : null}
       {numeric.toFixed(1)}
     </span>
@@ -2872,10 +3237,15 @@ function fanPercentage(numerator: unknown, denominator: unknown) {
 
 // Formats a single season-stat field, deriving percentage fields from their
 // numerator/denominator so they stay consistent with the raw counts.
-function fanFormatStat(stats: Record<string, number | string | null> | null, key: string) {
+function fanFormatStat(
+  stats: Record<string, number | string | null> | null,
+  key: string,
+) {
   if (!stats) return "0";
-  if (key === "shot_accuracy") return fanPercentage(stats.shots_on_target, stats.shots);
-  if (key === "pass_accuracy") return fanPercentage(stats.accurate_passes, stats.total_passes);
+  if (key === "shot_accuracy")
+    return fanPercentage(stats.shots_on_target, stats.shots);
+  if (key === "pass_accuracy")
+    return fanPercentage(stats.accurate_passes, stats.total_passes);
   if (key === "dribble_success_rate")
     return fanPercentage(stats.successful_dribbles, stats.dribbles_attempted);
   return fanStatValue(stats[key]);
@@ -2885,7 +3255,15 @@ function fanFormatStat(stats: Record<string, number | string | null> | null, key
 // SHARED PRESENTATIONAL COMPONENTS
 // ===========================================================================
 
-function Avatar({ name, src, small = false }: { name: string; src?: string | null | undefined; small?: boolean }) {
+function Avatar({
+  name,
+  src,
+  small = false,
+}: {
+  name: string;
+  src?: string | null | undefined;
+  small?: boolean;
+}) {
   const size = small ? "h-9 w-9 text-xs" : "h-12 w-12";
   if (src) {
     return (
@@ -2918,7 +3296,9 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 function PageTitle({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div>
-      <h1 className="break-words text-3xl font-black leading-tight sm:text-4xl">{title}</h1>
+      <h1 className="break-words text-3xl font-black leading-tight sm:text-4xl">
+        {title}
+      </h1>
       {subtitle ? <p className="mt-2 text-slate-600">{subtitle}</p> : null}
     </div>
   );
@@ -2927,8 +3307,12 @@ function PageTitle({ title, subtitle }: { title: string; subtitle?: string }) {
 function Detail({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-w-0 rounded-2xl bg-slate-50 p-4">
-      <p className="text-xs font-bold uppercase tracking-widest text-slate-500">{label}</p>
-      <p className="mt-1 break-words font-bold text-slate-900">{value ?? "-"}</p>
+      <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 break-words font-bold text-slate-900">
+        {value ?? "-"}
+      </p>
     </div>
   );
 }
@@ -3003,20 +3387,31 @@ function FixtureMini({
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <StageBadge stage={fixture.stage} />
-        <span className="text-xs font-bold text-slate-500">{formatDate(fixture.kickoff_at)}</span>
+        <span className="text-xs font-bold text-slate-500">
+          {formatDate(fixture.kickoff_at)}
+        </span>
       </div>
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Avatar name={teamName(home)} src={home?.logo_url} small />
-          <span className="truncate font-black text-slate-900">{teamName(home)}</span>
+          <span className="truncate font-black text-slate-900">
+            {teamName(home)}
+          </span>
         </div>
-        <span className="shrink-0 rounded-2xl bg-white px-4 py-2 text-lg font-black text-slate-950 shadow-sm">
-          {showScore && final
-            ? `${fixture.home_score ?? 0} : ${fixture.away_score ?? 0}`
-            : "vs"}
+        <span className="shrink-0 rounded-2xl bg-white px-4 py-2 text-center text-lg font-black text-slate-950 shadow-sm">
+          <span className="block">
+            {showScore && final ? (fixtureOutcomeScore(fixture) ?? "-") : "vs"}
+          </span>
+          {showScore && final && fixtureOutcomeLabel(fixture) ? (
+            <span className="mt-0.5 block text-[10px] font-bold text-slate-500">
+              {fixtureOutcomeLabel(fixture)}
+            </span>
+          ) : null}
         </span>
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2 text-right">
-          <span className="truncate font-black text-slate-900">{teamName(away)}</span>
+          <span className="truncate font-black text-slate-900">
+            {teamName(away)}
+          </span>
           <Avatar name={teamName(away)} src={away?.logo_url} small />
         </div>
       </div>
@@ -3066,7 +3461,9 @@ function StandingsTable({
                     onClick={() => onOpenTeam(row.team_registration_id)}
                   >
                     <Avatar name={teamName(team)} src={team?.logo_url} small />
-                    <span className="truncate font-black text-slate-900">{teamName(team)}</span>
+                    <span className="truncate font-black text-slate-900">
+                      {teamName(team)}
+                    </span>
                   </button>
                 </td>
                 <td className="px-4 py-3">{row.played}</td>
@@ -3074,7 +3471,9 @@ function StandingsTable({
                 <td className="px-4 py-3">{row.drawn}</td>
                 <td className="px-4 py-3">{row.lost}</td>
                 <td className="px-4 py-3">{row.goal_difference}</td>
-                <td className="px-4 py-3 font-black text-[var(--team-primary)]">{row.points}</td>
+                <td className="px-4 py-3 font-black text-[var(--team-primary)]">
+                  {row.points}
+                </td>
               </tr>
             );
           })}
@@ -3092,7 +3491,13 @@ function StageBadge({ stage }: { stage?: string | null }) {
   );
 }
 
-function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
+function BackButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
   return (
     <button
       className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-black text-slate-700 transition hover:border-[var(--team-primary)] hover:text-[var(--team-primary)]"
@@ -3150,14 +3555,18 @@ function OnboardingModal({
         setSeasons(data.seasons);
         setSeasonId(data.seasons[0]?.id ?? "");
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"));
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load"),
+      );
   }, []);
 
   useEffect(() => {
     if (!seasonId) return;
     api<{ teams: any[] }>(`/fan/seasons/${seasonId}/teams`)
       .then((data) => setTeams(data.teams))
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load teams"));
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Failed to load teams"),
+      );
   }, [seasonId]);
 
   return (
@@ -3165,9 +3574,12 @@ function OnboardingModal({
       <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl sm:rounded-[2rem] sm:p-6">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-xl font-black text-slate-950">Pick your club</h2>
+            <h2 className="text-xl font-black text-slate-950">
+              Pick your club
+            </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Follow a team to personalise your dashboard. You can skip and choose later.
+              Follow a team to personalise your dashboard. You can skip and
+              choose later.
             </p>
           </div>
           <button
@@ -3219,7 +3631,11 @@ function OnboardingModal({
                     }
                   }}
                 >
-                  <Avatar name={club?.name ?? "Team"} src={club?.logo_url} small />
+                  <Avatar
+                    name={club?.name ?? "Team"}
+                    src={club?.logo_url}
+                    small
+                  />
                   <span className="min-w-0 flex-1 truncate font-black text-slate-900">
                     {club?.name ?? "Team"}
                   </span>
