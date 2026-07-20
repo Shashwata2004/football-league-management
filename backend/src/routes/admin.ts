@@ -327,9 +327,12 @@ adminRouter.post(
   "/seasons",
   asyncHandler(async (req, res) => {
     const input = createSeasonSchema.parse(req.body);
+    // copy_from_season_id is a control field for carrying over teams/players;
+    // it is not a column on the seasons table, so strip it before insert.
+    const { copy_from_season_id, ...seasonFields } = input;
     // Lineup size is fixed at 11 across the app (validation and simulation
     // require exactly 11 starters), so it is never a configurable setting.
-    const seasonInput = { ...input, lineup_size: 11 };
+    const seasonInput = { ...seasonFields, lineup_size: 11 };
     const { data, error } = await supabaseAdmin
       .from("seasons")
       .insert(seasonInput)
@@ -357,7 +360,16 @@ adminRouter.post(
       });
     }
     if (error) throw error;
-    res.status(201).json({ season: data });
+    let carryover: SeasonCarryoverSummary | null = null;
+    if (copy_from_season_id) {
+      carryover = await carryOverSeasonEntrants(
+        copy_from_season_id,
+        data.id,
+        data.name,
+        req.auth!.userId,
+      );
+    }
+    res.status(201).json({ season: data, carryover });
   }),
 );
 
@@ -473,6 +485,132 @@ function isSchemaCacheColumnError(error: unknown) {
     typeof error.message === "string" &&
     error.message.includes("schema cache")
   );
+}
+
+type SeasonCarryoverSummary = {
+  teams: number;
+  players: number;
+  managers_notified: number;
+};
+
+// When an admin creates a new season by copying a previous one, we roll the
+// prior season's participants forward. Teams are re-registered as PENDING so
+// they land in the admin's Team Requests queue (admin acts first). Their
+// players are re-registered as DRAFT so managers must review and re-submit
+// them for the new season. Every affected manager gets a notice message.
+async function carryOverSeasonEntrants(
+  sourceSeasonId: string,
+  targetSeasonId: string,
+  targetSeasonName: string,
+  actorId: string,
+): Promise<SeasonCarryoverSummary> {
+  const { data: sourceTeams, error: teamsError } = await supabaseAdmin
+    .from("team_registrations")
+    .select("id,team_id,manager_id,status")
+    .eq("season_id", sourceSeasonId)
+    .in("status", [RegistrationStatus.APPROVED, RegistrationStatus.PENDING]);
+  if (teamsError) throw teamsError;
+  if (!sourceTeams || sourceTeams.length === 0) {
+    return { teams: 0, players: 0, managers_notified: 0 };
+  }
+
+  const nowIso = new Date().toISOString();
+  let playerCount = 0;
+  const managerIds = new Set<string>();
+
+  for (const sourceTeam of sourceTeams) {
+    // Re-register the team for the new season as PENDING. If this team is
+    // already registered for the target season (unique season_id,team_id),
+    // reuse the existing row instead of failing the whole carryover.
+    const { data: newTeam, error: insertTeamError } = await supabaseAdmin
+      .from("team_registrations")
+      .insert({
+        season_id: targetSeasonId,
+        team_id: sourceTeam.team_id,
+        manager_id: sourceTeam.manager_id,
+        status: RegistrationStatus.PENDING,
+      })
+      .select("id")
+      .single();
+
+    let targetTeamRegistrationId: string;
+    if (insertTeamError) {
+      if (insertTeamError.code === "23505") {
+        const { data: existing, error: existingError } = await supabaseAdmin
+          .from("team_registrations")
+          .select("id")
+          .eq("season_id", targetSeasonId)
+          .eq("team_id", sourceTeam.team_id)
+          .single();
+        if (existingError) throw existingError;
+        targetTeamRegistrationId = existing.id;
+      } else {
+        throw insertTeamError;
+      }
+    } else {
+      targetTeamRegistrationId = newTeam.id;
+    }
+    managerIds.add(sourceTeam.manager_id);
+
+    // Carry the team's prior players over as DRAFT registrations so the
+    // manager can review, delete, and re-submit them for the new season.
+    const { data: sourcePlayers, error: playersError } = await supabaseAdmin
+      .from("player_season_registrations")
+      .select(
+        "player_id,position,football_position,position_category,shirt_number,ability_rating,preferred_foot,identity_mode,is_generated,created_by_manager_id",
+      )
+      .eq("team_registration_id", sourceTeam.id)
+      .in("status", [RegistrationStatus.APPROVED, RegistrationStatus.PENDING]);
+    if (playersError) throw playersError;
+    if (!sourcePlayers || sourcePlayers.length === 0) continue;
+
+    const playerRows = sourcePlayers.map((player) => ({
+      player_id: player.player_id,
+      season_id: targetSeasonId,
+      team_registration_id: targetTeamRegistrationId,
+      position: player.position,
+      football_position: player.football_position,
+      position_category: player.position_category,
+      shirt_number: player.shirt_number,
+      ability_rating: player.ability_rating,
+      preferred_foot: player.preferred_foot,
+      player_status: PlayerLifecycleStatus.ACTIVE,
+      identity_mode: player.identity_mode,
+      is_generated: player.is_generated,
+      created_by_manager_id:
+        player.created_by_manager_id ?? sourceTeam.manager_id,
+      status: RegistrationStatus.DRAFT,
+    }));
+    const { data: insertedPlayers, error: insertPlayersError } =
+      await supabaseAdmin
+        .from("player_season_registrations")
+        .insert(playerRows)
+        .select("id");
+    if (insertPlayersError) throw insertPlayersError;
+    playerCount += insertedPlayers?.length ?? 0;
+
+    // Notify the manager that a new season has opened and their team plus
+    // squad have been carried forward for review and re-submission.
+    const { error: messageError } = await supabaseAdmin
+      .from("manager_messages")
+      .insert({
+        season_id: targetSeasonId,
+        manager_id: sourceTeam.manager_id,
+        team_registration_id: targetTeamRegistrationId,
+        related_type: "GENERAL_NOTICE",
+        sender_role: UserRole.ADMIN,
+        message: `A new season "${targetSeasonName}" has opened. Your team has been carried over and is pending admin approval. Your previous players are waiting in your Players section as drafts — review, remove, or re-submit them for this season.`,
+        created_by: actorId,
+        created_at: nowIso,
+      });
+    if (messageError) throw messageError;
+  }
+
+  return {
+    teams: sourceTeams.length,
+    players: playerCount,
+    managers_notified: managerIds.size,
+  };
 }
 
 adminRouter.get(

@@ -25,6 +25,7 @@ export const createLeagueSchema = z.object({
 export const createSeasonSchema = z
   .object({
     league_id: uuidSchema,
+    copy_from_season_id: uuidSchema.optional(),
     name: z.string().trim().min(2).max(120),
     season_year: z.number().int().min(1900).max(2200).optional(),
     registration_start_date: z.string().date().optional(),

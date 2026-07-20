@@ -127,6 +127,7 @@ export default function AdminDashboard() {
   const [leagueStep, setLeagueStep] = useState(1);
   const [seasonStep, setSeasonStep] = useState(1);
   const [selectedLeagueId, setSelectedLeagueId] = useState("");
+  const [copyFromSeasonId, setCopyFromSeasonId] = useState("");
   const [leagueForm, setLeagueForm] = useState<LeagueForm>(() => emptyLeagueForm());
   const [seasonForm, setSeasonForm] = useState<SeasonForm>(() => defaultSeasonForm());
   const [message, setMessage] = useState("");
@@ -174,7 +175,11 @@ export default function AdminDashboard() {
     numberValue(seasonForm.group_count) * numberValue(seasonForm.qualifiers_per_group) +
     numberValue(seasonForm.best_third_place_teams);
   const expectedFinalStep = hasGroupKnockout ? 6 : 5;
-  const expectedSeasonFinalStep = hasGroupKnockout ? 7 : 6;
+  // When copying a previous season, all format/rules are inherited silently, so
+  // the wizard stops at step 3 (Season Details: year + dates) instead of walking
+  // through the format/rules steps.
+  const isCopyingSeason = copyFromSeasonId !== "";
+  const expectedSeasonFinalStep = isCopyingSeason ? 3 : hasGroupKnockout ? 7 : 6;
 
   function updateLeagueForm(field: keyof LeagueForm, value: string) {
     setLeagueForm((current) => ({ ...current, [field]: value }));
@@ -196,6 +201,7 @@ export default function AdminDashboard() {
     setLeagueForm(emptyLeagueForm());
     setSeasonForm(defaultSeasonForm());
     setSelectedLeagueId("");
+    setCopyFromSeasonId("");
     setQuickAction("menu");
     setLeagueStep(1);
     setSeasonStep(1);
@@ -208,6 +214,7 @@ export default function AdminDashboard() {
 
   function copyPreviousSettings() {
     if (!previousSeason) return;
+    setCopyFromSeasonId(previousSeason.id);
     setSeasonForm((current) => ({
       ...current,
       format: previousSeason.format,
@@ -249,6 +256,7 @@ export default function AdminDashboard() {
   function buildSeasonPayload(leagueId: string) {
     const base = {
       league_id: leagueId,
+      ...(copyFromSeasonId ? { copy_from_season_id: copyFromSeasonId } : {}),
       name: seasonNameFromYear(seasonForm.season_year),
       season_year: numberValue(seasonForm.season_year),
       registration_start_date: optionalText(seasonForm.registration_start_date),
@@ -327,11 +335,24 @@ export default function AdminDashboard() {
       return;
     }
     try {
-      await api<{ season: SeasonDto }>("/admin/seasons", {
+      const result = await api<{
+        season: SeasonDto;
+        carryover: {
+          teams: number;
+          players: number;
+          managers_notified: number;
+        } | null;
+      }>("/admin/seasons", {
         method: "POST",
         body: JSON.stringify(buildSeasonPayload(selectedLeagueId))
       });
-      setMessage("Season created and registration opened.");
+      if (result.carryover && result.carryover.teams > 0) {
+        setMessage(
+          `Season created. Carried over ${result.carryover.teams} team(s) as pending and ${result.carryover.players} player(s) as drafts. ${result.carryover.managers_notified} manager(s) notified.`
+        );
+      } else {
+        setMessage("Season created and registration opened.");
+      }
       resetForms();
       setDrawerOpen(false);
       await load();
@@ -695,6 +716,7 @@ export default function AdminDashboard() {
             <button
               type="button"
               onClick={() => {
+                setCopyFromSeasonId("");
                 setSeasonForm(defaultSeasonForm());
                 setSeasonStep(3);
               }}
