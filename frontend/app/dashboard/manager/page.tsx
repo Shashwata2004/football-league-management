@@ -40,6 +40,7 @@ import {
   RegistrationStatus,
 } from "@flms/shared";
 import { api } from "@/lib/api";
+import { pickCurrentSeason } from "@/lib/seasons";
 import { clearAuth, updateStoredProfile } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
@@ -86,6 +87,7 @@ interface Season {
   season_year: number | null;
   format: string;
   phase?: string;
+  created_at?: string | null;
   max_players_per_team: number | null;
   lineup_size?: number | null;
   substitute_limit?: number | null;
@@ -1340,6 +1342,35 @@ export default function ManagerDashboardPage() {
 
   const activeSeason = one(activeTeam?.seasons);
   const activeLeague = one(activeSeason?.leagues);
+
+  // Seasons the manager can inspect stats/standings for: every distinct season
+  // one of their teams has participated in, newest first. Stats/standings views
+  // can browse any of these; lineup/fixtures flows keep using the active team's
+  // own season (`activeSeason`).
+  const managerSeasons = useMemo(() => {
+    const map = new Map<string, Season>();
+    (payload?.teams ?? []).forEach((team) => {
+      const season = one(team.seasons);
+      if (season && !map.has(season.id)) map.set(season.id, season);
+    });
+    return Array.from(map.values()).sort(
+      (a, b) => (b.season_year ?? 0) - (a.season_year ?? 0),
+    );
+  }, [payload?.teams]);
+
+  const [statsSeasonId, setStatsSeasonId] = useState("");
+  useEffect(() => {
+    setStatsSeasonId(
+      (current) =>
+        (current && managerSeasons.some((season) => season.id === current)
+          ? current
+          : "") || pickCurrentSeason(managerSeasons)?.id || "",
+    );
+  }, [managerSeasons]);
+  const statsSeason =
+    managerSeasons.find((season) => season.id === statsSeasonId) ??
+    activeSeason;
+
   const unreadMessages =
     payload?.messages.filter((item) => !item.read_at).length ?? 0;
   const teamPrimary = managerTheme.primary;
@@ -1461,6 +1492,9 @@ export default function ManagerDashboardPage() {
               activeTeam={activeTeam}
               activeSeason={activeSeason}
               activeLeague={activeLeague}
+              statsSeason={statsSeason}
+              statsSeasons={managerSeasons}
+              onStatsSeasonChange={setStatsSeasonId}
               summary={
                 teamDetail?.squad_summary ?? payload?.squad_summary ?? null
               }
@@ -1738,6 +1772,9 @@ function SectionView(props: {
   activeTeam: TeamRecord | null;
   activeSeason: Season | null;
   activeLeague: League | null;
+  statsSeason: Season | null;
+  statsSeasons: Season[];
+  onStatsSeasonChange: (seasonId: string) => void;
   summary: SquadSummary | null;
   players: PlayerRecord[];
   fixtures: FixtureRecord[];
@@ -3542,21 +3579,86 @@ function ResultsSection({
   );
 }
 
+function ManagerSeasonSelect({
+  seasons,
+  value,
+  onChange,
+}: {
+  seasons: Season[];
+  value: string;
+  onChange: (seasonId: string) => void;
+}) {
+  // Nothing to switch between when the manager only ever joined one season.
+  if (seasons.length <= 1) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
+      <label
+        className="text-sm font-black text-slate-600"
+        htmlFor="manager-season-select"
+      >
+        Season
+      </label>
+      <select
+        id="manager-season-select"
+        aria-label="Season"
+        className="manager-input max-w-xs"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {seasons.map((season) => (
+          <option key={season.id} value={season.id}>
+            {season.name}
+            {season.season_year ? ` (${season.season_year})` : ""}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function StandingsSection({
-  standings,
   activeTeam,
-  activeSeason,
+  statsSeason,
+  statsSeasons,
+  onStatsSeasonChange,
   onTeamClick,
 }: Parameters<typeof SectionView>[0]) {
+  const [standings, setStandings] = useState<StandingRecord[]>([]);
+  const [loadingStandings, setLoadingStandings] = useState(false);
   const [groups, setGroups] = useState<SeasonGroupRecord[]>([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
-  const isGroupKnockout = isManagerGroupKnockoutFormat(activeSeason?.format);
+  const isGroupKnockout = isManagerGroupKnockoutFormat(statsSeason?.format);
+
   useEffect(() => {
-    if (!isGroupKnockout || !activeSeason?.id) return;
+    if (!statsSeason?.id) {
+      setStandings([]);
+      return;
+    }
+    let alive = true;
+    setLoadingStandings(true);
+    api<{ standings: StandingRecord[] }>(
+      `/manager/standings?seasonId=${statsSeason.id}`,
+    )
+      .then((payload) => {
+        if (alive) setStandings(payload.standings);
+      })
+      .catch(() => {
+        if (alive) setStandings([]);
+      })
+      .finally(() => {
+        if (alive) setLoadingStandings(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [statsSeason?.id]);
+
+  useEffect(() => {
+    if (!isGroupKnockout || !statsSeason?.id) return;
     let alive = true;
     setLoadingGroups(true);
     api<{ groups: SeasonGroupRecord[] }>(
-      `/manager/seasons/${activeSeason.id}/groups`,
+      `/manager/seasons/${statsSeason.id}/groups`,
     )
       .then((payload) => {
         if (alive) setGroups(payload.groups);
@@ -3570,7 +3672,7 @@ function StandingsSection({
     return () => {
       alive = false;
     };
-  }, [activeSeason?.id, isGroupKnockout]);
+  }, [statsSeason?.id, isGroupKnockout]);
   const standingByTeam = useMemo(
     () => new Map(standings.map((row) => [row.team_registration_id, row])),
     [standings],
@@ -3582,6 +3684,11 @@ function StandingsSection({
         <PageTitle
           title="Standings"
           subtitle="Group tables for the selected group + knockout season."
+        />
+        <ManagerSeasonSelect
+          seasons={statsSeasons}
+          value={statsSeason?.id ?? ""}
+          onChange={onStatsSeasonChange}
         />
         {loadingGroups ? <LoadingState label="Loading groups..." /> : null}
         {!loadingGroups && groups.length === 0 ? (
@@ -3663,8 +3770,15 @@ function StandingsSection({
         title="Standings"
         subtitle="League table for the selected season."
       />
+      <ManagerSeasonSelect
+        seasons={statsSeasons}
+        value={statsSeason?.id ?? ""}
+        onChange={onStatsSeasonChange}
+      />
       <Panel title="Table">
-        {standings.length ? (
+        {loadingStandings ? (
+          <LoadingState label="Loading standings..." />
+        ) : standings.length ? (
           <div className="overflow-hidden rounded-2xl border border-slate-200">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500">
@@ -3839,19 +3953,26 @@ function GroupConditionPanel({
 function StatsSection({
   mode,
   activeTeam,
-  activeSeason,
+  statsSeason,
+  statsSeasons,
+  onStatsSeasonChange,
 }: Parameters<typeof SectionView>[0] & { mode: "player" | "team" }) {
+  // The manager's own team only exists in its own season; in any other season
+  // the "My team" shortcut is meaningless, so we fall back to All Stats.
+  const activeTeamInSeason =
+    !!activeTeam?.id && activeTeam.season_id === statsSeason?.id;
+  const defaultFilter = activeTeamInSeason ? activeTeam!.id : "ALL";
   const [seasonTeams, setSeasonTeams] = useState<TeamRecord[]>([]);
-  const [teamFilter, setTeamFilter] = useState(activeTeam?.id ?? "MY_TEAM");
+  const [teamFilter, setTeamFilter] = useState(defaultFilter);
   const [report, setReport] = useState<ManagerStatsReport | null>(null);
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!activeSeason?.id) return;
+    if (!statsSeason?.id) return;
     let alive = true;
-    api<{ teams: TeamRecord[] }>(`/manager/seasons/${activeSeason.id}/teams`)
+    api<{ teams: TeamRecord[] }>(`/manager/seasons/${statsSeason.id}/teams`)
       .then((payload) => {
         if (alive) setSeasonTeams(payload.teams);
       })
@@ -3861,21 +3982,16 @@ function StatsSection({
     return () => {
       alive = false;
     };
-  }, [activeSeason?.id]);
-
-  useEffect(() => {
-    if (!activeTeam?.id) return;
-    setTeamFilter(activeTeam.id);
-  }, [activeTeam?.id]);
+  }, [statsSeason?.id]);
 
   async function loadStats(value = teamFilter) {
-    if (!activeSeason?.id) return;
+    if (!statsSeason?.id) return;
     setLoading(true);
     setError("");
     try {
       const teamId = value === "MY_TEAM" ? (activeTeam?.id ?? "ALL") : value;
       const payload = await api<ManagerStatsReport>(
-        `/manager/seasons/${activeSeason.id}/stat-leaderboards?teamId=${teamId}`,
+        `/manager/seasons/${statsSeason.id}/stat-leaderboards?teamId=${teamId}`,
       );
       setReport(payload);
     } catch (err) {
@@ -3886,10 +4002,13 @@ function StatsSection({
     }
   }
 
+  // Reload whenever the selected season / team / mode changes, resetting the
+  // team filter to the manager's own team when it plays that season, else All.
   useEffect(() => {
-    void loadStats(activeTeam?.id ?? "ALL");
+    setTeamFilter(defaultFilter);
+    void loadStats(defaultFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSeason?.id, activeTeam?.id, mode]);
+  }, [statsSeason?.id, activeTeam?.id, mode]);
 
   const title = mode === "player" ? "Player Stats" : "Team Stats";
   const sections =
@@ -3902,17 +4021,24 @@ function StatsSection({
         title={title}
         subtitle={`${title} default to your selected team. Choose another team or All Stats to compare the full season.`}
       />
+      <ManagerSeasonSelect
+        seasons={statsSeasons}
+        value={statsSeason?.id ?? ""}
+        onChange={onStatsSeasonChange}
+      />
       <div className="flex flex-wrap gap-3 rounded-3xl border border-slate-200 bg-white p-4">
-        <button
-          className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === activeTeam?.id ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`}
-          onClick={() => {
-            const id = activeTeam?.id ?? "ALL";
-            setTeamFilter(id);
-            void loadStats(id);
-          }}
-        >
-          My Team Stats
-        </button>
+        {activeTeamInSeason ? (
+          <button
+            className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === activeTeam?.id ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`}
+            onClick={() => {
+              const id = activeTeam?.id ?? "ALL";
+              setTeamFilter(id);
+              void loadStats(id);
+            }}
+          >
+            My Team Stats
+          </button>
+        ) : null}
         <button
           className={`rounded-2xl px-4 py-3 text-sm font-black transition ${teamFilter === "ALL" ? "bg-[var(--team-primary)] text-[var(--team-primary-text)]" : "bg-slate-50 text-slate-700 hover:bg-purple-50"}`}
           onClick={() => {
@@ -3930,7 +4056,9 @@ function StatsSection({
             void loadStats(event.target.value);
           }}
         >
-          <option value={activeTeam?.id ?? "MY_TEAM"}>My team only</option>
+          {activeTeamInSeason ? (
+            <option value={activeTeam?.id ?? "MY_TEAM"}>My team only</option>
+          ) : null}
           <option value="ALL">All season teams</option>
           {seasonTeams.map((team) => (
             <option key={team.id} value={team.id}>

@@ -4,6 +4,8 @@ import {
   CSSProperties,
   FormEvent,
   ReactNode,
+  createContext,
+  useContext,
   useEffect,
   useMemo,
   useState,
@@ -30,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { pickCurrentSeason } from "@/lib/seasons";
 import { fixtureOutcomeLabel, fixtureOutcomeScore } from "@flms/shared";
 import { clearAuth, getStoredProfile, updateStoredProfile } from "@/lib/auth";
 
@@ -125,6 +128,7 @@ interface Season {
   season_year: number | null;
   format: string;
   phase: string;
+  created_at?: string | null;
   leagues?: League | League[] | null;
 }
 
@@ -305,6 +309,107 @@ function sectionFromPath(path: string): Section {
   if (path.includes("/discover")) return "Discover";
   if (path.includes("/profile")) return "Profile";
   return "Home";
+}
+
+// ===========================================================================
+// SEASON CONTEXT
+// ===========================================================================
+
+// Sections whose data is scoped to a single season. The season dropdown only
+// appears in the shared header for these.
+const SEASON_AWARE_SECTIONS: Section[] = [
+  "Matches",
+  "Standings",
+  "Player Stats",
+  "Discover",
+];
+
+interface FanSeasonContextValue {
+  seasons: Season[];
+  seasonId: string;
+  setSeasonId: (id: string) => void;
+  loading: boolean;
+}
+
+const FanSeasonContext = createContext<FanSeasonContextValue | null>(null);
+
+function useFanSeason(): FanSeasonContextValue {
+  const ctx = useContext(FanSeasonContext);
+  if (!ctx) {
+    throw new Error("useFanSeason must be used within a FanSeasonProvider");
+  }
+  return ctx;
+}
+
+// Loads the league's seasons once and holds the single selected season shared by
+// every section. Defaults to the current season (most recent ACTIVE, else newest).
+function FanSeasonProvider({
+  children,
+  onError,
+}: {
+  children: ReactNode;
+  onError: (message: string) => void;
+}) {
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [seasonId, setSeasonId] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    api<{ seasons: Season[] }>("/fan/seasons")
+      .then((data) => {
+        if (!alive) return;
+        setSeasons(data.seasons);
+        setSeasonId(
+          (current) => current || pickCurrentSeason(data.seasons)?.id || "",
+        );
+      })
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : "Failed to load seasons",
+        ),
+      )
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const value = useMemo(
+    () => ({ seasons, seasonId, setSeasonId, loading }),
+    [seasons, seasonId, loading],
+  );
+
+  return (
+    <FanSeasonContext.Provider value={value}>
+      {children}
+    </FanSeasonContext.Provider>
+  );
+}
+
+function FanSeasonSelect({ className }: { className?: string }) {
+  const { seasons, seasonId, setSeasonId } = useFanSeason();
+  if (seasons.length === 0) return null;
+  return (
+    <select
+      aria-label="Season"
+      className={className ?? "manager-input max-w-[16rem]"}
+      value={seasonId}
+      onChange={(event) => setSeasonId(event.target.value)}
+    >
+      {seasons.map((season) => {
+        const league = one(season.leagues);
+        return (
+          <option key={season.id} value={season.id}>
+            {league?.name ?? "League"} — {season.name}
+          </option>
+        );
+      })}
+    </select>
+  );
 }
 
 // ===========================================================================
@@ -490,12 +595,14 @@ export default function FanDashboardPage() {
         onClose={() => setMobileNavOpen(false)}
       />
       <main className="min-h-screen lg:pl-72">
-        <FanTopbar
-          profile={profile}
-          primaryFavorite={primaryFavorite}
-          mobileOpen={mobileNavOpen}
-          onMenuOpen={() => setMobileNavOpen(true)}
-        />
+        <FanSeasonProvider onError={(text) => setMessage(text)}>
+          <FanTopbar
+            profile={profile}
+            primaryFavorite={primaryFavorite}
+            section={section}
+            mobileOpen={mobileNavOpen}
+            onMenuOpen={() => setMobileNavOpen(true)}
+          />
         <div className="mx-auto max-w-7xl px-3 py-5 sm:px-6 sm:py-8 lg:px-8">
           {message ? (
             <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -547,6 +654,7 @@ export default function FanDashboardPage() {
             />
           )}
         </div>
+        </FanSeasonProvider>
       </main>
 
       {showOnboarding ? (
@@ -684,14 +792,17 @@ function FanSidebar({
 function FanTopbar({
   profile,
   primaryFavorite,
+  section,
   mobileOpen,
   onMenuOpen,
 }: {
   profile: Profile | null;
   primaryFavorite: Favorite | null;
+  section: Section;
   mobileOpen: boolean;
   onMenuOpen: () => void;
 }) {
+  const showSeasonSelect = SEASON_AWARE_SECTIONS.includes(section);
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-4 py-4 backdrop-blur lg:px-8">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 sm:gap-4">
@@ -716,12 +827,20 @@ function FanTopbar({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+          {showSeasonSelect ? (
+            <FanSeasonSelect className="manager-input hidden max-w-[14rem] py-2 sm:block" />
+          ) : null}
           <div className="rounded-full bg-slate-100 p-3 text-slate-700">
             <Bell size={18} />
           </div>
           <Avatar name={profile?.full_name ?? profile?.email ?? "Fan"} />
         </div>
       </div>
+      {showSeasonSelect ? (
+        <div className="mx-auto mt-3 max-w-7xl sm:hidden">
+          <FanSeasonSelect className="manager-input w-full py-2" />
+        </div>
+      ) : null}
     </header>
   );
 }
@@ -876,8 +995,7 @@ function FanHero({
 }
 
 function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
-  const [seasons, setSeasons] = useState<Season[]>([]);
-  const [seasonId, setSeasonId] = useState<string>("");
+  const { seasonId } = useFanSeason();
   const [fixtures, setFixtures] = useState<FixtureRecord[]>([]);
   const [scope, setScope] = useState<"ALL" | "MY_TEAMS">("ALL");
   const [dayFilter, setDayFilter] = useState<string>("");
@@ -887,25 +1005,6 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
     () => new Set(favorites.map((favorite) => favorite.team_id)),
     [favorites],
   );
-
-  useEffect(() => {
-    let alive = true;
-    api<{ seasons: Season[] }>("/fan/seasons")
-      .then((data) => {
-        if (!alive) return;
-        setSeasons(data.seasons);
-        setSeasonId((current) => current || data.seasons[0]?.id || "");
-      })
-      .catch((error) =>
-        onError(
-          error instanceof Error ? error.message : "Failed to load seasons",
-        ),
-      );
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!seasonId) return;
@@ -965,22 +1064,6 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
       />
 
       <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
-        <select
-          aria-label="Season"
-          className="manager-input max-w-xs"
-          value={seasonId}
-          onChange={(event) => setSeasonId(event.target.value)}
-        >
-          {seasons.length === 0 ? <option value="">No seasons</option> : null}
-          {seasons.map((season) => {
-            const league = one(season.leagues);
-            return (
-              <option key={season.id} value={season.id}>
-                {league?.name ?? "League"} — {season.name}
-              </option>
-            );
-          })}
-        </select>
         <FilterPill active={scope === "ALL"} onClick={() => setScope("ALL")}>
           All Matches
         </FilterPill>
@@ -1028,28 +1111,13 @@ function MatchesSection({ favorites, onOpenMatch, onError }: SectionProps) {
 }
 
 function StandingsSection({ favorites, onOpenTeam, onError }: SectionProps) {
-  const [seasons, setSeasons] = useState<Season[]>([]);
-  const [seasonId, setSeasonId] = useState("");
+  const { seasonId } = useFanSeason();
   const [standings, setStandings] = useState<StandingRow[]>([]);
   const [loading, setLoading] = useState(false);
   const favoriteTeamIds = useMemo(
     () => new Set(favorites.map((favorite) => favorite.team_id)),
     [favorites],
   );
-
-  useEffect(() => {
-    api<{ seasons: Season[] }>("/fan/seasons")
-      .then((data) => {
-        setSeasons(data.seasons);
-        setSeasonId((current) => current || data.seasons[0]?.id || "");
-      })
-      .catch((error) =>
-        onError(
-          error instanceof Error ? error.message : "Failed to load seasons",
-        ),
-      );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!seasonId) return;
@@ -1089,24 +1157,6 @@ function StandingsSection({ favorites, onOpenTeam, onError }: SectionProps) {
         title="Standings"
         subtitle="League tables update as results are confirmed."
       />
-      <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
-        <select
-          aria-label="Season"
-          className="manager-input max-w-xs"
-          value={seasonId}
-          onChange={(event) => setSeasonId(event.target.value)}
-        >
-          {seasons.length === 0 ? <option value="">No seasons</option> : null}
-          {seasons.map((season) => {
-            const league = one(season.leagues);
-            return (
-              <option key={season.id} value={season.id}>
-                {league?.name ?? "League"} — {season.name}
-              </option>
-            );
-          })}
-        </select>
-      </div>
 
       {loading ? (
         <LoadingState label="Loading standings..." />
@@ -1153,25 +1203,10 @@ interface FanStatSection {
 }
 
 function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
-  const [seasons, setSeasons] = useState<Season[]>([]);
-  const [seasonId, setSeasonId] = useState("");
+  const { seasonId } = useFanSeason();
   const [sections, setSections] = useState<FanStatSection[]>([]);
   const [openCard, setOpenCard] = useState<FanStatCard | null>(null);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    api<{ seasons: Season[] }>("/fan/seasons")
-      .then((data) => {
-        setSeasons(data.seasons);
-        setSeasonId((current) => current || data.seasons[0]?.id || "");
-      })
-      .catch((error) =>
-        onError(
-          error instanceof Error ? error.message : "Failed to load seasons",
-        ),
-      );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!seasonId) return;
@@ -1212,24 +1247,6 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
         title="Player Stats"
         subtitle="Season leaderboards across the whole league."
       />
-      <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
-        <select
-          aria-label="Season"
-          className="manager-input max-w-xs"
-          value={seasonId}
-          onChange={(event) => setSeasonId(event.target.value)}
-        >
-          {seasons.length === 0 ? <option value="">No seasons</option> : null}
-          {seasons.map((season) => {
-            const league = one(season.leagues);
-            return (
-              <option key={season.id} value={season.id}>
-                {league?.name ?? "League"} — {season.name}
-              </option>
-            );
-          })}
-        </select>
-      </div>
 
       {loading ? (
         <LoadingState label="Loading player stats..." />
@@ -1520,8 +1537,7 @@ function DiscoverSection({
   onAddFavorite,
   onError,
 }: SectionProps) {
-  const [seasons, setSeasons] = useState<Season[]>([]);
-  const [seasonId, setSeasonId] = useState("");
+  const { seasonId } = useFanSeason();
   const [teams, setTeams] = useState<any[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1530,20 +1546,6 @@ function DiscoverSection({
     () => new Set(favorites.map((favorite) => favorite.team_id)),
     [favorites],
   );
-
-  useEffect(() => {
-    api<{ seasons: Season[] }>("/fan/seasons")
-      .then((data) => {
-        setSeasons(data.seasons);
-        setSeasonId((current) => current || data.seasons[0]?.id || "");
-      })
-      .catch((error) =>
-        onError(
-          error instanceof Error ? error.message : "Failed to load seasons",
-        ),
-      );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!seasonId) return;
@@ -1596,22 +1598,6 @@ function DiscoverSection({
         subtitle="Explore clubs across the league and follow your favourites."
       />
       <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4">
-        <select
-          aria-label="Season"
-          className="manager-input max-w-xs"
-          value={seasonId}
-          onChange={(event) => setSeasonId(event.target.value)}
-        >
-          {seasons.length === 0 ? <option value="">No seasons</option> : null}
-          {seasons.map((season) => {
-            const league = one(season.leagues);
-            return (
-              <option key={season.id} value={season.id}>
-                {league?.name ?? "League"} — {season.name}
-              </option>
-            );
-          })}
-        </select>
         <div className="relative min-w-0 flex-1">
           <Search
             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"

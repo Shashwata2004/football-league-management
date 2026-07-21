@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   BarChart3,
@@ -1391,6 +1391,39 @@ function buildAdminSeasonData(input: {
       : undefined;
   };
 
+  // The team/player registration lists above come from the (row-capped, all
+  // seasons) admin endpoints, so for older seasons the lookup can miss and fall
+  // back to "Unassigned team". The season-scoped stats report already carries
+  // the correctly-resolved team name/logo per player registration id, so use it
+  // as the source of truth for the dashboard overview cards.
+  const reportTeamByPlayer = new Map<
+    string,
+    { name: string; logoUrl: string | null }
+  >();
+  for (const section of input.statsReport.player_sections) {
+    for (const card of section.cards) {
+      for (const entry of card.entries) {
+        if (!reportTeamByPlayer.has(entry.id) && entry.subLabel) {
+          reportTeamByPlayer.set(entry.id, {
+            name: entry.subLabel,
+            logoUrl: entry.teamLogoUrl ?? null,
+          });
+        }
+      }
+    }
+  }
+  const teamNameForStat = (stat?: PlayerSeasonStatApiRow | null) =>
+    (stat ? reportTeamByPlayer.get(stat.player_registration_id)?.name : null) ??
+    teamForStat(stat)?.teams?.name ??
+    registrationForStat(stat)?.team_registrations?.teams?.name ??
+    "Unassigned team";
+  const teamLogoForStat = (stat?: PlayerSeasonStatApiRow | null) =>
+    (stat
+      ? reportTeamByPlayer.get(stat.player_registration_id)?.logoUrl
+      : null) ??
+    teamForStat(stat)?.teams?.logo_url ??
+    null;
+
   return {
     teams,
     standings,
@@ -1409,11 +1442,8 @@ function buildAdminSeasonData(input: {
             name:
               topGoal.player_season_registrations?.players?.full_name ??
               "Unnamed player",
-            team:
-              teamForStat(topGoal)?.teams?.name ??
-              registrationForStat(topGoal)?.team_registrations?.teams?.name ??
-              "Unassigned team",
-            teamLogoUrl: teamForStat(topGoal)?.teams?.logo_url ?? null,
+            team: teamNameForStat(topGoal),
+            teamLogoUrl: teamLogoForStat(topGoal),
             avatarUrl:
               topGoal.player_season_registrations?.players?.avatar_url ?? null,
             goals: topGoal.goals ?? 0,
@@ -1428,11 +1458,8 @@ function buildAdminSeasonData(input: {
             name:
               topAssist.player_season_registrations?.players?.full_name ??
               "Unnamed player",
-            team:
-              teamForStat(topAssist)?.teams?.name ??
-              registrationForStat(topAssist)?.team_registrations?.teams?.name ??
-              "Unassigned team",
-            teamLogoUrl: teamForStat(topAssist)?.teams?.logo_url ?? null,
+            team: teamNameForStat(topAssist),
+            teamLogoUrl: teamLogoForStat(topAssist),
             avatarUrl:
               topAssist.player_season_registrations?.players?.avatar_url ??
               null,
@@ -1446,11 +1473,8 @@ function buildAdminSeasonData(input: {
             name:
               topRated.player_season_registrations?.players?.full_name ??
               "Unnamed player",
-            team:
-              teamForStat(topRated)?.teams?.name ??
-              registrationForStat(topRated)?.team_registrations?.teams?.name ??
-              "Unassigned team",
-            teamLogoUrl: teamForStat(topRated)?.teams?.logo_url ?? null,
+            team: teamNameForStat(topRated),
+            teamLogoUrl: teamLogoForStat(topRated),
             avatarUrl:
               topRated.player_season_registrations?.players?.avatar_url ?? null,
             rating: formatRating(topRated.average_rating, "N/A"),
@@ -1882,7 +1906,12 @@ export default function AdminLeagueSeasonDashboard() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [mobileNavigationOpen]);
 
-  async function loadDashboardData() {
+  // `isStale` lets the navigation effect abort a superseded load: this component
+  // is NOT remounted when only the seasonId route param changes, so switching
+  // seasons quickly (27 -> 26 -> 27) can leave an earlier load in flight that
+  // would otherwise commit the wrong season's teams/fixtures on top of the newer
+  // one. Mutation callers pass nothing and always commit.
+  async function loadDashboardData(isStale: () => boolean = () => false) {
     const [me, leagueData, seasonData] = await Promise.all([
       api<{ profile: ProfileDto }>("/me"),
       publicApi<{ leagues: LeagueDto[] }>("/public/leagues"),
@@ -1890,6 +1919,7 @@ export default function AdminLeagueSeasonDashboard() {
         `/public/leagues/${params.leagueId}/seasons`,
       ),
     ]);
+    if (isStale()) return;
     const selectedSeason =
       seasonData.seasons.find((item) => item.id === params.seasonId) ??
       seasonData.seasons[0] ??
@@ -1940,6 +1970,7 @@ export default function AdminLeagueSeasonDashboard() {
         `/admin/seasons/${selectedSeason.id}/matches/current-matchday`,
       ),
     ]);
+    if (isStale()) return;
     const nextAdminData = buildAdminSeasonData({
       season: selectedSeason,
       teamRegistrations: teamRegistrationData.team_registrations ?? [],
@@ -1958,6 +1989,7 @@ export default function AdminLeagueSeasonDashboard() {
       const groupData = await api<AdminGroupsResponse>(
         `/admin/seasons/${selectedSeason.id}/groups`,
       );
+      if (isStale()) return;
       setGroupsReady(groupData.groups_ready);
     } else {
       setGroupsReady(false);
@@ -1965,13 +1997,18 @@ export default function AdminLeagueSeasonDashboard() {
   }
 
   useEffect(() => {
-    void loadDashboardData().catch((loadError) =>
+    let cancelled = false;
+    void loadDashboardData(() => cancelled).catch((loadError) => {
+      if (cancelled) return;
       setError(
         loadError instanceof Error
           ? loadError.message
           : "Could not load dashboard",
-      ),
-    );
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [params.leagueId, params.seasonId]);
 
   async function decideTeamRequest(
@@ -2394,7 +2431,20 @@ export default function AdminLeagueSeasonDashboard() {
                       <li key={item.id} role="option" aria-selected={item.id === season.id}>
                         <Link
                           href={`/dashboard/admin/leagues/${params.leagueId}/seasons/${item.id}`}
-                          onClick={() => setSeasonMenuOpen(false)}
+                          onClick={() => {
+                            // Carry the current tab over to the target season so
+                            // switching from Player/Team Stats stays on that page
+                            // instead of resetting to Dashboard.
+                            try {
+                              window.localStorage.setItem(
+                                `scoreline-admin-tab:${item.id}`,
+                                activeTab,
+                              );
+                            } catch {
+                              // Falls back to Dashboard; navigation still works.
+                            }
+                            setSeasonMenuOpen(false);
+                          }}
                           className={`flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition ${
                             item.id === season.id
                               ? "bg-blue-600/30 font-bold text-white"
@@ -2618,11 +2668,20 @@ export default function AdminLeagueSeasonDashboard() {
           {activeTab === "reports" ? (
             <PlayerStatsView
               data={adminData}
+              seasons={seasons}
+              currentSeasonId={season.id}
+              leagueId={params.leagueId as string}
               onOpenPlayer={openAdminPlayerProfile}
             />
           ) : null}
           {activeTab === "team-stats" ? (
-            <TeamStatsView data={adminData} onOpenTeam={openAdminTeamProfile} />
+            <TeamStatsView
+              data={adminData}
+              seasons={seasons}
+              currentSeasonId={season.id}
+              leagueId={params.leagueId as string}
+              onOpenTeam={openAdminTeamProfile}
+            />
           ) : null}
           {activeTab === "messages" ? (
             <MessagesView seasonId={season.id} />
@@ -8147,9 +8206,15 @@ function StandingsView({
 
 function PlayerStatsView({
   data,
+  seasons,
+  currentSeasonId,
+  leagueId,
   onOpenPlayer,
 }: {
   data: AdminSeasonData;
+  seasons: SeasonDto[];
+  currentSeasonId: string;
+  leagueId: string;
   onOpenPlayer: (playerRegistrationId: string) => void;
 }) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
@@ -8170,6 +8235,10 @@ function PlayerStatsView({
         value={teamFilter}
         teams={data.teams}
         onChange={setTeamFilter}
+        seasons={seasons}
+        currentSeasonId={currentSeasonId}
+        leagueId={leagueId}
+        tab="reports"
       />
       <LeaderboardSections
         title="Player Stats"
@@ -8190,9 +8259,15 @@ function PlayerStatsView({
 
 function TeamStatsView({
   data,
+  seasons,
+  currentSeasonId,
+  leagueId,
   onOpenTeam,
 }: {
   data: AdminSeasonData;
+  seasons: SeasonDto[];
+  currentSeasonId: string;
+  leagueId: string;
   onOpenTeam: (teamRegistrationId: string) => void;
 }) {
   const [openCard, setOpenCard] = useState<StatCardData | null>(null);
@@ -8213,6 +8288,10 @@ function TeamStatsView({
         value={teamFilter}
         teams={data.teams}
         onChange={setTeamFilter}
+        seasons={seasons}
+        currentSeasonId={currentSeasonId}
+        leagueId={leagueId}
+        tab="team-stats"
       />
       <LeaderboardSections
         title="Team Stats"
@@ -8235,13 +8314,29 @@ function AdminStatsFilter({
   value,
   teams,
   onChange,
+  seasons,
+  currentSeasonId,
+  leagueId,
+  tab,
 }: {
   value: string;
   teams: AdminTeam[];
   onChange: (value: string) => void;
+  seasons: SeasonDto[];
+  currentSeasonId: string;
+  leagueId: string;
+  tab: TabId;
 }) {
   return (
-    <div className="mb-5 flex flex-wrap gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      {seasons.length > 1 ? (
+        <AdminStatsSeasonSelect
+          seasons={seasons}
+          currentSeasonId={currentSeasonId}
+          leagueId={leagueId}
+          tab={tab}
+        />
+      ) : null}
       <button
         type="button"
         onClick={() => onChange("ALL")}
@@ -8262,6 +8357,52 @@ function AdminStatsFilter({
         ))}
       </select>
     </div>
+  );
+}
+
+// Season switcher shown right on the stats pages. It navigates by route (like
+// the sidebar switcher) but first persists the target season's active tab so the
+// admin lands back on the same stats page instead of resetting to Dashboard.
+function AdminStatsSeasonSelect({
+  seasons,
+  currentSeasonId,
+  leagueId,
+  tab,
+}: {
+  seasons: SeasonDto[];
+  currentSeasonId: string;
+  leagueId: string;
+  tab: TabId;
+}) {
+  const router = useRouter();
+  return (
+    <select
+      aria-label="Season"
+      value={currentSeasonId}
+      onChange={(event) => {
+        const nextSeasonId = event.target.value;
+        if (nextSeasonId === currentSeasonId) return;
+        try {
+          window.localStorage.setItem(
+            `scoreline-admin-tab:${nextSeasonId}`,
+            tab,
+          );
+        } catch {
+          // Navigation still works; the tab just falls back to Dashboard.
+        }
+        router.push(
+          `/dashboard/admin/leagues/${leagueId}/seasons/${nextSeasonId}`,
+        );
+      }}
+      className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-black text-indigo-700"
+    >
+      {seasons.map((season) => (
+        <option key={season.id} value={season.id}>
+          {season.name}
+          {season.season_year ? ` (${season.season_year})` : ""}
+        </option>
+      ))}
+    </select>
   );
 }
 

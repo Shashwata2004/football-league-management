@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { SeasonFormat, type LeagueDto, type ProfileDto, type SeasonDto } from "@flms/shared";
 import { api, publicApi } from "@/lib/api";
+import { pickCurrentSeason } from "@/lib/seasons";
 import { clearAuth } from "@/lib/auth";
 
 interface LeagueWithSeasons extends LeagueDto {
@@ -488,7 +489,8 @@ export default function AdminDashboard() {
         ) : (
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             {filteredLeagues.map((league, index) => {
-              const latestSeason = league.seasons[0];
+              const latestSeason =
+                pickCurrentSeason(league.seasons) ?? league.seasons[0];
               return (
                 <article
                   key={league.id}
