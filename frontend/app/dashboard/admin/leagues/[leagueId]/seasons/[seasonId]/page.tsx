@@ -40,6 +40,7 @@ import {
   FixtureStatus,
   fixtureOutcomeLabel,
   fixtureOutcomeScore,
+  isKnockoutStage,
   RegistrationStatus,
   SeasonFormat,
   SeasonPhase,
@@ -503,6 +504,8 @@ type FixtureApiRow = {
   penalties_away?: number | null;
   penalty_winner_team_registration_id?: string | null;
   result_confirmed?: boolean | null;
+  simulated_at?: string | null;
+  finalized_at?: string | null;
   home_team?: {
     id: string;
     teams?: {
@@ -1259,6 +1262,18 @@ function buildAdminSeasonData(input: {
 
   const completedMatches = input.fixtures
     .filter((fixture) => fixture.status === FixtureStatus.FINAL)
+    .sort((left, right) => {
+      const leftCompletedAt = Date.parse(
+        left.simulated_at ?? left.finalized_at ?? left.kickoff_at ?? "",
+      );
+      const rightCompletedAt = Date.parse(
+        right.simulated_at ?? right.finalized_at ?? right.kickoff_at ?? "",
+      );
+      const recencyDifference =
+        (Number.isNaN(rightCompletedAt) ? 0 : rightCompletedAt) -
+        (Number.isNaN(leftCompletedAt) ? 0 : leftCompletedAt);
+      return recencyDifference || right.id.localeCompare(left.id);
+    })
     .map((fixture) => ({
       id: fixture.id,
       date: safeDate(fixture.kickoff_at),
@@ -6729,6 +6744,9 @@ function CompletedMatchesView({
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState("ALL");
+  const [stageFilter, setStageFilter] = useState<
+    "ALL" | "GROUP" | "KNOCKOUT"
+  >("ALL");
   const teamNames = useMemo(
     () =>
       [...new Set(matches.flatMap((match) => [match.home, match.away]))].sort(
@@ -6743,7 +6761,12 @@ function CompletedMatchesView({
         teamFilter === "ALL" ||
         match.home === teamFilter ||
         match.away === teamFilter;
-      if (!matchesTeam) return false;
+      const normalizedStage = match.stage.toUpperCase();
+      const matchesStage =
+        stageFilter === "ALL" ||
+        (stageFilter === "GROUP" && normalizedStage === "GROUP") ||
+        (stageFilter === "KNOCKOUT" && isKnockoutStage(normalizedStage));
+      if (!matchesTeam || !matchesStage) return false;
       if (!query) return true;
       return [
         match.home,
@@ -6754,7 +6777,7 @@ function CompletedMatchesView({
         match.status,
       ].some((value) => value.toLocaleLowerCase().includes(query));
     });
-  }, [matches, searchQuery, teamFilter]);
+  }, [matches, searchQuery, stageFilter, teamFilter]);
 
   async function openDetail(match: CompletedMatchRow) {
     setSelectedMatch(match);
@@ -6853,7 +6876,7 @@ function CompletedMatchesView({
         <EmptyState label="No completed matches yet." />
       ) : (
         <div className="space-y-4">
-          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_minmax(220px,320px)]">
+          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(190px,260px)_minmax(190px,260px)]">
             <label className="relative block">
               <span className="sr-only">Search completed matches</span>
               <Search
@@ -6882,6 +6905,22 @@ function CompletedMatchesView({
                     {teamName}
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="sr-only">Filter completed matches by stage</span>
+              <select
+                value={stageFilter}
+                onChange={(event) =>
+                  setStageFilter(
+                    event.target.value as "ALL" | "GROUP" | "KNOCKOUT",
+                  )
+                }
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100"
+              >
+                <option value="ALL">All stages</option>
+                <option value="GROUP">Group stage</option>
+                <option value="KNOCKOUT">Knockout stage</option>
               </select>
             </label>
           </div>

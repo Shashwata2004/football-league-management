@@ -1064,6 +1064,8 @@ managerRouter.get(
 managerRouter.get(
   "/dashboard",
   asyncHandler(async (req, res) => {
+    const requestedTeamId =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
     const [profileResult, teams] = await Promise.all([
       supabaseAdmin
         .from("profiles")
@@ -1073,7 +1075,15 @@ managerRouter.get(
       loadManagerTeams(req.auth!.userId),
     ]);
     if (profileResult.error) throw profileResult.error;
-    const activeTeam = teams[0] ?? null;
+    const activeTeam = requestedTeamId
+      ? (teams.find((team) => team.id === requestedTeamId) ?? null)
+      : (teams[0] ?? null);
+    if (requestedTeamId && !activeTeam) {
+      throw new AppError(
+        403,
+        "You do not manage the selected team registration.",
+      );
+    }
     if (!activeTeam) {
       return res.json({
         profile: profileResult.data,
@@ -1129,6 +1139,10 @@ managerRouter.get(
           "*,player_season_registrations(id,players(full_name,avatar_url)),fixtures(id,kickoff_at)",
         )
         .eq("manager_id", req.auth!.userId)
+        .eq("season_id", activeTeam.season_id)
+        .or(
+          `team_registration_id.eq.${activeTeam.id},team_registration_id.is.null`,
+        )
         .order("created_at", { ascending: false })
         .limit(8),
     ]);
@@ -2387,15 +2401,63 @@ managerRouter.get(
 );
 
 managerRouter.get(
+  "/messages/unread-lineup-rejections",
+  asyncHandler(async (req, res) => {
+    const teamId =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    if (!teamId) throw new AppError(400, "teamId is required.");
+    const activeTeam = await assertManagerOwnsTeam(req.auth!.userId, teamId);
+    const { data, error } = await supabaseAdmin
+      .from("manager_messages")
+      .select(
+        "*,team_registrations(id,teams(name,short_name)),fixtures(id,kickoff_at)",
+      )
+      .eq("manager_id", req.auth!.userId)
+      .eq("season_id", activeTeam.season_id)
+      .eq("team_registration_id", activeTeam.id)
+      .eq("related_type", "LINEUP_BLOCK")
+      .is("read_at", null)
+      .order("created_at", { ascending: false })
+      .limit(5);
+    if (error) throw error;
+    res.json({ messages: data ?? [] });
+  }),
+);
+
+managerRouter.get(
   "/messages",
   asyncHandler(async (req, res) => {
-    const { data, error } = await supabaseAdmin
+    const requestedTeamId =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    const managedTeams = requestedTeamId
+      ? await loadManagerTeams(req.auth!.userId)
+      : [];
+    const activeTeam = requestedTeamId
+      ? managedTeams.find((team) => team.id === requestedTeamId)
+      : null;
+    if (requestedTeamId && !activeTeam) {
+      throw new AppError(
+        403,
+        "You do not manage the selected team registration.",
+      );
+    }
+
+    let query = supabaseAdmin
       .from("manager_messages")
       .select(
         "*,team_registrations(id,teams(name,short_name)),player_season_registrations(id,players(full_name)),fixtures(id,kickoff_at)",
       )
-      .eq("manager_id", req.auth!.userId)
-      .order("created_at", { ascending: false });
+      .eq("manager_id", req.auth!.userId);
+    if (activeTeam) {
+      query = query
+        .eq("season_id", activeTeam.season_id)
+        .or(
+          `team_registration_id.eq.${activeTeam.id},team_registration_id.is.null`,
+        );
+    }
+    const { data, error } = await query.order("created_at", {
+      ascending: false,
+    });
     if (error) throw error;
     res.json({ messages: data ?? [] });
   }),

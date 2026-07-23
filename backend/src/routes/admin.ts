@@ -35,6 +35,7 @@ import {
   disciplinePhaseForStage,
   isStageInDisciplinePhase,
 } from "../domain/discipline.js";
+import { buildLineupRejectionNotice } from "../domain/lineup-rejection-notification.js";
 import { emptyStanding } from "../domain/standings.js";
 import { totalExpectedGoals } from "../domain/team-statistics.js";
 import { loadSeasonStandings } from "../services/standings-report.js";
@@ -1481,9 +1482,11 @@ adminRouter.post(
     const abilityRows = assignments.map(({ player, tier }) =>
       buildAbilityUpsertRow(player, tier, req.auth!.userId),
     );
-    const { error: abilityError } = await supabaseAdmin
-      .from("player_abilities")
-      .upsert(abilityRows, { onConflict: "player_registration_id" });
+    const { data: persistedAbilities, error: abilityError } =
+      await supabaseAdmin
+        .from("player_abilities")
+        .upsert(abilityRows, { onConflict: "player_registration_id" })
+        .select("player_registration_id,rating_tier");
     if (abilityError) throw abilityError;
 
     for (const tier of [
@@ -1491,9 +1494,12 @@ adminRouter.post(
       PlayerAbilityRating.MODERATE,
       PlayerAbilityRating.HIGH,
     ] as const) {
-      const ids = assignments
-        .filter((assignment) => assignment.tier === tier)
-        .map((assignment) => assignment.player.id);
+      // The database reuses a player's established cross-season profile on
+      // insert, so persist the effective tier returned by PostgreSQL rather
+      // than the temporary bell-curve assignment.
+      const ids = (persistedAbilities ?? [])
+        .filter((ability) => ability.rating_tier === tier)
+        .map((ability) => ability.player_registration_id);
       if (ids.length === 0) continue;
       const { error: updateError } = await supabaseAdmin
         .from("player_season_registrations")
@@ -1790,7 +1796,7 @@ adminRouter.patch(
     const generated = generateAbilityScores(
       input.ability_rating,
       footballPosition,
-      `${registration.id}:${input.ability_rating}:${footballPosition}`,
+      `${registration.player_id}:${input.ability_rating}:${footballPosition}`,
     );
     const row =
       generated.position === FootballPosition.GK
@@ -1855,7 +1861,10 @@ adminRouter.patch(
     const { data: updatedRegistration, error: updateError } =
       await supabaseAdmin
         .from("player_season_registrations")
-        .update({ ability_rating: input.ability_rating })
+        // An existing player profile is global across seasons. On a new
+        // registration the database may inherit the established tier instead
+        // of accepting a newly generated one.
+        .update({ ability_rating: ability.rating_tier })
         .eq("id", registration.id)
         .select("*")
         .single();
@@ -2615,21 +2624,45 @@ adminRouter.patch(
   asyncHandler(async (req, res) => {
     const input = registrationDecisionSchema.parse(req.body);
     const lineupStatus = input.status === "APPROVED" ? "CONFIRMED" : "REJECTED";
+    const rejectionReason = input.reason?.trim();
+    if (lineupStatus === "REJECTED" && !rejectionReason) {
+      throw new AppError(400, "A rejection message is required.");
+    }
+    const reviewedAt = new Date().toISOString();
     const { data, error } = await supabaseAdmin
       .from("lineups")
       .update({
         status: lineupStatus,
         reviewed_by: req.auth!.userId,
-        reviewed_at: new Date().toISOString(),
+        reviewed_at: reviewedAt,
         confirmed_at:
-          input.status === "APPROVED" ? new Date().toISOString() : null,
+          input.status === "APPROVED" ? reviewedAt : null,
         rejection_reason:
-          input.status === "REJECTED" ? (input.reason ?? null) : null,
+          input.status === "REJECTED" ? rejectionReason : null,
       })
       .eq("id", req.params.id)
       .select("*")
       .single();
     if (error) throw error;
+    if (lineupStatus === "REJECTED") {
+      const notice = buildLineupRejectionNotice({
+        lineupId: data.id,
+        submissionVersion: data.submitted_at ?? reviewedAt,
+        seasonId: data.season_id,
+        managerId: data.manager_id,
+        teamRegistrationId: data.team_registration_id,
+        fixtureId: data.fixture_id,
+        reason: rejectionReason!,
+        adminId: req.auth!.userId,
+      });
+      const { error: noticeError } = await supabaseAdmin
+        .from("manager_messages")
+        .upsert(notice, {
+          onConflict: "notification_key",
+          ignoreDuplicates: true,
+        });
+      if (noticeError) throw noticeError;
+    }
     await updateFixtureLineupStatus(data.fixture_id);
     res.json({ lineup: data });
   }),
@@ -3441,7 +3474,7 @@ function buildAbilityUpsertRow(
   const generated = generateAbilityScores(
     tier,
     footballPosition,
-    `${registration.id}:${tier}:${footballPosition}`,
+    `${registration.player_id}:${tier}:${footballPosition}`,
   );
   const base = {
     player_registration_id: registration.id,

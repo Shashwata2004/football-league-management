@@ -576,6 +576,30 @@ describe("match-stat simulator", () => {
         dismissed.has(substitution.player_out_registration_id),
       ),
     ).toBe(false);
+    for (const redCard of redCardResult!.events.filter(
+      (event) => event.type === MatchEventType.RED_CARD,
+    )) {
+      const subIn = redCardResult!.substitutions.find(
+        (substitution) =>
+          substitution.player_in_registration_id ===
+          redCard.player_registration_id,
+      );
+      const playerStats = redCardResult!.player_stats.find(
+        (stat) =>
+          stat.player_registration_id === redCard.player_registration_id,
+      );
+      expect(playerStats?.minutes).toBe(
+        Math.max(1, redCard.minute - Number(subIn?.minute ?? 0)),
+      );
+      expect(
+        redCardResult!.events.some(
+          (event) =>
+            event.player_registration_id === redCard.player_registration_id &&
+            event.type !== MatchEventType.RED_CARD &&
+            event.minute > redCard.minute,
+        ),
+      ).toBe(false);
+    }
   });
 
   it("generates realistic pass volume and avoids tiny xG for routine high scores", () => {

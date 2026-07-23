@@ -701,6 +701,191 @@ on public.player_abilities
 for each row
 execute function app_private.sync_player_registration_ability_tier();
 
+create or replace function app_private.inherit_existing_player_ability_profile()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  existing_profile public.player_abilities%rowtype;
+begin
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(new.player_id::text, 1729)
+  );
+
+  select ability.*
+  into existing_profile
+  from public.player_abilities ability
+  join public.seasons season
+    on season.id = ability.season_id
+  where ability.player_id = new.player_id
+  order by
+    season.season_year asc nulls last,
+    season.created_at asc,
+    ability.created_at asc,
+    ability.id asc
+  limit 1;
+
+  if found then
+    new.position := existing_profile.position;
+    new.rating_tier := existing_profile.rating_tier;
+    new.shooting := existing_profile.shooting;
+    new.passing := existing_profile.passing;
+    new.dribbling := existing_profile.dribbling;
+    new.defending := existing_profile.defending;
+    new.physical := existing_profile.physical;
+    new.pace := existing_profile.pace;
+    new.stamina := existing_profile.stamina;
+    new.shot_stopping := existing_profile.shot_stopping;
+    new.reflexes := existing_profile.reflexes;
+    new.positioning := existing_profile.positioning;
+    new.handling := existing_profile.handling;
+    new.diving := existing_profile.diving;
+    new.distribution := existing_profile.distribution;
+    new.communication := existing_profile.communication;
+    new.overall_rating := existing_profile.overall_rating;
+    new.generated_by_admin_id := existing_profile.generated_by_admin_id;
+    new.generated_at := existing_profile.generated_at;
+    new.is_hidden_from_manager := existing_profile.is_hidden_from_manager;
+  end if;
+
+  return new;
+end
+$function$;
+
+create or replace function app_private.sync_player_ability_profile()
+returns trigger
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+begin
+  if pg_trigger_depth() > 1 then
+    return new;
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(new.player_id::text, 1729)
+  );
+
+  update public.player_abilities sibling
+  set
+    position = new.position,
+    rating_tier = new.rating_tier,
+    shooting = new.shooting,
+    passing = new.passing,
+    dribbling = new.dribbling,
+    defending = new.defending,
+    physical = new.physical,
+    pace = new.pace,
+    stamina = new.stamina,
+    shot_stopping = new.shot_stopping,
+    reflexes = new.reflexes,
+    positioning = new.positioning,
+    handling = new.handling,
+    diving = new.diving,
+    distribution = new.distribution,
+    communication = new.communication,
+    overall_rating = new.overall_rating,
+    generated_by_admin_id = new.generated_by_admin_id,
+    generated_at = new.generated_at,
+    is_hidden_from_manager = new.is_hidden_from_manager,
+    updated_at = now()
+  where sibling.player_id = new.player_id
+    and sibling.id <> new.id
+    and (
+      sibling.position,
+      sibling.rating_tier,
+      sibling.shooting,
+      sibling.passing,
+      sibling.dribbling,
+      sibling.defending,
+      sibling.physical,
+      sibling.pace,
+      sibling.stamina,
+      sibling.shot_stopping,
+      sibling.reflexes,
+      sibling.positioning,
+      sibling.handling,
+      sibling.diving,
+      sibling.distribution,
+      sibling.communication,
+      sibling.overall_rating,
+      sibling.generated_by_admin_id,
+      sibling.generated_at,
+      sibling.is_hidden_from_manager
+    ) is distinct from (
+      new.position,
+      new.rating_tier,
+      new.shooting,
+      new.passing,
+      new.dribbling,
+      new.defending,
+      new.physical,
+      new.pace,
+      new.stamina,
+      new.shot_stopping,
+      new.reflexes,
+      new.positioning,
+      new.handling,
+      new.diving,
+      new.distribution,
+      new.communication,
+      new.overall_rating,
+      new.generated_by_admin_id,
+      new.generated_at,
+      new.is_hidden_from_manager
+    );
+
+  return new;
+end
+$function$;
+
+revoke all on function app_private.inherit_existing_player_ability_profile()
+from public, anon, authenticated;
+
+revoke all on function app_private.sync_player_ability_profile()
+from public, anon, authenticated;
+
+drop trigger if exists inherit_existing_player_ability_profile
+on public.player_abilities;
+
+create trigger inherit_existing_player_ability_profile
+before insert
+on public.player_abilities
+for each row
+execute function app_private.inherit_existing_player_ability_profile();
+
+drop trigger if exists sync_player_ability_profile
+on public.player_abilities;
+
+create trigger sync_player_ability_profile
+after update of
+  position,
+  rating_tier,
+  shooting,
+  passing,
+  dribbling,
+  defending,
+  physical,
+  pace,
+  stamina,
+  shot_stopping,
+  reflexes,
+  positioning,
+  handling,
+  diving,
+  distribution,
+  communication,
+  overall_rating,
+  generated_by_admin_id,
+  generated_at,
+  is_hidden_from_manager
+on public.player_abilities
+for each row
+execute function app_private.sync_player_ability_profile();
+
 drop trigger if exists protect_player_ability_dependency
 on public.player_season_registrations;
 

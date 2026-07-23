@@ -1,1 +1,5 @@
-export { default } from "../../dashboard/manager/page";
+import { redirect } from "next/navigation";
+
+export default function LegacyManagerTeamRoute() {
+  redirect("/dashboard/manager/my-team");
+}

@@ -1441,6 +1441,7 @@ function playerActiveWindow(
   player: SimPlayer,
   substitutions: SimSubstitution[],
   matchDuration = 90,
+  dismissalMinute?: number,
 ) {
   const subIn = substitutions.find(
     (sub) => sub.player_in_registration_id === player.player_registration_id,
@@ -1449,7 +1450,10 @@ function playerActiveWindow(
     (sub) => sub.player_out_registration_id === player.player_registration_id,
   );
   const start = player.is_starter ? 0 : subIn?.minute;
-  const end = subOut?.minute ?? matchDuration;
+  const end = Math.min(
+    subOut?.minute ?? matchDuration,
+    dismissalMinute ?? matchDuration,
+  );
   return {
     start: start ?? null,
     end,
@@ -1463,8 +1467,14 @@ function isPlayerActiveAtMinute(
   substitutions: SimSubstitution[],
   minute: number,
   matchDuration = 90,
+  dismissalMinutes?: ReadonlyMap<string, number>,
 ) {
-  const window = playerActiveWindow(player, substitutions, matchDuration);
+  const window = playerActiveWindow(
+    player,
+    substitutions,
+    matchDuration,
+    dismissalMinutes?.get(player.player_registration_id),
+  );
   return (
     window.start !== null && minute >= window.start && minute <= window.end
   );
@@ -1476,16 +1486,29 @@ function selectSetPieceTaker(
   minute: number,
   orderedPlayerIds: string[] = [],
   matchDuration = 90,
+  dismissalMinutes?: ReadonlyMap<string, number>,
 ) {
   const activeOutfield = players.filter(
     (player) =>
       detailedPosition(player) !== FootballPosition.GK &&
-      isPlayerActiveAtMinute(player, substitutions, minute, matchDuration),
+      isPlayerActiveAtMinute(
+        player,
+        substitutions,
+        minute,
+        matchDuration,
+        dismissalMinutes,
+      ),
   );
   const activePlayers = activeOutfield.length
     ? activeOutfield
     : players.filter((player) =>
-        isPlayerActiveAtMinute(player, substitutions, minute, matchDuration),
+        isPlayerActiveAtMinute(
+          player,
+          substitutions,
+          minute,
+          matchDuration,
+          dismissalMinutes,
+        ),
       );
   if (!activePlayers.length) return null;
 
@@ -1514,6 +1537,7 @@ function distributeGoals(
   side: VenueSide,
   setPieceTakers: SimSetPieceTakers = {},
   matchDuration = 90,
+  dismissalMinutes: ReadonlyMap<string, number> = new Map(),
 ) {
   const random = rng(`${seed}:goals:${side}`);
   const outfield = players.filter(
@@ -1521,7 +1545,12 @@ function distributeGoals(
   );
   const substituteImpact = (player: SimPlayer, minute: number) => {
     if (player.is_starter) return 1;
-    const window = playerActiveWindow(player, substitutions, matchDuration);
+    const window = playerActiveWindow(
+      player,
+      substitutions,
+      matchDuration,
+      dismissalMinutes.get(player.player_registration_id),
+    );
     if (window.start === null || minute < window.start) return 0;
     // Fresh attacking substitutes should have a meaningful, but controlled,
     // chance to decide a late match.
@@ -1600,7 +1629,13 @@ function distributeGoals(
         phase.end,
       );
       const activeOutfield = outfield.filter((player) =>
-        isPlayerActiveAtMinute(player, substitutions, minute, matchDuration),
+        isPlayerActiveAtMinute(
+          player,
+          substitutions,
+          minute,
+          matchDuration,
+          dismissalMinutes,
+        ),
       );
       const scoringPool = activeOutfield.length ? activeOutfield : outfield;
       const isPenalty = random() < 0.08;
@@ -1613,6 +1648,7 @@ function distributeGoals(
               minute,
               setPieceTakers.penalty_taker_ids,
               matchDuration,
+              dismissalMinutes,
             )
           : isDirectFreeKick
             ? selectSetPieceTaker(
@@ -1621,6 +1657,7 @@ function distributeGoals(
                 minute,
                 setPieceTakers.free_kick_taker_ids,
                 matchDuration,
+                dismissalMinutes,
               )
             : null) ??
         pickWeighted(
@@ -1792,6 +1829,8 @@ function generateSpecialEvents(
   side: VenueSide,
   substitutions: SimSubstitution[],
   setPieceTakers: SimSetPieceTakers = {},
+  matchDuration = 90,
+  dismissalMinutes: ReadonlyMap<string, number> = new Map(),
 ): SimMatchEvent[] {
   const random = rng(`${seed}:special:${side}`);
   const outfield = players.filter(
@@ -1801,15 +1840,27 @@ function generateSpecialEvents(
   // Failed penalties are uncommon. Successful penalties are represented by
   // converting a generated goal to PENALTY_GOAL in distributeGoals.
   if (outfield.length && random() > 0.95) {
-    const minute = clamp(18 + random() * 66, 1, 90);
+    const minute = clamp(
+      18 + random() * Math.max(1, matchDuration - 24),
+      1,
+      matchDuration,
+    );
     const activeOutfield = outfield.filter((player) =>
-      isPlayerActiveAtMinute(player, substitutions, minute),
+      isPlayerActiveAtMinute(
+        player,
+        substitutions,
+        minute,
+        matchDuration,
+        dismissalMinutes,
+      ),
     );
     const taker = selectSetPieceTaker(
       players,
       substitutions,
       minute,
       setPieceTakers.penalty_taker_ids,
+      matchDuration,
+      dismissalMinutes,
     );
     if (!taker) return events;
     events.push({
@@ -1823,20 +1874,29 @@ function generateSpecialEvents(
     });
   }
   if (outfield.length && random() > 0.8) {
-    const minute = clamp(12 + random() * 78, 1, 90);
+    const minute = clamp(
+      12 + random() * Math.max(1, matchDuration - 12),
+      1,
+      matchDuration,
+    );
     const activeOutfield = outfield.filter((player) =>
-      isPlayerActiveAtMinute(player, substitutions, minute),
+      isPlayerActiveAtMinute(
+        player,
+        substitutions,
+        minute,
+        matchDuration,
+        dismissalMinutes,
+      ),
     );
-    const shooter = pick(
-      activeOutfield.length ? activeOutfield : outfield,
-      random,
-    );
-    events.push({
-      minute,
-      side,
-      type: MatchEventType.HIT_WOODWORK,
-      player_registration_id: shooter.player_registration_id,
-    });
+    if (activeOutfield.length) {
+      const shooter = pick(activeOutfield, random);
+      events.push({
+        minute,
+        side,
+        type: MatchEventType.HIT_WOODWORK,
+        player_registration_id: shooter.player_registration_id,
+      });
+    }
   }
   for (const substitution of substitutions) {
     if (
@@ -1851,10 +1911,18 @@ function generateSpecialEvents(
       });
     }
   }
-  const subbedIn = players.filter((player) =>
-    substitutions.some(
-      (sub) => sub.player_in_registration_id === player.player_registration_id,
-    ),
+  const subbedIn = players.filter(
+    (player) =>
+      substitutions.some(
+        (sub) =>
+          sub.player_in_registration_id === player.player_registration_id,
+      ) &&
+      playerActiveWindow(
+        player,
+        substitutions,
+        matchDuration,
+        dismissalMinutes.get(player.player_registration_id),
+      ).minutes > 0,
   );
   if (subbedIn.length && random() > 0.9) {
     const injuredSub = pick(subbedIn, random);
@@ -1863,12 +1931,34 @@ function generateSpecialEvents(
         (sub) =>
           sub.player_in_registration_id === injuredSub.player_registration_id,
       )?.minute ?? 45;
-    events.push({
-      minute: clamp(subInMinute + 5 + random() * 28, subInMinute + 1, 90),
-      side,
-      type: MatchEventType.INJURY,
-      player_registration_id: injuredSub.player_registration_id,
-    });
+    const activeWindow = playerActiveWindow(
+      injuredSub,
+      substitutions,
+      matchDuration,
+      dismissalMinutes.get(injuredSub.player_registration_id),
+    );
+    const latestMinute = Math.max(subInMinute + 1, activeWindow.end);
+    const minute = clamp(
+      subInMinute + 5 + random() * 28,
+      subInMinute + 1,
+      latestMinute,
+    );
+    if (
+      isPlayerActiveAtMinute(
+        injuredSub,
+        substitutions,
+        minute,
+        matchDuration,
+        dismissalMinutes,
+      )
+    ) {
+      events.push({
+        minute,
+        side,
+        type: MatchEventType.INJURY,
+        player_registration_id: injuredSub.player_registration_id,
+      });
+    }
   }
   return events;
 }
@@ -1896,20 +1986,6 @@ function allocateStats(
     ),
   );
   const active = [...starters, ...benchIn];
-  const minutesFor = (player: SimPlayer) =>
-    playerActiveWindow(player, substitutions, matchDuration).minutes;
-  const { scorers, assists, events } = distributeGoals(
-    players,
-    substitutions,
-    Math.max(0, ownGoals - extraTimeGoalCount),
-    extraTimeGoalCount,
-    seed,
-    side,
-    setPieceTakers,
-    matchDuration,
-  );
-  const goalsByPlayer = countById(scorers);
-  const assistsByPlayer = countById(assists);
   const random = rng(`${seed}:players:${side}`);
   const cardSelectionRandom = rng(`${seed}:card-selection:${side}`);
   const cardRiskRank = active
@@ -1958,6 +2034,61 @@ function allocateStats(
   const redSet = new Set<string>(
     redCandidate ? [redCandidate.player.player_registration_id] : [],
   );
+  const cardEventRandom = rng(`${seed}:cards:${side}`);
+  const cardEvents = active.flatMap((player) => {
+    const playerEvents: SimMatchEvent[] = [];
+    const window = playerActiveWindow(player, substitutions, matchDuration);
+    const eventMinute = (minimumFraction: number) =>
+      clamp(
+        Number(window.start ?? 0) +
+          (window.end - Number(window.start ?? 0)) *
+            (minimumFraction + cardEventRandom() * (1 - minimumFraction)),
+        Math.max(1, Number(window.start ?? 0)),
+        window.end,
+      );
+    if (yellowSet.has(player.player_registration_id)) {
+      playerEvents.push({
+        minute: eventMinute(0.15),
+        side,
+        type: MatchEventType.YELLOW_CARD,
+        player_registration_id: player.player_registration_id,
+      });
+    }
+    if (redSet.has(player.player_registration_id)) {
+      playerEvents.push({
+        minute: eventMinute(0.35),
+        side,
+        type: MatchEventType.RED_CARD,
+        player_registration_id: player.player_registration_id,
+      });
+    }
+    return playerEvents;
+  });
+  const dismissalMinutes = new Map(
+    cardEvents
+      .filter((event) => event.type === MatchEventType.RED_CARD)
+      .map((event) => [event.player_registration_id, event.minute] as const),
+  );
+  const minutesFor = (player: SimPlayer) =>
+    playerActiveWindow(
+      player,
+      substitutions,
+      matchDuration,
+      dismissalMinutes.get(player.player_registration_id),
+    ).minutes;
+  const { scorers, assists, events } = distributeGoals(
+    players,
+    substitutions,
+    Math.max(0, ownGoals - extraTimeGoalCount),
+    extraTimeGoalCount,
+    seed,
+    side,
+    setPieceTakers,
+    matchDuration,
+    dismissalMinutes,
+  );
+  const goalsByPlayer = countById(scorers);
+  const assistsByPlayer = countById(assists);
   const outfieldActive = active.filter(
     (player) => detailedPosition(player) !== FootballPosition.GK,
   );
@@ -2574,44 +2705,10 @@ function allocateStats(
       scorer.big_chances_created = (scorer.big_chances_created ?? 0) + 1;
     }
   }
-  const cardEventRandom = rng(`${seed}:cards:${side}`);
-  const cardEvents = stats.flatMap((stat) => {
-    const playerEvents: SimMatchEvent[] = [];
-    const player = players.find(
-      (item) => item.player_registration_id === stat.player_registration_id,
-    );
-    const window = player
-      ? playerActiveWindow(player, substitutions, matchDuration)
-      : { start: 0, end: matchDuration };
-    const eventMinute = (minimumFraction: number) =>
-      clamp(
-        Number(window.start ?? 0) +
-          (window.end - Number(window.start ?? 0)) *
-            (minimumFraction + cardEventRandom() * (1 - minimumFraction)),
-        Math.max(1, Number(window.start ?? 0)),
-        window.end,
-      );
-    if (stat.yellow_cards > 0) {
-      playerEvents.push({
-        minute: eventMinute(0.15),
-        side,
-        type: MatchEventType.YELLOW_CARD,
-        player_registration_id: stat.player_registration_id,
-      });
-    }
-    if (stat.red_cards > 0) {
-      playerEvents.push({
-        minute: eventMinute(0.35),
-        side,
-        type: MatchEventType.RED_CARD,
-        player_registration_id: stat.player_registration_id,
-      });
-    }
-    return playerEvents;
-  });
   return {
     stats,
     events: [...events, ...cardEvents].sort((a, b) => a.minute - b.minute),
+    dismissalMinutes,
   };
 }
 
@@ -2704,6 +2801,8 @@ function applyOwnGoalConversions({
   homeEvents,
   awayEvents,
   matchDuration,
+  homeDismissalMinutes,
+  awayDismissalMinutes,
 }: {
   seed: string;
   homePlayers: SimPlayer[];
@@ -2715,6 +2814,8 @@ function applyOwnGoalConversions({
   homeEvents: SimMatchEvent[];
   awayEvents: SimMatchEvent[];
   matchDuration: number;
+  homeDismissalMinutes: ReadonlyMap<string, number>;
+  awayDismissalMinutes: ReadonlyMap<string, number>;
 }) {
   const random = rng(`${seed}:own-goals`);
   const candidates = [
@@ -2723,6 +2824,7 @@ function applyOwnGoalConversions({
       attackingStats: homeStats,
       defendingPlayers: awayPlayers,
       defendingSubstitutions: awaySubstitutions,
+      defendingDismissalMinutes: awayDismissalMinutes,
       defendingStats: awayStats,
     })),
     ...awayEvents.map((event) => ({
@@ -2730,6 +2832,7 @@ function applyOwnGoalConversions({
       attackingStats: awayStats,
       defendingPlayers: homePlayers,
       defendingSubstitutions: homeSubstitutions,
+      defendingDismissalMinutes: homeDismissalMinutes,
       defendingStats: homeStats,
     })),
   ]
@@ -2749,6 +2852,7 @@ function applyOwnGoalConversions({
         candidate.defendingSubstitutions,
         candidate.event.minute,
         matchDuration,
+        candidate.defendingDismissalMinutes,
       ),
     );
     if (!activeDefenders.length) continue;
@@ -3105,6 +3209,11 @@ export function validateSimulationConsistency(
   const allPlayerIds = new Set(
     result.player_stats.map((player) => player.player_registration_id),
   );
+  const dismissalMinuteByPlayer = new Map(
+    result.events
+      .filter((event) => event.type === MatchEventType.RED_CARD)
+      .map((event) => [event.player_registration_id, event.minute] as const),
+  );
   const eventPlayerIsActive = (playerId: string, minute: number) => {
     const subIn = result.substitutions.find(
       (sub) => sub.player_in_registration_id === playerId,
@@ -3113,7 +3222,9 @@ export function validateSimulationConsistency(
       (sub) => sub.player_out_registration_id === playerId,
     );
     return (
-      (!subIn || minute >= subIn.minute) && (!subOut || minute <= subOut.minute)
+      (!subIn || minute >= subIn.minute) &&
+      (!subOut || minute <= subOut.minute) &&
+      minute <= (dismissalMinuteByPlayer.get(playerId) ?? matchDuration)
     );
   };
   for (const event of result.events) {
@@ -3155,17 +3266,31 @@ export function validateSimulationConsistency(
       );
     }
   }
-  const dismissedPlayerIds = new Set(
-    result.events
-      .filter((event) => event.type === MatchEventType.RED_CARD)
-      .map((event) => event.player_registration_id),
-  );
+  const dismissedPlayerIds = new Set(dismissalMinuteByPlayer.keys());
   if (
     result.substitutions.some((substitution) =>
       dismissedPlayerIds.has(substitution.player_out_registration_id),
     )
   ) {
     throw new AppError(400, "A red-carded player cannot be substituted off");
+  }
+  for (const [playerId, dismissalMinute] of dismissalMinuteByPlayer) {
+    const subIn = result.substitutions.find(
+      (substitution) => substitution.player_in_registration_id === playerId,
+    );
+    const expectedMinutes = Math.max(
+      1,
+      dismissalMinute - Number(subIn?.minute ?? 0),
+    );
+    const playerStats = result.player_stats.find(
+      (player) => player.player_registration_id === playerId,
+    );
+    if (!playerStats || playerStats.minutes !== expectedMinutes) {
+      throw new AppError(
+        400,
+        "A red-carded player's minutes must end at dismissal",
+      );
+    }
   }
 
   const goalEvents = result.events.filter(
@@ -3481,6 +3606,8 @@ export function simulateMatch(
     VenueSide.HOME,
     homeSubs,
     setPieceTakers.home,
+    matchDuration,
+    homeAllocated.dismissalMinutes,
   );
   const awaySpecialEvents = generateSpecialEvents(
     awayPlayers,
@@ -3488,6 +3615,8 @@ export function simulateMatch(
     VenueSide.AWAY,
     awaySubs,
     setPieceTakers.away,
+    matchDuration,
+    awayAllocated.dismissalMinutes,
   );
   applyPenaltyMissEvents(
     homeAllocated.stats,
@@ -3510,6 +3639,8 @@ export function simulateMatch(
     homeEvents: homeAllocated.events,
     awayEvents: awayAllocated.events,
     matchDuration,
+    homeDismissalMinutes: homeAllocated.dismissalMinutes,
+    awayDismissalMinutes: awayAllocated.dismissalMinutes,
   });
   const sumPlayerStats = (
     stats: SimPlayerStats[],

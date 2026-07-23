@@ -53,7 +53,7 @@ publicRouter.get(
     const { data, error } = await supabaseAdmin
       .from("fixtures")
       .select(
-        "id,season_id,round_no,stage,group_name,home_team_registration_id,away_team_registration_id,kickoff_at,venue,status,home_score,away_score,extra_time_played,penalties_home,penalties_away,winner_team_registration_id,penalty_winner_team_registration_id",
+        "id,season_id,round_no,stage,group_name,home_team_registration_id,away_team_registration_id,kickoff_at,venue,status,home_score,away_score,extra_time_played,penalties_home,penalties_away,winner_team_registration_id,penalty_winner_team_registration_id,simulated_at,finalized_at",
       )
       .eq("season_id", req.params.seasonId)
       .order("round_no");

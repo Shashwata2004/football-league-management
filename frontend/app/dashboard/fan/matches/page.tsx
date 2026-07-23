@@ -1,1 +1,3 @@
-export { default } from "../page";
+export default function FanMatchesRoute() {
+  return null;
+}

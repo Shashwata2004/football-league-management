@@ -57,6 +57,13 @@ const sql = [
   readFileSync(
     resolve(
       process.cwd(),
+      "../supabase/enforce-global-player-ability-profile.sql",
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    resolve(
+      process.cwd(),
       "../supabase/add-player-registration-season-consistency.sql",
     ),
     "utf8",

@@ -54,7 +54,7 @@ function abilityRow(registration: Registration) {
   const generated = generateAbilityScores(
     tier,
     footballPosition,
-    `${registration.id}:${tier}:${footballPosition}:repair`,
+    `${registration.player_id}:${tier}:${footballPosition}`,
   );
   const base = {
     player_registration_id: registration.id,
