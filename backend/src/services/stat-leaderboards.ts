@@ -41,6 +41,44 @@ export function formatLeaderboardValue(
   return String(Math.round(value));
 }
 
+function numericLeaderboardField(row: object, field: PropertyKey) {
+  const value = Number(
+    (row as unknown as Record<PropertyKey, unknown>)[field] ?? 0,
+  );
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Canonical player-leaderboard ordering.
+ *
+ * Top scorer: goals, then assists, then rating.
+ * Top assister: assists, then goals, then rating.
+ *
+ * Name and registration id provide a deterministic final order when every
+ * football metric is tied. All other leaderboards retain their primary-metric
+ * ordering and use the same deterministic fallback.
+ */
+export function comparePlayerLeaderboardRows<
+  T extends { id: string; name: string },
+>(id: string, field: keyof T, left: T, right: T) {
+  const fields: PropertyKey[] =
+    id === "top_scorer"
+      ? [field, "assists", "rating"]
+      : id === "assists"
+        ? [field, "goals", "rating"]
+        : [field];
+
+  for (const sortField of fields) {
+    const difference =
+      numericLeaderboardField(right, sortField) -
+      numericLeaderboardField(left, sortField);
+    if (difference !== 0) return difference;
+  }
+
+  const nameOrder = left.name.localeCompare(right.name);
+  return nameOrder !== 0 ? nameOrder : left.id.localeCompare(right.id);
+}
+
 export function makeLeaderboard<
   T extends {
     id: string;
@@ -61,7 +99,9 @@ export function makeLeaderboard<
     .filter(
       ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
     )
-    .sort((a, b) => b.numericValue - a.numericValue)
+    .sort((a, b) =>
+      comparePlayerLeaderboardRows(id, field, a.row, b.row),
+    )
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,

@@ -29,7 +29,11 @@ import {
   type FixtureGroup,
   type ScheduledFixturePreview,
 } from "../domain/fixtures.js";
-import { getFormationSlots } from "../domain/lineup-builder.js";
+import {
+  getFormationSlots,
+  isValidPlayingStyle,
+  type PlayingStyle,
+} from "../domain/lineup-builder.js";
 import {
   crossedYellowThreshold,
   disciplinePhaseForStage,
@@ -40,6 +44,7 @@ import { emptyStanding } from "../domain/standings.js";
 import { totalExpectedGoals } from "../domain/team-statistics.js";
 import { loadSeasonStandings } from "../services/standings-report.js";
 import { rebuildSeasonDerivedAggregates } from "../services/season-aggregate-rebuilder.js";
+import { comparePlayerLeaderboardRows } from "../services/stat-leaderboards.js";
 import {
   generateAbilityScores,
   simulateMatch,
@@ -2685,14 +2690,14 @@ adminRouter.post(
         "Match cannot be simulated in its current status",
       );
     }
-    const [homePlayers, awayPlayers, homeSetPieceTakers, awaySetPieceTakers] =
+    const [homeLineup, awayLineup, homeSetPieceTakers, awaySetPieceTakers] =
       await Promise.all([
-        getConfirmedLineupPlayers(
+        getConfirmedLineupSimulationInput(
           input.fixture_id,
           fixture.home_team_registration_id,
           VenueSide.HOME,
         ),
-        getConfirmedLineupPlayers(
+        getConfirmedLineupSimulationInput(
           input.fixture_id,
           fixture.away_team_registration_id,
           VenueSide.AWAY,
@@ -2717,8 +2722,8 @@ adminRouter.post(
         : 0;
     const simulationAttempt = previousAttempt + 1;
     const result = simulateMatch(
-      homePlayers,
-      awayPlayers,
+      homeLineup.players,
+      awayLineup.players,
       fixture.id,
       simulationAttempt,
       { home: homeSetPieceTakers, away: awaySetPieceTakers },
@@ -2727,6 +2732,8 @@ adminRouter.post(
         // participant slots for deterministic lineup, score, and event mapping.
         applyHomeAdvantage: fixture.stage === "LEAGUE",
         requiresWinner: isKnockoutStage(fixture.stage),
+        homePlayingStyle: homeLineup.playingStyle,
+        awayPlayingStyle: awayLineup.playingStyle,
       },
     );
     await persistSimulation(fixture.id, result);
@@ -3641,14 +3648,14 @@ async function getFixture(fixtureId: string) {
   return data;
 }
 
-async function getConfirmedLineupPlayers(
+async function getConfirmedLineupSimulationInput(
   fixtureId: string,
   teamRegistrationId: string,
   side: VenueSide,
-): Promise<SimPlayer[]> {
+): Promise<{ players: SimPlayer[]; playingStyle: PlayingStyle }> {
   const { data: lineup, error: lineupError } = await supabaseAdmin
     .from("lineups")
-    .select("id")
+    .select("id,playing_style")
     .eq("fixture_id", fixtureId)
     .eq("team_registration_id", teamRegistrationId)
     .eq("status", "CONFIRMED")
@@ -3661,7 +3668,7 @@ async function getConfirmedLineupPlayers(
     )
     .eq("lineup_id", lineup.id);
   if (error) throw error;
-  return (data ?? []).map((row) => {
+  const players = (data ?? []).map((row) => {
     const reg = Array.isArray(row.player_season_registrations)
       ? row.player_season_registrations[0]
       : row.player_season_registrations;
@@ -3699,6 +3706,12 @@ async function getConfirmedLineupPlayers(
       communication: ability.communication ?? undefined,
     };
   });
+  return {
+    players,
+    playingStyle: isValidPlayingStyle(lineup.playing_style)
+      ? lineup.playing_style
+      : "BALANCED",
+  };
 }
 
 async function getConfirmedLineupSetPieceTakers(
@@ -3864,7 +3877,9 @@ function makeLeaderboard<
     .filter(
       ({ numericValue }) => Number.isFinite(numericValue) && numericValue > 0,
     )
-    .sort((a, b) => b.numericValue - a.numericValue)
+    .sort((a, b) =>
+      comparePlayerLeaderboardRows(id, field, a.row, b.row),
+    )
     .map(({ row, numericValue }) => ({
       id: row.id,
       name: row.name,

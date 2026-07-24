@@ -44,6 +44,7 @@ import { api } from "@/lib/api";
 import { clearAuth, updateStoredProfile } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
+import { PenaltySaveIcon } from "@/components/ui/penalty-save-icon";
 import {
   KnockoutBracket,
   type KnockoutBracketFixture,
@@ -7513,10 +7514,10 @@ function ManagerLineupEventIcons({
           </span>
         ) : meta.penaltySaved ? (
           <span
-            className="absolute -right-1 bottom-5 inline-grid h-4 min-w-4 place-items-center rounded-full bg-white px-1 text-[9px] text-slate-950 shadow"
+            className="absolute -right-1 bottom-5 drop-shadow"
             title="Penalty saved"
           >
-            ⊗
+            <PenaltySaveIcon />
           </span>
         ) : null}
       </div>
@@ -7556,7 +7557,9 @@ function ManagerLineupEventIcons({
           <PenaltyMissIcon className="h-4 w-4" />
         </span>
       ) : meta.penaltySaved ? (
-        <span title="Penalty saved">⊗</span>
+        <span title="Penalty saved">
+          <PenaltySaveIcon />
+        </span>
       ) : null}
       {meta.injured ? (
         <span

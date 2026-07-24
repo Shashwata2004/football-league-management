@@ -5,6 +5,7 @@ import {
   hideFixtureOutcome,
   PlayerLifecycleStatus,
   RegistrationStatus,
+  SeasonPhase,
   UserRole,
 } from "@flms/shared";
 import { supabaseAdmin } from "../db/supabase.js";
@@ -16,10 +17,7 @@ import {
   buildPlayerSeasonStatsFromMatchRows,
   loadLeagueRatings,
 } from "../services/player-stats.js";
-import {
-  buildPlayerLeaderboardRows,
-  makePlayerStatSections,
-} from "../services/stat-leaderboards.js";
+import { loadSeasonStatReport } from "../services/season-stat-report.js";
 
 // The fan experience is read-only over the same tournament data the public and
 // manager surfaces expose, plus a personal list of favourite clubs. Everything
@@ -56,7 +54,7 @@ function sanitizeFixtureScore<
 }
 
 const FIXTURE_TEAM_SELECT =
-  "*,home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(id,name,short_name,logo_url,primary_color)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(id,name,short_name,logo_url,primary_color))";
+  "*,seasons!fixtures_season_id_fkey(id,name,season_year,league_id,leagues(id,name,short_name,logo_url)),home_team:team_registrations!fixtures_home_team_registration_id_fkey(id,teams(id,name,short_name,logo_url,primary_color)),away_team:team_registrations!fixtures_away_team_registration_id_fkey(id,teams(id,name,short_name,logo_url,primary_color))";
 
 // A fan's favourite clubs, newest first, joined to persistent team identity.
 async function loadFavorites(userId: string) {
@@ -75,12 +73,14 @@ async function loadFavorites(userId: string) {
 // The team_registration ids for a club across every season it has played, so we
 // can find that club's fixtures/results regardless of which season they belong
 // to. Fans follow a persistent club, not a single-season registration.
-async function registrationIdsForTeams(teamIds: string[]) {
+async function registrationIdsForTeams(teamIds: string[], seasonId?: string) {
   if (teamIds.length === 0) return [] as string[];
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("team_registrations")
     .select("id,team_id")
     .in("team_id", teamIds);
+  if (seasonId) query = query.eq("season_id", seasonId);
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []).map((row) => row.id as string);
 }
@@ -340,70 +340,16 @@ fanRouter.get(
   }),
 );
 
-// Categorized player leaderboards for the whole league, mirroring the manager
-// Player Stats page (General / Attack / Defense / Goalkeeping / Discipline).
-// Fans get the full read-only view across every approved team in the season.
+// Read-only player and team leaderboards use the same confirmed-season report
+// as the manager surface. Fans may optionally scope team cards to one club.
 fanRouter.get(
   "/seasons/:seasonId/stat-leaderboards",
   asyncHandler(async (req, res) => {
     const seasonId = routeParam(req.params.seasonId, "seasonId");
     await assertFanCanViewSeason(seasonId);
-
-    const [teamRegistrationsResult, playerRegistrationsResult] =
-      await Promise.all([
-        supabaseAdmin
-          .from("team_registrations")
-          .select("id,teams(name,short_name,logo_url)")
-          .eq("season_id", seasonId)
-          .eq("status", RegistrationStatus.APPROVED),
-        supabaseAdmin
-          .from("player_season_registrations")
-          .select("id,team_registration_id,players(full_name,avatar_url)")
-          .eq("season_id", seasonId),
-      ]);
-    if (teamRegistrationsResult.error) throw teamRegistrationsResult.error;
-    if (playerRegistrationsResult.error) throw playerRegistrationsResult.error;
-
-    const teams = teamRegistrationsResult.data ?? [];
-    const teamIds = teams.map((team) => team.id);
-    const playerRegistrations = (playerRegistrationsResult.data ?? []).filter(
-      (player) => teamIds.includes(player.team_registration_id),
-    );
-    const playerIds = playerRegistrations.map((player) => player.id);
-
-    const [playerSeasonStatsResult, playerMatchStatsResult] = await Promise.all(
-      [
-        playerIds.length
-          ? supabaseAdmin
-              .from("player_season_stats")
-              .select("*")
-              .eq("season_id", seasonId)
-              .in("player_registration_id", playerIds)
-          : Promise.resolve({ data: [], error: null }),
-        playerIds.length
-          ? supabaseAdmin
-              .from("player_match_stats")
-              .select("*")
-              .in("player_registration_id", playerIds)
-          : Promise.resolve({ data: [], error: null }),
-      ],
-    );
-    if (playerSeasonStatsResult.error) throw playerSeasonStatsResult.error;
-    if (playerMatchStatsResult.error) throw playerMatchStatsResult.error;
-
-    const teamById = new Map(teams.map((team) => [team.id, team]));
-    const playerById = new Map(
-      playerRegistrations.map((player) => [player.id, player]),
-    );
-
-    const playerRows = buildPlayerLeaderboardRows(
-      playerSeasonStatsResult.data ?? [],
-      playerMatchStatsResult.data ?? [],
-      playerById,
-      teamById,
-    );
-
-    res.json({ player_sections: makePlayerStatSections(playerRows) });
+    const requestedTeamId =
+      typeof req.query.teamId === "string" ? req.query.teamId : undefined;
+    res.json(await loadSeasonStatReport(seasonId, requestedTeamId));
   }),
 );
 
@@ -664,6 +610,24 @@ fanRouter.get(
 fanRouter.get(
   "/dashboard",
   asyncHandler(async (req, res) => {
+    const requestedSeasonId =
+      typeof req.query.seasonId === "string" ? req.query.seasonId : undefined;
+    let selectedSeason: {
+      id: string;
+      name: string;
+      phase: string;
+    } | null = null;
+    if (requestedSeasonId) {
+      const { data, error } = await supabaseAdmin
+        .from("seasons")
+        .select("id,name,phase")
+        .eq("id", requestedSeasonId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) throw new AppError(404, "Season not found");
+      selectedSeason = data;
+    }
+
     const [profileResult, favorites] = await Promise.all([
       supabaseAdmin
         .from("profiles")
@@ -675,12 +639,16 @@ fanRouter.get(
     if (profileResult.error) throw profileResult.error;
 
     const favoriteTeamIds = favorites.map((favorite) => favorite.team_id);
-    const registrationIds = await registrationIdsForTeams(favoriteTeamIds);
+    const registrationIds = await registrationIdsForTeams(
+      favoriteTeamIds,
+      requestedSeasonId,
+    );
 
     if (registrationIds.length === 0) {
       return res.json({
         profile: profileResult.data,
         favorites,
+        selected_season: selectedSeason,
         upcoming_fixtures: [],
         recent_results: [],
       });
@@ -691,23 +659,23 @@ fanRouter.get(
       `away_team_registration_id.eq.${id}`,
     ]);
 
-    const [
-      { data: upcoming, error: upcomingError },
-      { data: results, error: resultsError },
-    ] = await Promise.all([
-      supabaseAdmin
-        .from("fixtures")
-        .select(FIXTURE_TEAM_SELECT)
-        .or(clauses.join(","))
-        .in("status", [
-          FixtureStatus.SCHEDULED,
-          FixtureStatus.LINEUP_PENDING,
-          FixtureStatus.LINEUPS_SUBMITTED,
-          FixtureStatus.LINEUPS_CONFIRMED,
-          FixtureStatus.READY_TO_SIMULATE,
-        ])
-        .order("kickoff_at", { ascending: true, nullsFirst: false })
-        .limit(10),
+    const seasonCompleted = selectedSeason?.phase === SeasonPhase.COMPLETED;
+    const [upcomingResult, resultsResult] = await Promise.all([
+      seasonCompleted
+        ? Promise.resolve({ data: [], error: null })
+        : supabaseAdmin
+            .from("fixtures")
+            .select(FIXTURE_TEAM_SELECT)
+            .or(clauses.join(","))
+            .in("status", [
+              FixtureStatus.SCHEDULED,
+              FixtureStatus.LINEUP_PENDING,
+              FixtureStatus.LINEUPS_SUBMITTED,
+              FixtureStatus.LINEUPS_CONFIRMED,
+              FixtureStatus.READY_TO_SIMULATE,
+            ])
+            .order("kickoff_at", { ascending: true, nullsFirst: false })
+            .limit(10),
       supabaseAdmin
         .from("fixtures")
         .select(FIXTURE_TEAM_SELECT)
@@ -716,14 +684,15 @@ fanRouter.get(
         .order("finalized_at", { ascending: false, nullsFirst: false })
         .limit(10),
     ]);
-    if (upcomingError) throw upcomingError;
-    if (resultsError) throw resultsError;
+    if (upcomingResult.error) throw upcomingResult.error;
+    if (resultsResult.error) throw resultsResult.error;
 
     res.json({
       profile: profileResult.data,
       favorites,
-      upcoming_fixtures: (upcoming ?? []).map(sanitizeFixtureScore),
-      recent_results: (results ?? []).map(sanitizeFixtureScore),
+      selected_season: selectedSeason,
+      upcoming_fixtures: (upcomingResult.data ?? []).map(sanitizeFixtureScore),
+      recent_results: (resultsResult.data ?? []).map(sanitizeFixtureScore),
     });
   }),
 );

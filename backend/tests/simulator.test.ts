@@ -10,13 +10,17 @@ import {
   VenueSide,
 } from "@flms/shared";
 import {
+  constrainPossessionForPlayingStyles,
   expectedGoalBaselines,
+  expectedGoalsAfterDismissals,
   EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP,
   LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS,
   matchEventRequiresRelatedPlayer,
   maximumAccuratePassesForPlayer,
   NEUTRAL_EXPECTED_GOALS_BASELINE,
   OWN_GOAL_RATING_PENALTY,
+  RED_CARD_OPPONENT_ATTACK_MULTIPLIER,
+  RED_CARD_TEAM_ATTACK_MULTIPLIER,
   STANDARD_PLAYER_PASS_ACCURACY_CAP,
   simulateMatch,
   type SimPlayer,
@@ -111,6 +115,28 @@ function assertTeamTotals(
 }
 
 describe("match-stat simulator", () => {
+  it("time-weights the 10v11 scoring effect from the dismissal minute", () => {
+    const level = expectedGoalsAfterDismissals(1, 1, null, null);
+    expect(level).toEqual({ home: 1, away: 1 });
+
+    const halftimeHomeRed = expectedGoalsAfterDismissals(1, 1, 45, null);
+    expect(halftimeHomeRed.home).toBeCloseTo(
+      (1 + RED_CARD_TEAM_ATTACK_MULTIPLIER) / 2,
+      6,
+    );
+    expect(halftimeHomeRed.away).toBeCloseTo(
+      (1 + RED_CARD_OPPONENT_ATTACK_MULTIPLIER) / 2,
+      6,
+    );
+
+    const lateHomeRed = expectedGoalsAfterDismissals(1, 1, 80, null);
+    expect(lateHomeRed.home).toBeGreaterThan(halftimeHomeRed.home);
+    expect(lateHomeRed.away).toBeLessThan(halftimeHomeRed.away);
+
+    const simultaneousReds = expectedGoalsAfterDismissals(1, 1, 45, 45);
+    expect(simultaneousReds).toEqual({ home: 1, away: 1 });
+  });
+
   it("identifies winner-required stages and formats stored outcomes", () => {
     expect(isKnockoutStage("ROUND_OF_64")).toBe(true);
     expect(isKnockoutStage("ROUND_OF_32")).toBe(true);
@@ -602,6 +628,52 @@ describe("match-stat simulator", () => {
     }
   });
 
+  it("gives the 11-player side a measurable scoring advantage after a red card", () => {
+    let noRedGoalDifference = 0;
+    let noRedMatches = 0;
+    let homeRedGoalDifference = 0;
+    let homeRedMatches = 0;
+    let awayRedGoalDifference = 0;
+    let awayRedMatches = 0;
+
+    for (let index = 0; index < 4000; index += 1) {
+      const result = simulateMatch(
+        players(VenueSide.HOME),
+        players(VenueSide.AWAY),
+        `red-impact-${index}`,
+      );
+      const homeRed = result.events.some(
+        (event) =>
+          event.side === VenueSide.HOME &&
+          event.type === MatchEventType.RED_CARD,
+      );
+      const awayRed = result.events.some(
+        (event) =>
+          event.side === VenueSide.AWAY &&
+          event.type === MatchEventType.RED_CARD,
+      );
+      const goalDifference = result.home_score - result.away_score;
+      if (!homeRed && !awayRed) {
+        noRedGoalDifference += goalDifference;
+        noRedMatches += 1;
+      } else if (homeRed && !awayRed) {
+        homeRedGoalDifference += goalDifference;
+        homeRedMatches += 1;
+      } else if (!homeRed && awayRed) {
+        awayRedGoalDifference += goalDifference;
+        awayRedMatches += 1;
+      }
+    }
+
+    expect(homeRedMatches).toBeGreaterThan(70);
+    expect(awayRedMatches).toBeGreaterThan(70);
+    const noRedAverage = noRedGoalDifference / noRedMatches;
+    const homeRedAverage = homeRedGoalDifference / homeRedMatches;
+    const awayRedAverage = awayRedGoalDifference / awayRedMatches;
+    expect(homeRedAverage).toBeLessThan(noRedAverage - 0.2);
+    expect(awayRedAverage).toBeGreaterThan(noRedAverage + 0.2);
+  });
+
   it("generates realistic pass volume and avoids tiny xG for routine high scores", () => {
     const passTotals: number[] = [];
     const passCompletionRates: number[] = [];
@@ -693,6 +765,121 @@ describe("match-stat simulator", () => {
       58,
     );
     expect(possessionWithoutGoal.home_score).toBe(0);
+  });
+
+  it("makes low-block and counter-attacking teams concede possession", () => {
+    for (const playingStyle of [
+      "LOW_BLOCK",
+      "COUNTER_ATTACKING",
+    ] as const) {
+      for (let index = 0; index < 20; index += 1) {
+        const result = simulateMatch(
+          players(VenueSide.HOME),
+          players(VenueSide.AWAY),
+          `reactive-possession-${playingStyle}-${index}`,
+          1,
+          {},
+          {
+            homePlayingStyle: playingStyle,
+            awayPlayingStyle: "BALANCED",
+          },
+        );
+        expect(result.home_stats.possession).toBeLessThan(50);
+        expect(
+          result.home_stats.possession + result.away_stats.possession,
+        ).toBe(100);
+      }
+    }
+  });
+
+  it("does not force a possession ceiling when both teams play reactively", () => {
+    expect(
+      constrainPossessionForPlayingStyles(
+        56,
+        "LOW_BLOCK",
+        "COUNTER_ATTACKING",
+      ),
+    ).toBe(56);
+  });
+
+  it("gives every playing style a distinct full-match statistical identity", () => {
+    type Style =
+      | "BALANCED"
+      | "HOLDING_POSSESSION"
+      | "COUNTER_ATTACKING"
+      | "HIGH_PRESS"
+      | "TIKI_TAKA"
+      | "WING_PLAY"
+      | "LOW_BLOCK";
+    const summarize = (style: Style) => {
+      const samples = Array.from({ length: 60 }, (_, index) =>
+        simulateMatch(
+          players(VenueSide.HOME),
+          players(VenueSide.AWAY),
+          `style-profile-${style}-${index}`,
+          1,
+          {},
+          {
+            homePlayingStyle: style,
+            awayPlayingStyle: "BALANCED",
+          },
+        ).home_stats,
+      );
+      const average = (field: keyof SimTeamStats) =>
+        samples.reduce(
+          (total, sample) => total + Number(sample[field] ?? 0),
+          0,
+        ) / samples.length;
+      return {
+        possession: average("possession"),
+        shots: average("shots"),
+        passes: average("passes"),
+        passAccuracy:
+          samples.reduce(
+            (total, sample) =>
+              total + sample.accurate_passes / Math.max(1, sample.passes),
+            0,
+          ) / samples.length,
+        tackles: average("tackles"),
+        interceptions: average("interceptions"),
+        blocks: average("blocks"),
+        clearances: average("clearances"),
+        corners: average("corners"),
+        offsides: average("offsides"),
+      };
+    };
+
+    const balanced = summarize("BALANCED");
+    const holding = summarize("HOLDING_POSSESSION");
+    const counter = summarize("COUNTER_ATTACKING");
+    const highPress = summarize("HIGH_PRESS");
+    const tikiTaka = summarize("TIKI_TAKA");
+    const wingPlay = summarize("WING_PLAY");
+    const lowBlock = summarize("LOW_BLOCK");
+
+    expect(holding.possession).toBeGreaterThan(balanced.possession);
+    expect(holding.passes).toBeGreaterThan(balanced.passes);
+    expect(holding.passAccuracy).toBeGreaterThan(balanced.passAccuracy);
+
+    expect(counter.possession).toBeLessThan(50);
+    expect(counter.passes).toBeLessThan(balanced.passes);
+    expect(counter.offsides).toBeGreaterThan(balanced.offsides);
+
+    expect(highPress.shots).toBeGreaterThan(balanced.shots);
+    expect(highPress.tackles + highPress.interceptions).toBeGreaterThan(
+      balanced.tackles + balanced.interceptions,
+    );
+
+    expect(tikiTaka.possession).toBeGreaterThan(holding.possession);
+    expect(tikiTaka.passes).toBeGreaterThan(holding.passes);
+    expect(tikiTaka.passAccuracy).toBeGreaterThan(holding.passAccuracy);
+
+    expect(wingPlay.shots).toBeGreaterThan(balanced.shots);
+    expect(wingPlay.corners).toBeGreaterThan(balanced.corners);
+
+    expect(lowBlock.possession).toBeLessThan(counter.possession);
+    expect(lowBlock.blocks).toBeGreaterThan(balanced.blocks);
+    expect(lowBlock.clearances).toBeGreaterThan(balanced.clearances);
   });
 
   it("allows a weaker team to upset a stronger team", () => {

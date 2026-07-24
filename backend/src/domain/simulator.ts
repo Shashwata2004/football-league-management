@@ -5,6 +5,7 @@ import {
   VenueSide,
   type PlayerAbilityRating,
 } from "@flms/shared";
+import type { PlayingStyle } from "./lineup-builder.js";
 import { AppError } from "../errors.js";
 
 export interface SimPlayer {
@@ -125,6 +126,8 @@ export interface SimMatchSetPieceTakers {
 export interface SimMatchContext {
   applyHomeAdvantage?: boolean;
   requiresWinner?: boolean;
+  homePlayingStyle?: PlayingStyle;
+  awayPlayingStyle?: PlayingStyle;
 }
 
 export interface SimulationResult {
@@ -148,6 +151,155 @@ export const NEUTRAL_EXPECTED_GOALS_BASELINE = 1.08;
 export const LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS = 0.3;
 export const STANDARD_PLAYER_PASS_ACCURACY_CAP = 0.95;
 export const EXCEPTIONAL_PLAYER_PASS_ACCURACY_CAP = 0.98;
+export const RED_CARD_TEAM_ATTACK_MULTIPLIER = 0.68;
+export const RED_CARD_OPPONENT_ATTACK_MULTIPLIER = 1.38;
+export interface TacticalStyleProfile {
+  possessionBias: number;
+  tempoMultiplier: number;
+  goalThreatMultiplier: number;
+  chanceConcessionMultiplier: number;
+  shotVolumeMultiplier: number;
+  chanceQualityMultiplier: number;
+  passVolumeMultiplier: number;
+  passAccuracyDelta: number;
+  tackleMultiplier: number;
+  interceptionMultiplier: number;
+  blockMultiplier: number;
+  clearanceMultiplier: number;
+  foulMultiplier: number;
+  cornerMultiplier: number;
+  offsideMultiplier: number;
+}
+
+/**
+ * Tactical identities alter the complete match model, not merely the label or
+ * possession display. Multipliers are deliberately moderate so player quality,
+ * dismissals and deterministic match variance remain meaningful.
+ */
+export const PLAYING_STYLE_PROFILES: Record<
+  PlayingStyle,
+  TacticalStyleProfile
+> = {
+  BALANCED: {
+    possessionBias: 0,
+    tempoMultiplier: 1,
+    goalThreatMultiplier: 1,
+    chanceConcessionMultiplier: 1,
+    shotVolumeMultiplier: 1,
+    chanceQualityMultiplier: 1,
+    passVolumeMultiplier: 1,
+    passAccuracyDelta: 0,
+    tackleMultiplier: 1,
+    interceptionMultiplier: 1,
+    blockMultiplier: 1,
+    clearanceMultiplier: 1,
+    foulMultiplier: 1,
+    cornerMultiplier: 1,
+    offsideMultiplier: 1,
+  },
+  HOLDING_POSSESSION: {
+    possessionBias: 7,
+    tempoMultiplier: 0.94,
+    goalThreatMultiplier: 0.97,
+    chanceConcessionMultiplier: 0.94,
+    shotVolumeMultiplier: 0.95,
+    chanceQualityMultiplier: 0.98,
+    passVolumeMultiplier: 1.1,
+    passAccuracyDelta: 3,
+    tackleMultiplier: 0.9,
+    interceptionMultiplier: 0.95,
+    blockMultiplier: 0.9,
+    clearanceMultiplier: 0.82,
+    foulMultiplier: 0.9,
+    cornerMultiplier: 0.95,
+    offsideMultiplier: 0.85,
+  },
+  COUNTER_ATTACKING: {
+    possessionBias: -7,
+    tempoMultiplier: 1.08,
+    goalThreatMultiplier: 1.04,
+    chanceConcessionMultiplier: 1,
+    shotVolumeMultiplier: 0.9,
+    chanceQualityMultiplier: 1.13,
+    passVolumeMultiplier: 0.82,
+    passAccuracyDelta: -1,
+    tackleMultiplier: 1,
+    interceptionMultiplier: 1.15,
+    blockMultiplier: 1.06,
+    clearanceMultiplier: 1.12,
+    foulMultiplier: 0.96,
+    cornerMultiplier: 0.9,
+    offsideMultiplier: 1.2,
+  },
+  HIGH_PRESS: {
+    possessionBias: 3,
+    tempoMultiplier: 1.12,
+    goalThreatMultiplier: 1.05,
+    chanceConcessionMultiplier: 0.95,
+    shotVolumeMultiplier: 1.1,
+    chanceQualityMultiplier: 1.04,
+    passVolumeMultiplier: 1.02,
+    passAccuracyDelta: -1,
+    tackleMultiplier: 1.18,
+    interceptionMultiplier: 1.25,
+    blockMultiplier: 0.9,
+    clearanceMultiplier: 0.82,
+    foulMultiplier: 1.18,
+    cornerMultiplier: 1.1,
+    offsideMultiplier: 1.1,
+  },
+  TIKI_TAKA: {
+    possessionBias: 10,
+    tempoMultiplier: 0.97,
+    goalThreatMultiplier: 1.05,
+    chanceConcessionMultiplier: 0.92,
+    shotVolumeMultiplier: 1,
+    chanceQualityMultiplier: 1.08,
+    passVolumeMultiplier: 1.2,
+    passAccuracyDelta: 4,
+    tackleMultiplier: 0.9,
+    interceptionMultiplier: 1.1,
+    blockMultiplier: 0.75,
+    clearanceMultiplier: 0.7,
+    foulMultiplier: 0.85,
+    cornerMultiplier: 1.05,
+    offsideMultiplier: 0.85,
+  },
+  WING_PLAY: {
+    possessionBias: 0,
+    tempoMultiplier: 1.06,
+    goalThreatMultiplier: 1.02,
+    chanceConcessionMultiplier: 1.02,
+    shotVolumeMultiplier: 1.08,
+    chanceQualityMultiplier: 0.98,
+    passVolumeMultiplier: 1,
+    passAccuracyDelta: -1,
+    tackleMultiplier: 1,
+    interceptionMultiplier: 0.95,
+    blockMultiplier: 1,
+    clearanceMultiplier: 1,
+    foulMultiplier: 1,
+    cornerMultiplier: 1.25,
+    offsideMultiplier: 1.15,
+  },
+  LOW_BLOCK: {
+    possessionBias: -10,
+    tempoMultiplier: 0.86,
+    goalThreatMultiplier: 0.84,
+    chanceConcessionMultiplier: 0.82,
+    shotVolumeMultiplier: 0.78,
+    chanceQualityMultiplier: 1.08,
+    passVolumeMultiplier: 0.78,
+    passAccuracyDelta: -2,
+    tackleMultiplier: 1.12,
+    interceptionMultiplier: 1.15,
+    blockMultiplier: 1.35,
+    clearanceMultiplier: 1.35,
+    foulMultiplier: 1.08,
+    cornerMultiplier: 0.75,
+    offsideMultiplier: 0.65,
+  },
+};
 const GOAL_RATING_BONUS = 0.82;
 const ASSIST_RATING_BONUS = 0.52;
 const RELATED_PLAYER_REQUIRED_EVENT_TYPES = new Set<MatchEventType>([
@@ -169,6 +321,91 @@ export function expectedGoalBaselines(applyHomeAdvantage: boolean): {
       NEUTRAL_EXPECTED_GOALS_BASELINE +
       (applyHomeAdvantage ? LEAGUE_HOME_ADVANTAGE_EXPECTED_GOALS : 0),
     away: NEUTRAL_EXPECTED_GOALS_BASELINE,
+  };
+}
+
+function numericalAdvantageMultipliersAtMinute(
+  homeDismissalMinute: number | null,
+  awayDismissalMinute: number | null,
+  minute: number,
+) {
+  const homeDismissed =
+    homeDismissalMinute !== null && minute >= homeDismissalMinute;
+  const awayDismissed =
+    awayDismissalMinute !== null && minute >= awayDismissalMinute;
+  if (homeDismissed === awayDismissed) {
+    return { home: 1, away: 1 };
+  }
+  return homeDismissed
+    ? {
+        home: RED_CARD_TEAM_ATTACK_MULTIPLIER,
+        away: RED_CARD_OPPONENT_ATTACK_MULTIPLIER,
+      }
+    : {
+        home: RED_CARD_OPPONENT_ATTACK_MULTIPLIER,
+        away: RED_CARD_TEAM_ATTACK_MULTIPLIER,
+      };
+}
+
+function isReactivePlayingStyle(style: PlayingStyle) {
+  return style === "LOW_BLOCK" || style === "COUNTER_ATTACKING";
+}
+
+/**
+ * Reactive systems intentionally concede the ball when facing a team that is
+ * willing to control it. If both teams choose a reactive system, neither side
+ * receives an artificial ceiling and squad quality determines who has to take
+ * more initiative.
+ */
+export function constrainPossessionForPlayingStyles(
+  homePossession: number,
+  homeStyle: PlayingStyle,
+  awayStyle: PlayingStyle,
+) {
+  const homeReactive = isReactivePlayingStyle(homeStyle);
+  const awayReactive = isReactivePlayingStyle(awayStyle);
+  if (homeReactive === awayReactive) return clamp(homePossession, 35, 65);
+  return homeReactive
+    ? clamp(Math.min(homePossession, 49), 35, 65)
+    : clamp(Math.max(homePossession, 51), 35, 65);
+}
+
+export function expectedGoalsAfterDismissals(
+  homeExpected: number,
+  awayExpected: number,
+  homeDismissalMinute: number | null,
+  awayDismissalMinute: number | null,
+  intervalStart = 0,
+  intervalEnd = 90,
+) {
+  const start = Math.max(0, intervalStart);
+  const end = Math.max(start + 1, intervalEnd);
+  const boundaries = [
+    start,
+    ...[homeDismissalMinute, awayDismissalMinute].filter(
+      (minute): minute is number => minute !== null && minute > start && minute < end,
+    ),
+    end,
+  ].sort((left, right) => left - right);
+  let homeFactor = 0;
+  let awayFactor = 0;
+  const duration = end - start;
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const segmentStart = boundaries[index]!;
+    const segmentEnd = boundaries[index + 1]!;
+    if (segmentEnd <= segmentStart) continue;
+    const multipliers = numericalAdvantageMultipliersAtMinute(
+      homeDismissalMinute,
+      awayDismissalMinute,
+      segmentStart + (segmentEnd - segmentStart) / 2,
+    );
+    const weight = (segmentEnd - segmentStart) / duration;
+    homeFactor += multipliers.home * weight;
+    awayFactor += multipliers.away * weight;
+  }
+  return {
+    home: homeExpected * homeFactor,
+    away: awayExpected * awayFactor,
   };
 }
 
@@ -1164,6 +1401,60 @@ function teamStrength(players: SimPlayer[]): Strength {
   };
 }
 
+function planRedCard(
+  players: SimPlayer[],
+  seed: string,
+  side: VenueSide,
+): SimMatchEvent | null {
+  const occurrenceRandom = rng(`${seed}:red-card-occurrence:${side}`);
+  if (occurrenceRandom() <= 0.97) return null;
+
+  const selectionRandom = rng(`${seed}:red-card-selection:${side}`);
+  const candidate = players
+    .filter(
+      (player) =>
+        player.is_starter &&
+        detailedPosition(player) !== FootballPosition.GK,
+    )
+    .map((player) => {
+      const position = detailedPosition(player);
+      const roleRisk =
+        position === FootballPosition.CB || position === FootballPosition.DM
+          ? 1.35
+          : position === FootballPosition.LB ||
+              position === FootballPosition.RB
+            ? 1.2
+            : position === FootballPosition.CM
+              ? 1
+              : 0.55;
+      return {
+        player,
+        risk:
+          (player.defending * 0.45 +
+            player.physical * 0.35 +
+            (player.stamina ?? player.physical) * 0.2) *
+            roleRisk +
+          selectionRandom() * 28,
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.risk - left.risk ||
+        left.player.player_registration_id.localeCompare(
+          right.player.player_registration_id,
+        ),
+    )[0]?.player;
+  if (!candidate) return null;
+
+  const minuteRandom = rng(`${seed}:red-card-minute:${side}`);
+  return {
+    minute: clamp(12 + minuteRandom() * 70, 12, 82),
+    side,
+    type: MatchEventType.RED_CARD,
+    player_registration_id: candidate.player_registration_id,
+  };
+}
+
 function poissonGoals(lambda: number, random: () => number) {
   const limit = Math.exp(-lambda);
   let product = 1;
@@ -1268,8 +1559,11 @@ function makeTeamStats(
   side: VenueSide,
   matchTempo = 1,
   durationMultiplier = 1,
+  plannedRedCards?: number,
+  playingStyle: PlayingStyle = "BALANCED",
 ): SimTeamStats {
   const random = rng(`${seed}:team:${side}`);
+  const tacticalProfile = PLAYING_STYLE_PROFILES[playingStyle];
   const chanceEdge = own.attack - opp.defense * 0.72 - opp.keeper * 0.28;
   const possessionEffect = (possession - 50) * 0.09;
   const strengthEffect = Math.max(-2.4, Math.min(3.2, chanceEdge * 0.055));
@@ -1282,6 +1576,7 @@ function makeTeamStats(
       (matchTempo - 1) * 8 +
       shotNoise +
       rareTempoSwing) *
+      tacticalProfile.shotVolumeMultiplier *
       durationMultiplier,
     Math.max(goals, 3),
     (random() > 0.985 ? 27 : 22) * durationMultiplier,
@@ -1290,7 +1585,11 @@ function makeTeamStats(
     0.2,
     Math.min(
       0.52,
-      0.29 + own.attack / 1250 - opp.keeper / 2200 + (random() - 0.5) * 0.12,
+      0.29 +
+        own.attack / 1250 -
+        opp.keeper / 2200 +
+        (tacticalProfile.chanceQualityMultiplier - 1) * 0.18 +
+        (random() - 0.5) * 0.12,
     ),
   );
   const shotsOnTarget = clamp(
@@ -1302,7 +1601,11 @@ function makeTeamStats(
   // one source of truth so the UI cannot report two big chances, one missed,
   // and zero goals. Not every goal has to come from a big chance.
   const generatedBigChances = clamp(
-    0.25 + shots * 0.08 + Math.max(0, chanceEdge) / 70 + random() * 1.15,
+    (0.25 +
+      shots * 0.08 +
+      Math.max(0, chanceEdge) / 70 +
+      random() * 1.15) *
+      tacticalProfile.chanceQualityMultiplier,
     0,
     Math.min(shots, random() > 0.985 ? 6 : 5),
   );
@@ -1328,6 +1631,7 @@ function makeTeamStats(
       own.midfield * 0.68 +
       (matchTempo - 1) * 72 +
       (random() + random() - 1) * 105) *
+      tacticalProfile.passVolumeMultiplier *
       durationMultiplier,
     270,
     (random() > 0.992 ? 900 : 790) * durationMultiplier,
@@ -1336,12 +1640,17 @@ function makeTeamStats(
   // midfield quality and opponent pressure move that baseline, while seeded
   // variance keeps individual simulations from converging on one percentage.
   const accuracy = clamp(
-    71 + own.midfield * 0.17 - opp.defense * 0.055 + (random() - 0.5) * 8,
+    71 +
+      own.midfield * 0.17 -
+      opp.defense * 0.055 +
+      tacticalProfile.passAccuracyDelta +
+      (random() - 0.5) * 8,
     63,
     92,
   );
   const fouls = clamp(
     (7 + random() * 9 + Math.max(0, opp.midfield - own.midfield) * 0.055) *
+      tacticalProfile.foulMultiplier *
       durationMultiplier,
     4,
     (random() > 0.985 ? 23 : 20) * durationMultiplier,
@@ -1351,7 +1660,8 @@ function makeTeamStats(
     if (random() < 0.115) yellowCards += 1;
   }
   yellowCards = clamp(yellowCards, 0, 4);
-  const redCards = random() > 0.97 ? 1 : 0;
+  const generatedRedCards = random() > 0.97 ? 1 : 0;
+  const redCards = plannedRedCards ?? generatedRedCards;
   const hitWoodwork = clamp(
     (shots - shotsOnTarget) * 0.08 + random() * 0.7,
     0,
@@ -1384,11 +1694,12 @@ function makeTeamStats(
     yellow_cards: yellowCards,
     red_cards: redCards,
     corners: clamp(
-      shots * 0.32 + (random() - 0.35) * 4,
+      (shots * 0.32 + (random() - 0.35) * 4) *
+        tacticalProfile.cornerMultiplier,
       0,
       random() > 0.985 ? 14 : 11,
     ),
-    offsides: clamp(random() * 4.6, 0, 6),
+    offsides: clamp(random() * 4.6 * tacticalProfile.offsideMultiplier, 0, 6),
   };
 }
 
@@ -1707,6 +2018,7 @@ function generateSubstitutions(
   seed: string,
   side: VenueSide,
   matchDuration = 90,
+  excludedOutgoingPlayerIds: ReadonlySet<string> = new Set(),
 ): SimSubstitution[] {
   const random = rng(`${seed}:subs:${side}`);
   // Stretch the substitution windows across the full match length so that when
@@ -1716,7 +2028,9 @@ function generateSubstitutions(
   const durationScale = matchDuration / 90;
   const starters = players.filter(
     (player) =>
-      player.is_starter && detailedPosition(player) !== FootballPosition.GK,
+      player.is_starter &&
+      detailedPosition(player) !== FootballPosition.GK &&
+      !excludedOutgoingPlayerIds.has(player.player_registration_id),
   );
   const bench = players.filter(
     (player) =>
@@ -1978,6 +2292,8 @@ function allocateStats(
   substitutions: SimSubstitution[],
   setPieceTakers: SimSetPieceTakers = {},
   matchDuration = 90,
+  plannedRedCard: SimMatchEvent | null = null,
+  playingStyle: PlayingStyle = "BALANCED",
 ) {
   const starters = players.filter((player) => player.is_starter);
   const benchIn = players.filter((player) =>
@@ -2011,31 +2327,21 @@ function allocateStats(
       };
     })
     .sort((a, b) => b.risk - a.risk);
+  const plannedRedPlayerId = plannedRedCard?.player_registration_id ?? null;
   const yellowSet = new Set(
     cardRiskRank
+      .filter(
+        (item) =>
+          item.player.player_registration_id !== plannedRedPlayerId,
+      )
       .slice(0, teamStats.yellow_cards)
       .map((item) => item.player.player_registration_id),
   );
-  const substitutedOutIds = new Set(
-    substitutions.map(
-      (substitution) => substitution.player_out_registration_id,
-    ),
-  );
-  // A dismissed player leaves the match because of the red card and therefore
-  // cannot also be recorded as tactically substituted. Pick the dismissal from
-  // players who are not scheduled to go off.
-  const redCandidate = teamStats.red_cards
-    ? cardRiskRank.find(
-        (item) =>
-          !yellowSet.has(item.player.player_registration_id) &&
-          !substitutedOutIds.has(item.player.player_registration_id),
-      )
-    : undefined;
   const redSet = new Set<string>(
-    redCandidate ? [redCandidate.player.player_registration_id] : [],
+    plannedRedPlayerId ? [plannedRedPlayerId] : [],
   );
   const cardEventRandom = rng(`${seed}:cards:${side}`);
-  const cardEvents = active.flatMap((player) => {
+  const yellowCardEvents = active.flatMap((player) => {
     const playerEvents: SimMatchEvent[] = [];
     const window = playerActiveWindow(player, substitutions, matchDuration);
     const eventMinute = (minimumFraction: number) =>
@@ -2054,16 +2360,12 @@ function allocateStats(
         player_registration_id: player.player_registration_id,
       });
     }
-    if (redSet.has(player.player_registration_id)) {
-      playerEvents.push({
-        minute: eventMinute(0.35),
-        side,
-        type: MatchEventType.RED_CARD,
-        player_registration_id: player.player_registration_id,
-      });
-    }
     return playerEvents;
   });
+  const cardEvents = [
+    ...yellowCardEvents,
+    ...(plannedRedCard ? [plannedRedCard] : []),
+  ].sort((left, right) => left.minute - right.minute);
   const dismissalMinutes = new Map(
     cardEvents
       .filter((event) => event.type === MatchEventType.RED_CARD)
@@ -2292,27 +2594,38 @@ function allocateStats(
     },
   );
   const defensiveRandom = rng(`${seed}:team-defense:${side}`);
+  const tacticalProfile = PLAYING_STYLE_PROFILES[playingStyle];
   const defensivePressure = Math.max(0, 50 - teamStats.possession) / 50;
   const opponentPressure = Math.min(1.35, opponentShots / 16);
   const rareDefensiveChaos = defensiveRandom() > 0.965;
   const totalTackles = clamp(
-    8 + defensivePressure * 3 + opponentPressure * 2 + defensiveRandom() * 4.5,
+    (8 +
+      defensivePressure * 3 +
+      opponentPressure * 2 +
+      defensiveRandom() * 4.5) *
+      tacticalProfile.tackleMultiplier,
     6,
     rareDefensiveChaos ? 23 : 18,
   );
   const totalInterceptions = clamp(
-    3 + defensivePressure * 4 + defensiveRandom() * 6,
+    (3 + defensivePressure * 4 + defensiveRandom() * 6) *
+      tacticalProfile.interceptionMultiplier,
     1,
     rareDefensiveChaos ? 20 : 16,
   );
   const totalBlocks = clamp(
-    Math.max(0, opponentShots - opponentShotsOnTarget) * 0.18 +
-      defensiveRandom() * 2,
+    (Math.max(0, opponentShots - opponentShotsOnTarget) * 0.18 +
+      defensiveRandom() * 2) *
+      tacticalProfile.blockMultiplier,
     0,
     rareDefensiveChaos ? 7 : 5,
   );
   const totalClearances = clamp(
-    10 + defensivePressure * 12 + opponentPressure * 8 + defensiveRandom() * 9,
+    (10 +
+      defensivePressure * 12 +
+      opponentPressure * 8 +
+      defensiveRandom() * 9) *
+      tacticalProfile.clearanceMultiplier,
     5,
     rareDefensiveChaos ? 48 : 40,
   );
@@ -3478,7 +3791,20 @@ export function simulateMatch(
   const awayStarters = awayPlayers.filter((player) => player.is_starter);
   const home = teamStrength(homePlayers);
   const away = teamStrength(awayPlayers);
-  const seed = `${fixtureId}:attempt-${simulationAttempt}:${homeStarters.map((p) => p.player_registration_id).join("|")}:${awayStarters.map((p) => p.player_registration_id).join("|")}`;
+  const homePlayingStyle = context.homePlayingStyle ?? "BALANCED";
+  const awayPlayingStyle = context.awayPlayingStyle ?? "BALANCED";
+  const homeTacticalProfile = PLAYING_STYLE_PROFILES[homePlayingStyle];
+  const awayTacticalProfile = PLAYING_STYLE_PROFILES[awayPlayingStyle];
+  const playingStyleSeed =
+    context.homePlayingStyle !== undefined ||
+    context.awayPlayingStyle !== undefined
+      ? `:${homePlayingStyle}:${awayPlayingStyle}`
+      : "";
+  const seed = `${fixtureId}:attempt-${simulationAttempt}:${homeStarters.map((p) => p.player_registration_id).join("|")}:${awayStarters.map((p) => p.player_registration_id).join("|")}${playingStyleSeed}`;
+  const homeRedCard = planRedCard(homePlayers, seed, VenueSide.HOME);
+  const awayRedCard = planRedCard(awayPlayers, seed, VenueSide.AWAY);
+  const homeDismissalMinute = homeRedCard?.minute ?? null;
+  const awayDismissalMinute = awayRedCard?.minute ?? null;
   const random = rng(seed);
   const homeQuality = home.overall * 0.7 + (35 + random() * 50) * 0.3;
   const awayQuality = away.overall * 0.7 + (35 + random() * 50) * 0.3;
@@ -3486,15 +3812,25 @@ export function simulateMatch(
   const scoringBaselines = expectedGoalBaselines(
     context.applyHomeAdvantage ?? false,
   );
-  const homeExpected = Math.max(
+  const baselineHomeExpected = Math.max(
     0.15,
-    scoringBaselines.home +
-      (homeQuality - away.defense * 0.82 - away.keeper * 0.18) / 42,
+    (scoringBaselines.home +
+      (homeQuality - away.defense * 0.82 - away.keeper * 0.18) / 42) *
+      homeTacticalProfile.goalThreatMultiplier *
+      awayTacticalProfile.chanceConcessionMultiplier,
   );
-  const awayExpected = Math.max(
+  const baselineAwayExpected = Math.max(
     0.15,
-    scoringBaselines.away +
-      (awayQuality - home.defense * 0.82 - home.keeper * 0.18) / 42,
+    (scoringBaselines.away +
+      (awayQuality - home.defense * 0.82 - home.keeper * 0.18) / 42) *
+      awayTacticalProfile.goalThreatMultiplier *
+      homeTacticalProfile.chanceConcessionMultiplier,
+  );
+  const regulationExpected = expectedGoalsAfterDismissals(
+    baselineHomeExpected,
+    baselineAwayExpected,
+    homeDismissalMinute,
+    awayDismissalMinute,
   );
   const matchTempo = clampDecimal(
     0.84 + random() * 0.34 + (random() > 0.86 ? random() * 0.28 : 0),
@@ -3502,16 +3838,16 @@ export function simulateMatch(
     1.45,
   );
   const regulationHomeScore = teamGoals(
-    homeExpected,
+    regulationExpected.home,
     random,
     mismatch,
-    matchTempo,
+    matchTempo * homeTacticalProfile.tempoMultiplier,
   );
   const regulationAwayScore = teamGoals(
-    awayExpected,
+    regulationExpected.away,
     random,
     mismatch,
-    matchTempo,
+    matchTempo * awayTacticalProfile.tempoMultiplier,
   );
   let extraTimeHomeGoals = 0;
   let extraTimeAwayGoals = 0;
@@ -3520,8 +3856,16 @@ export function simulateMatch(
     Boolean(context.requiresWinner) &&
     regulationHomeScore === regulationAwayScore;
   if (extraTimePlayed) {
-    extraTimeHomeGoals = extraTimeGoals(homeExpected, random);
-    extraTimeAwayGoals = extraTimeGoals(awayExpected, random);
+    const extraTimeExpected = expectedGoalsAfterDismissals(
+      baselineHomeExpected,
+      baselineAwayExpected,
+      homeDismissalMinute,
+      awayDismissalMinute,
+      90,
+      120,
+    );
+    extraTimeHomeGoals = extraTimeGoals(extraTimeExpected.home, random);
+    extraTimeAwayGoals = extraTimeGoals(extraTimeExpected.away, random);
     if (extraTimeHomeGoals === extraTimeAwayGoals) {
       shootout = penaltyShootout(homePlayers, awayPlayers, seed);
     }
@@ -3530,10 +3874,25 @@ export function simulateMatch(
   const awayScore = regulationAwayScore + extraTimeAwayGoals;
   const matchDuration = extraTimePlayed ? 120 : 90;
   const durationMultiplier = matchDuration / 90;
-  const homePossession = clamp(
-    50 + (home.midfield - away.midfield) * 0.42 + (random() - 0.5) * 9,
-    35,
-    65,
+  const numericalFactors = expectedGoalsAfterDismissals(
+    1,
+    1,
+    homeDismissalMinute,
+    awayDismissalMinute,
+    0,
+    matchDuration,
+  );
+  const numericalPossessionShift =
+    (numericalFactors.home - numericalFactors.away) * 7.5;
+  const homePossession = constrainPossessionForPlayingStyles(
+    50 +
+      (home.midfield - away.midfield) * 0.42 +
+      numericalPossessionShift +
+      homeTacticalProfile.possessionBias -
+      awayTacticalProfile.possessionBias +
+      (random() - 0.5) * 9,
+    homePlayingStyle,
+    awayPlayingStyle,
   );
   const awayPossession = 100 - homePossession;
   const homeStats = makeTeamStats(
@@ -3543,8 +3902,10 @@ export function simulateMatch(
     homeScore,
     seed,
     VenueSide.HOME,
-    matchTempo,
+    matchTempo * homeTacticalProfile.tempoMultiplier,
     durationMultiplier,
+    homeRedCard ? 1 : 0,
+    homePlayingStyle,
   );
   const awayStats = makeTeamStats(
     away,
@@ -3553,20 +3914,30 @@ export function simulateMatch(
     awayScore,
     seed,
     VenueSide.AWAY,
-    matchTempo,
+    matchTempo * awayTacticalProfile.tempoMultiplier,
     durationMultiplier,
+    awayRedCard ? 1 : 0,
+    awayPlayingStyle,
+  );
+  const homeDismissedPlayerIds = new Set(
+    homeRedCard ? [homeRedCard.player_registration_id] : [],
+  );
+  const awayDismissedPlayerIds = new Set(
+    awayRedCard ? [awayRedCard.player_registration_id] : [],
   );
   const homeSubs = generateSubstitutions(
     homePlayers,
     seed,
     VenueSide.HOME,
     matchDuration,
+    homeDismissedPlayerIds,
   );
   const awaySubs = generateSubstitutions(
     awayPlayers,
     seed,
     VenueSide.AWAY,
     matchDuration,
+    awayDismissedPlayerIds,
   );
   const homeAllocated = allocateStats(
     homePlayers,
@@ -3583,6 +3954,8 @@ export function simulateMatch(
     homeSubs,
     setPieceTakers.home,
     matchDuration,
+    homeRedCard,
+    homePlayingStyle,
   );
   const awayAllocated = allocateStats(
     awayPlayers,
@@ -3599,6 +3972,8 @@ export function simulateMatch(
     awaySubs,
     setPieceTakers.away,
     matchDuration,
+    awayRedCard,
+    awayPlayingStyle,
   );
   const homeSpecialEvents = generateSpecialEvents(
     homePlayers,

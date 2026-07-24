@@ -35,6 +35,9 @@ import { api } from "@/lib/api";
 import { pickCurrentSeason } from "@/lib/seasons";
 import { fixtureOutcomeLabel, fixtureOutcomeScore } from "@flms/shared";
 import { clearAuth, getStoredProfile, updateStoredProfile } from "@/lib/auth";
+import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
+import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
+import { PenaltySaveIcon } from "@/components/ui/penalty-save-icon";
 
 // ---------------------------------------------------------------------------
 // The fan experience mirrors the manager dashboard's shell (fixed sidebar,
@@ -50,6 +53,7 @@ type Section =
   | "Matches"
   | "Standings"
   | "Player Stats"
+  | "Team Stats"
   | "My Teams"
   | "Discover"
   | "Profile";
@@ -110,6 +114,18 @@ interface FixtureRecord {
   penalty_winner_team_registration_id?: string | null;
   home_team?: TeamRef | null;
   away_team?: TeamRef | null;
+  seasons?: {
+    id: string;
+    name: string;
+    season_year: number | null;
+    league_id: string;
+    leagues?: {
+      id: string;
+      name: string;
+      short_name: string | null;
+      logo_url: string | null;
+    } | null;
+  } | null;
 }
 
 interface League {
@@ -158,6 +174,11 @@ interface StandingRow {
 interface DashboardPayload {
   profile: Profile;
   favorites: Favorite[];
+  selected_season?: {
+    id: string;
+    name: string;
+    phase: string;
+  } | null;
   upcoming_fixtures: FixtureRecord[];
   recent_results: FixtureRecord[];
 }
@@ -286,6 +307,7 @@ const fanSectionPaths: Record<Section, string> = {
   Matches: "/dashboard/fan/matches",
   Standings: "/dashboard/fan/standings",
   "Player Stats": "/dashboard/fan/player-stats",
+  "Team Stats": "/dashboard/fan/team-stats",
   "My Teams": "/dashboard/fan/my-teams",
   Discover: "/dashboard/fan/discover",
   Profile: "/dashboard/fan/profile",
@@ -296,6 +318,7 @@ const menu: { label: Section; icon: ReactNode }[] = [
   { label: "Matches", icon: <CalendarDays size={18} /> },
   { label: "Standings", icon: <BarChart3 size={18} /> },
   { label: "Player Stats", icon: <Star size={18} /> },
+  { label: "Team Stats", icon: <ShieldAlert size={18} /> },
   { label: "My Teams", icon: <Heart size={18} /> },
   { label: "Discover", icon: <Search size={18} /> },
   { label: "Profile", icon: <User size={18} /> },
@@ -305,6 +328,7 @@ function sectionFromPath(path: string): Section {
   if (path.includes("/matches")) return "Matches";
   if (path.includes("/standings")) return "Standings";
   if (path.includes("/player-stats")) return "Player Stats";
+  if (path.includes("/team-stats")) return "Team Stats";
   if (path.includes("/my-teams")) return "My Teams";
   if (path.includes("/discover")) return "Discover";
   if (path.includes("/profile")) return "Profile";
@@ -318,16 +342,20 @@ function sectionFromPath(path: string): Section {
 // Sections whose data is scoped to a single season. The season dropdown only
 // appears in the shared header for these.
 const SEASON_AWARE_SECTIONS: Section[] = [
+  "Home",
   "Matches",
   "Standings",
   "Player Stats",
+  "Team Stats",
   "Discover",
 ];
 
 interface FanSeasonContextValue {
   seasons: Season[];
+  leagueId: string;
   seasonId: string;
-  setSeasonId: (id: string) => void;
+  selectLeagueId: (id: string) => void;
+  selectSeasonId: (id: string) => void;
   loading: boolean;
 }
 
@@ -351,6 +379,7 @@ function FanSeasonProvider({
   onError: (message: string) => void;
 }) {
   const [seasons, setSeasons] = useState<Season[]>([]);
+  const [leagueId, setLeagueId] = useState("");
   const [seasonId, setSeasonId] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -360,8 +389,13 @@ function FanSeasonProvider({
       .then((data) => {
         if (!alive) return;
         setSeasons(data.seasons);
-        setSeasonId(
-          (current) => current || pickCurrentSeason(data.seasons)?.id || "",
+        const selectedSeason =
+          pickCurrentSeason(data.seasons) ?? data.seasons[0];
+        setSeasonId(selectedSeason?.id ?? "");
+        setLeagueId(
+          selectedSeason?.league_id ??
+            one(selectedSeason?.leagues)?.id ??
+            "",
         );
       })
       .catch((error) =>
@@ -378,9 +412,44 @@ function FanSeasonProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function selectLeagueId(nextLeagueId: string) {
+    setLeagueId(nextLeagueId);
+    const leagueSeasons = seasons.filter(
+      (season) =>
+        (season.league_id ?? one(season.leagues)?.id) === nextLeagueId,
+    );
+    const currentBelongsToLeague = leagueSeasons.some(
+      (season) => season.id === seasonId,
+    );
+    if (!currentBelongsToLeague) {
+      setSeasonId(
+        pickCurrentSeason(leagueSeasons)?.id ?? leagueSeasons[0]?.id ?? "",
+      );
+    }
+  }
+
+  function selectSeasonId(nextSeasonId: string) {
+    const selectedSeason = seasons.find(
+      (season) => season.id === nextSeasonId,
+    );
+    setSeasonId(nextSeasonId);
+    if (selectedSeason) {
+      setLeagueId(
+        selectedSeason.league_id ?? one(selectedSeason.leagues)?.id ?? "",
+      );
+    }
+  }
+
   const value = useMemo(
-    () => ({ seasons, seasonId, setSeasonId, loading }),
-    [seasons, seasonId, loading],
+    () => ({
+      seasons,
+      leagueId,
+      seasonId,
+      selectLeagueId,
+      selectSeasonId,
+      loading,
+    }),
+    [seasons, leagueId, seasonId, loading],
   );
 
   return (
@@ -390,25 +459,60 @@ function FanSeasonProvider({
   );
 }
 
-function FanSeasonSelect({ className }: { className?: string }) {
-  const { seasons, seasonId, setSeasonId } = useFanSeason();
+function FanSeasonSelect({
+  className,
+  selectClassName,
+}: {
+  className?: string;
+  selectClassName?: string;
+}) {
+  const {
+    seasons,
+    leagueId,
+    seasonId,
+    selectLeagueId,
+    selectSeasonId,
+  } = useFanSeason();
   if (seasons.length === 0) return null;
+  const leagues = Array.from(
+    new Map(
+      seasons.flatMap((season) => {
+        const league = one<League>(season.leagues);
+        return league ? ([[league.id, league]] as const) : [];
+      }),
+    ).values(),
+  );
+  const leagueSeasons = seasons.filter(
+    (season) =>
+      (season.league_id ?? one(season.leagues)?.id) === leagueId,
+  );
   return (
-    <select
-      aria-label="Season"
-      className={className ?? "manager-input max-w-[16rem]"}
-      value={seasonId}
-      onChange={(event) => setSeasonId(event.target.value)}
-    >
-      {seasons.map((season) => {
-        const league = one(season.leagues);
-        return (
-          <option key={season.id} value={season.id}>
-            {league?.name ?? "League"} — {season.name}
+    <div className={className ?? "flex flex-wrap gap-2"}>
+      <select
+        aria-label="Competition"
+        className={selectClassName ?? "manager-input max-w-[16rem]"}
+        value={leagueId}
+        onChange={(event) => selectLeagueId(event.target.value)}
+      >
+        {leagues.map((league) => (
+          <option key={league.id} value={league.id}>
+            {league.name}
           </option>
-        );
-      })}
-    </select>
+        ))}
+      </select>
+      <select
+        aria-label="Season"
+        className={selectClassName ?? "manager-input max-w-[16rem]"}
+        value={seasonId}
+        onChange={(event) => selectSeasonId(event.target.value)}
+      >
+        {leagueSeasons.map((season) => (
+          <option key={season.id} value={season.id}>
+            {season.name}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
@@ -879,7 +983,10 @@ function FanTopbar({
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:gap-4">
           {showSeasonSelect ? (
-            <FanSeasonSelect className="manager-input hidden max-w-[14rem] py-2 sm:block" />
+            <FanSeasonSelect
+              className="hidden items-center gap-2 sm:flex"
+              selectClassName="manager-input max-w-[13rem] py-2"
+            />
           ) : null}
           <div className="rounded-full bg-slate-100 p-3 text-slate-700">
             <Bell size={18} />
@@ -889,7 +996,10 @@ function FanTopbar({
       </div>
       {showSeasonSelect ? (
         <div className="mx-auto mt-3 max-w-7xl sm:hidden">
-          <FanSeasonSelect className="manager-input w-full py-2" />
+          <FanSeasonSelect
+            className="grid grid-cols-1 gap-2"
+            selectClassName="manager-input w-full py-2"
+          />
         </div>
       ) : null}
     </header>
@@ -922,6 +1032,7 @@ function FanSectionView(props: SectionProps) {
   if (props.section === "Standings") return <StandingsSection {...props} />;
   if (props.section === "Player Stats")
     return <PlayerStatsSection {...props} />;
+  if (props.section === "Team Stats") return <TeamStatsSection {...props} />;
   if (props.section === "My Teams") return <MyTeamsSection {...props} />;
   if (props.section === "Discover") return <DiscoverSection {...props} />;
   return (
@@ -938,16 +1049,110 @@ function FanSectionView(props: SectionProps) {
 // SECTIONS
 // ===========================================================================
 
+function groupFixturesByCompetition(fixtures: FixtureRecord[]) {
+  const groups = new Map<
+    string,
+    { id: string; label: string; fixtures: FixtureRecord[] }
+  >();
+  for (const fixture of fixtures) {
+    const season = one(fixture.seasons);
+    const league = one(season?.leagues);
+    const id = season?.id ?? fixture.season_id;
+    const label = league?.name
+      ? `${league.name} · ${season?.name ?? "Season"}`
+      : (season?.name ?? "Competition");
+    const group = groups.get(id) ?? { id, label, fixtures: [] };
+    group.fixtures.push(fixture);
+    groups.set(id, group);
+  }
+  return Array.from(groups.values());
+}
+
+function CompetitionFixtureGroups({
+  fixtures,
+  onOpenMatch,
+  showScore = false,
+}: {
+  fixtures: FixtureRecord[];
+  onOpenMatch: (id: string) => void;
+  showScore?: boolean;
+}) {
+  const groups = groupFixturesByCompetition(fixtures);
+  return (
+    <div className="space-y-5">
+      {groups.map((group) => (
+        <section key={group.id}>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-[var(--team-primary)]" />
+            <h3 className="text-xs font-black uppercase tracking-[0.16em] text-slate-600">
+              {group.label}
+            </h3>
+          </div>
+          <div className="grid gap-3">
+            {group.fixtures.slice(0, 6).map((fixture) => (
+              <FixtureMini
+                key={fixture.id}
+                fixture={fixture}
+                onOpen={() => onOpenMatch(fixture.id)}
+                showScore={showScore}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function HomeSection({
   dashboard,
   favorites,
   onOpenMatch,
   onSection,
+  onError,
 }: SectionProps) {
+  const { seasons, seasonId } = useFanSeason();
+  const [seasonDashboard, setSeasonDashboard] =
+    useState<DashboardPayload | null>(null);
+  const [feedLoading, setFeedLoading] = useState(false);
   const primary =
     favorites.find((favorite) => favorite.is_primary) ?? favorites[0] ?? null;
-  const upcoming = dashboard?.upcoming_fixtures ?? [];
-  const results = dashboard?.recent_results ?? [];
+  const selectedSeason = seasons.find((season) => season.id === seasonId);
+  const selectedSeasonCompleted =
+    selectedSeason?.phase === "COMPLETED" ||
+    seasonDashboard?.selected_season?.phase === "COMPLETED";
+
+  useEffect(() => {
+    if (!seasonId) return;
+    let alive = true;
+    setFeedLoading(true);
+    setSeasonDashboard(null);
+    api<DashboardPayload>(
+      `/fan/dashboard?seasonId=${encodeURIComponent(seasonId)}`,
+    )
+      .then((payload) => {
+        if (alive) setSeasonDashboard(payload);
+      })
+      .catch((error) =>
+        onError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load the selected season",
+        ),
+      )
+      .finally(() => {
+        if (alive) setFeedLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [seasonId, onError]);
+
+  const activeDashboard = seasonId ? seasonDashboard : dashboard;
+  const upcoming = selectedSeasonCompleted
+    ? []
+    : (activeDashboard?.upcoming_fixtures ?? []);
+  const results = activeDashboard?.recent_results ?? [];
 
   return (
     <div className="space-y-6">
@@ -971,34 +1176,30 @@ function HomeSection({
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="Upcoming matches">
-          {upcoming.length === 0 ? (
-            <EmptyState label="No upcoming matches for your teams yet." />
+          {feedLoading ? (
+            <LoadingState label="Loading selected season..." />
+          ) : selectedSeasonCompleted ? (
+            <EmptyState label="This season has ended. There are no upcoming matches." />
+          ) : upcoming.length === 0 ? (
+            <EmptyState label="No upcoming matches for your teams in this season." />
           ) : (
-            <div className="grid gap-3">
-              {upcoming.slice(0, 6).map((fixture) => (
-                <FixtureMini
-                  key={fixture.id}
-                  fixture={fixture}
-                  onOpen={() => onOpenMatch(fixture.id)}
-                />
-              ))}
-            </div>
+            <CompetitionFixtureGroups
+              fixtures={upcoming}
+              onOpenMatch={onOpenMatch}
+            />
           )}
         </Panel>
         <Panel title="Recent results">
-          {results.length === 0 ? (
-            <EmptyState label="No finished matches for your teams yet." />
+          {feedLoading ? (
+            <LoadingState label="Loading selected season..." />
+          ) : results.length === 0 ? (
+            <EmptyState label="No finished matches for your teams in this season." />
           ) : (
-            <div className="grid gap-3">
-              {results.slice(0, 6).map((fixture) => (
-                <FixtureMini
-                  key={fixture.id}
-                  fixture={fixture}
-                  onOpen={() => onOpenMatch(fixture.id)}
-                  showScore
-                />
-              ))}
-            </div>
+            <CompetitionFixtureGroups
+              fixtures={results}
+              onOpenMatch={onOpenMatch}
+              showScore
+            />
           )}
         </Panel>
       </div>
@@ -1333,7 +1534,139 @@ function PlayerStatsSection({ onOpenPlayer, onError }: SectionProps) {
       {openCard ? (
         <FanLeaderboardModal
           card={openCard}
-          onOpenPlayer={onOpenPlayer}
+          onOpenEntry={onOpenPlayer}
+          onClose={() => setOpenCard(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TeamStatsSection({ onOpenTeam, onError }: SectionProps) {
+  const { seasonId } = useFanSeason();
+  const [teams, setTeams] = useState<any[]>([]);
+  const [teamFilter, setTeamFilter] = useState("ALL");
+  const [sections, setSections] = useState<FanStatSection[]>([]);
+  const [openCard, setOpenCard] = useState<FanStatCard | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!seasonId) return;
+    let alive = true;
+    setTeamFilter("ALL");
+    setLoading(true);
+    Promise.all([
+      api<{ teams: any[] }>(`/fan/seasons/${seasonId}/teams`),
+      api<{ team_sections: FanStatSection[] }>(
+        `/fan/seasons/${seasonId}/stat-leaderboards?teamId=ALL`,
+      ),
+    ])
+      .then(([teamPayload, report]) => {
+        if (!alive) return;
+        setTeams(teamPayload.teams ?? []);
+        setSections(report.team_sections ?? []);
+      })
+      .catch((error) =>
+        onError(
+          error instanceof Error ? error.message : "Failed to load team stats",
+        ),
+      )
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [seasonId, onError]);
+
+  async function changeTeamFilter(nextTeamId: string) {
+    setTeamFilter(nextTeamId);
+    setLoading(true);
+    try {
+      const report = await api<{ team_sections: FanStatSection[] }>(
+        `/fan/seasons/${seasonId}/stat-leaderboards?teamId=${encodeURIComponent(nextTeamId)}`,
+      );
+      setSections(report.team_sections ?? []);
+    } catch (error) {
+      onError(
+        error instanceof Error ? error.message : "Failed to load team stats",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const hasData = useMemo(
+    () =>
+      sections.some((section) =>
+        section.cards.some((card) => card.entries.length > 0),
+      ),
+    [sections],
+  );
+
+  return (
+    <div className="space-y-6">
+      <PageTitle
+        title="Team Stats"
+        subtitle="Confirmed season performance across every team in the selected competition."
+      />
+      <div className="flex flex-wrap items-center gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+        <label
+          htmlFor="fan-team-stats-filter"
+          className="text-sm font-black text-slate-700"
+        >
+          Team
+        </label>
+        <select
+          id="fan-team-stats-filter"
+          className="manager-input min-w-[15rem] max-w-sm"
+          value={teamFilter}
+          onChange={(event) => void changeTeamFilter(event.target.value)}
+        >
+          <option value="ALL">All season teams</option>
+          {teams.map((registration) => (
+            <option key={registration.id} value={registration.id}>
+              {one<any>(registration.teams)?.name ?? "Team"}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <LoadingState label="Loading team stats..." />
+      ) : !hasData ? (
+        <EmptyState label="Team stats will appear after confirmed match results generate statistics." />
+      ) : (
+        <div className="space-y-6">
+          {sections.map((section) => {
+            const cards = section.cards.filter(
+              (card) => card.entries.length > 0,
+            );
+            if (cards.length === 0) return null;
+            return (
+              <div key={section.title}>
+                <h3 className="mb-3 text-lg font-black text-slate-900">
+                  {section.title}
+                </h3>
+                <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+                  {cards.map((card) => (
+                    <FanLeaderboardCard
+                      key={card.id}
+                      card={card}
+                      onOpen={() => setOpenCard(card)}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {openCard ? (
+        <FanLeaderboardModal
+          card={openCard}
+          onOpenEntry={onOpenTeam}
           onClose={() => setOpenCard(null)}
         />
       ) : null}
@@ -1425,11 +1758,11 @@ function FanLeaderboardRow({
 
 function FanLeaderboardModal({
   card,
-  onOpenPlayer,
+  onOpenEntry,
   onClose,
 }: {
   card: FanStatCard;
-  onOpenPlayer: (id: string) => void;
+  onOpenEntry: (id: string) => void;
   onClose: () => void;
 }) {
   return (
@@ -1466,7 +1799,7 @@ function FanLeaderboardModal({
               rank={index + 1}
               onClick={() => {
                 onClose();
-                onOpenPlayer(entry.id);
+                onOpenEntry(entry.id);
               }}
             />
           ))}
@@ -1986,6 +2319,8 @@ function MatchDetailView({
             <MatchLineups
               lineups={detail.lineups}
               playerStats={detail.player_stats}
+              events={detail.events}
+              substitutions={detail.substitutions}
               homeId={homeId}
               home={home}
               away={away}
@@ -2270,156 +2605,520 @@ function ratingTone(rating: number | null | undefined): string {
   return "bg-red-500";
 }
 
-// A single player token on the pitch: crest-coloured shirt number, name, and
-// the match rating badge fans expect from FotMob.
-function PitchPlayer({
+type FanPlayerEventMeta = {
+  goals: number;
+  ownGoals: number;
+  assists: number;
+  yellow: boolean;
+  red: boolean;
+  penaltyMiss: boolean;
+  penaltySaved: boolean;
+  injured: boolean;
+  subInMinute?: number;
+  subOutMinute?: number;
+};
+
+function emptyFanPlayerEventMeta(): FanPlayerEventMeta {
+  return {
+    goals: 0,
+    ownGoals: 0,
+    assists: 0,
+    yellow: false,
+    red: false,
+    penaltyMiss: false,
+    penaltySaved: false,
+    injured: false,
+  };
+}
+
+function ensureFanPlayerEventMeta(
+  map: Map<string, FanPlayerEventMeta>,
+  playerId: string,
+) {
+  const existing = map.get(playerId);
+  if (existing) return existing;
+  const next = emptyFanPlayerEventMeta();
+  map.set(playerId, next);
+  return next;
+}
+
+function buildFanPlayerEventMeta(events: any[], substitutions: any[]) {
+  const map = new Map<string, FanPlayerEventMeta>();
+  for (const event of events) {
+    const playerId = String(event.player_registration_id ?? "");
+    if (!playerId) continue;
+    const meta = ensureFanPlayerEventMeta(map, playerId);
+    const type = String(event.type ?? "");
+    if (type === "GOAL" || type === "PENALTY_GOAL") meta.goals += 1;
+    if (type === "OWN_GOAL") meta.ownGoals += 1;
+    if (
+      (type === "GOAL" || type === "PENALTY_GOAL") &&
+      event.related_player_registration_id
+    ) {
+      ensureFanPlayerEventMeta(
+        map,
+        String(event.related_player_registration_id),
+      ).assists += 1;
+    }
+    if (type === "YELLOW_CARD") meta.yellow = true;
+    if (type === "RED_CARD") meta.red = true;
+    if (type === "PENALTY_MISS") meta.penaltyMiss = true;
+    if (type === "PENALTY_SAVED") {
+      meta.penaltyMiss = true;
+      if (event.related_player_registration_id) {
+        ensureFanPlayerEventMeta(
+          map,
+          String(event.related_player_registration_id),
+        ).penaltySaved = true;
+      }
+    }
+    if (type === "INJURY") meta.injured = true;
+  }
+  for (const substitution of substitutions) {
+    const minute = Number(substitution.minute ?? 0);
+    const outId = String(substitution.player_out_registration_id ?? "");
+    const inId = String(substitution.player_in_registration_id ?? "");
+    if (outId) {
+      const meta = ensureFanPlayerEventMeta(map, outId);
+      if (!meta.red) meta.subOutMinute = minute;
+    }
+    if (inId) ensureFanPlayerEventMeta(map, inId).subInMinute = minute;
+  }
+  return map;
+}
+
+function FanLineupEventIcons({
+  meta,
+  dark = false,
+  overlay = false,
+}: {
+  meta: FanPlayerEventMeta;
+  dark?: boolean;
+  overlay?: boolean;
+}) {
+  const textClass = dark ? "text-slate-700" : "text-white";
+  const badgeBase =
+    "inline-grid h-4 min-w-4 place-items-center rounded-full px-1 text-[9px] font-black shadow";
+  const assistIcon = (
+    <svg viewBox="0 0 20 20" className="h-3 w-3" aria-hidden="true">
+      <path
+        d="M4 12.8c2.8-.5 5.3-2.4 7.4-5.6l1.2-1.8 2.6 1.7-1.7 2.5 3.5 2.2c.8.5 1.1 1.4.8 2.2-.2.7-.8 1.1-1.6 1.1H4.7c-1.2 0-1.8-1.5-.7-2.3Z"
+        fill="currentColor"
+      />
+      <path
+        d="M6.5 11.7 8 14m1-4 2.1 3.2m1.7-5.8 1.5 2"
+        stroke="#fff"
+        strokeWidth="1.1"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+
+  if (overlay) {
+    return (
+      <div className="pointer-events-none absolute inset-0 z-20 text-[10px] font-black">
+        {meta.subOutMinute ? (
+          <span className="absolute -left-1 -top-3 inline-flex items-center gap-0.5 text-white drop-shadow">
+            {meta.subOutMinute}'
+            <span className={`${badgeBase} bg-red-500 text-white`}>↩</span>
+          </span>
+        ) : null}
+        {meta.subInMinute ? (
+          <span className="absolute -left-1 -top-3 inline-flex items-center gap-0.5 text-white drop-shadow">
+            {meta.subInMinute}'
+            <span className={`${badgeBase} bg-emerald-500 text-white`}>↪</span>
+          </span>
+        ) : null}
+        {meta.yellow ? (
+          <span
+            className="absolute -left-2 bottom-5 h-4 w-3 rounded-[3px] border border-white/70 bg-yellow-300 shadow"
+            title="Yellow card"
+          />
+        ) : null}
+        {meta.red ? (
+          <span
+            className="absolute -left-2 bottom-5 h-4 w-3 rounded-[3px] border border-white/70 bg-red-500 shadow"
+            title="Red card"
+          />
+        ) : null}
+        {meta.goals ? (
+          <span
+            className={`${badgeBase} absolute -right-1 ${meta.ownGoals ? "bottom-5" : "bottom-0"} bg-white text-slate-950`}
+            title="Goal"
+          >
+            ⚽{meta.goals > 1 ? meta.goals : ""}
+          </span>
+        ) : null}
+        {meta.ownGoals ? (
+          <span
+            className={`${badgeBase} absolute -right-1 bottom-0 gap-0.5 bg-white text-red-600 ring-1 ring-red-200`}
+            title="Own goal"
+          >
+            <OwnGoalIcon />
+            {meta.ownGoals > 1 ? meta.ownGoals : ""}
+          </span>
+        ) : null}
+        {meta.assists ? (
+          <span
+            className="absolute -left-2 bottom-0 grid h-5 min-w-5 place-items-center rounded-full bg-white px-1 text-[10px] font-black text-slate-800 shadow"
+            title="Assist"
+          >
+            <span className="flex items-center gap-0.5">
+              {assistIcon}
+              {meta.assists > 1 ? meta.assists : ""}
+            </span>
+          </span>
+        ) : null}
+        {meta.penaltyMiss ? (
+          <span
+            className="absolute -right-1 bottom-5 drop-shadow"
+            title="Penalty missed"
+          >
+            <PenaltyMissIcon />
+          </span>
+        ) : meta.penaltySaved ? (
+          <span
+            className="absolute -right-1 bottom-5 drop-shadow"
+            title="Penalty saved"
+          >
+            <PenaltySaveIcon />
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`mt-0.5 flex min-h-4 items-center justify-center gap-1 text-[10px] font-black ${textClass}`}
+    >
+      {meta.subOutMinute ? (
+        <span className="inline-flex items-center gap-0.5">
+          {meta.subOutMinute}'
+          <span className={`${badgeBase} bg-red-500 text-white`}>↩</span>
+        </span>
+      ) : null}
+      {meta.subInMinute ? (
+        <span className="inline-flex items-center gap-0.5">
+          {meta.subInMinute}'
+          <span className={`${badgeBase} bg-emerald-500 text-white`}>↪</span>
+        </span>
+      ) : null}
+      {meta.goals ? (
+        <span className={`${badgeBase} bg-white text-slate-950`} title="Goal">
+          ⚽{meta.goals > 1 ? meta.goals : ""}
+        </span>
+      ) : null}
+      {meta.ownGoals ? (
+        <span
+          className={`${badgeBase} gap-0.5 bg-white text-red-600 ring-1 ring-red-200`}
+          title="Own goal"
+        >
+          <OwnGoalIcon />
+          {meta.ownGoals > 1 ? meta.ownGoals : ""}
+        </span>
+      ) : null}
+      {meta.assists ? (
+        <span className={`${badgeBase} bg-white text-slate-800`} title="Assist">
+          <span className="flex items-center gap-0.5">
+            {assistIcon}
+            {meta.assists > 1 ? meta.assists : ""}
+          </span>
+        </span>
+      ) : null}
+      {meta.penaltyMiss ? (
+        <span title="Penalty missed">
+          <PenaltyMissIcon className="h-4 w-4" />
+        </span>
+        ) : meta.penaltySaved ? (
+          <span title="Penalty saved">
+            <PenaltySaveIcon />
+          </span>
+      ) : null}
+      {meta.injured ? (
+        <span
+          className={`${badgeBase} bg-white text-red-600 ring-1 ring-red-100`}
+          title="Injury"
+        >
+          +
+        </span>
+      ) : null}
+      {meta.yellow ? (
+        <span
+          className="h-4 w-3 rounded-[3px] border border-white/70 bg-yellow-300 shadow"
+          title="Yellow card"
+        />
+      ) : null}
+      {meta.red ? (
+        <span
+          className="h-4 w-3 rounded-[3px] border border-white/70 bg-red-500 shadow"
+          title="Red card"
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function FanTeamBadge({
+  name,
+  logoUrl,
+}: {
+  name: string;
+  logoUrl?: string | null | undefined;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  if (logoUrl && !imageFailed) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={logoUrl}
+        alt={name}
+        onError={() => setImageFailed(true)}
+        className="h-12 w-12 shrink-0 rounded-full border-4 border-white object-cover shadow"
+      />
+    );
+  }
+  return (
+    <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-4 border-white bg-gradient-to-br from-blue-700 to-sky-400 text-center text-xs font-black text-white shadow">
+      {initials(name)}
+    </div>
+  );
+}
+
+function averageFanLineupRating(lineup: any, statsByReg: Map<string, any>) {
+  const ratings = (lineup?.lineup_players ?? [])
+    .map((player: any) =>
+      Number(statsByReg.get(player.player_registration_id)?.rating),
+    )
+    .filter((rating: number) => Number.isFinite(rating) && rating > 0);
+  if (!ratings.length) return 0;
+  return (
+    ratings.reduce((sum: number, rating: number) => sum + rating, 0) /
+    ratings.length
+  );
+}
+
+function fanLineupRatingBadgeClass(value: number) {
+  if (value > 7.9) return "bg-sky-500";
+  if (value >= 7) return "bg-emerald-500";
+  return "bg-orange-500";
+}
+
+function FanMatchPlayerNode({
   player,
+  x,
+  y,
+  displayRole,
   stat,
+  meta,
+  isBest,
   onOpenPlayer,
 }: {
   player: any;
-  stat: any;
+  x: number;
+  y: number;
+  displayRole: string;
+  stat?: any;
+  meta?: FanPlayerEventMeta;
+  isBest: boolean;
   onOpenPlayer?: ((playerRegistrationId: string) => void) | undefined;
 }) {
-  const reg = one<any>(player?.player_season_registrations);
-  const person = one<any>(reg?.players);
-  const rating = stat?.rating != null ? Number(stat.rating) : null;
-  const registrationId = reg?.id ?? player?.player_registration_id;
+  const registration = one<any>(player.player_season_registrations);
+  const person = one<any>(registration?.players);
+  const name = person?.full_name ?? "Player";
+  const registrationId =
+    registration?.id ?? player.player_registration_id ?? null;
   const clickable = Boolean(onOpenPlayer && registrationId);
-  const goals = stat?.goals ?? 0;
   return (
     <button
       type="button"
       disabled={!clickable}
       onClick={() => clickable && onOpenPlayer!(registrationId)}
-      className="flex w-[76px] flex-col items-center gap-1 outline-none transition enabled:hover:-translate-y-0.5 sm:w-[92px]"
+      className="absolute z-10 w-[72px] -translate-x-1/2 -translate-y-1/2 text-center outline-none transition enabled:hover:-translate-y-[54%] sm:w-[96px] lg:w-[118px]"
+      style={{ left: `${x}%`, top: `${y}%` }}
+      title={stat ? "View match stats" : "View player profile"}
     >
-      <div className="relative">
-        <div className="grid h-9 w-9 place-items-center overflow-hidden rounded-full border-2 border-white bg-white/95 text-xs font-black text-slate-900 shadow-md sm:h-11 sm:w-11">
+      <div className="relative mx-auto h-11 w-11 sm:h-14 sm:w-14">
+        <div className="grid h-full w-full place-items-center overflow-hidden rounded-full border-[3px] border-white bg-white shadow-md">
           {person?.avatar_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={person.avatar_url}
-              alt={person.full_name ?? "Player"}
-              className="h-full w-full object-cover"
+              alt={name}
+              className="h-[118%] w-full rounded-full object-cover object-top"
             />
           ) : (
-            <span>{reg?.shirt_number ?? player?.shirt_number ?? "-"}</span>
+            <span className="grid h-full w-full place-items-center rounded-full bg-emerald-700 text-sm font-black text-white">
+              {initials(name)}
+            </span>
           )}
         </div>
-        {rating != null ? (
+        {stat ? (
           <span
-            className={`absolute -bottom-1 -right-1 rounded-md px-1 text-[10px] font-black text-white ${ratingTone(rating)}`}
+            className={`absolute -right-2 -top-2 rounded-full px-2 py-0.5 text-[11px] font-black text-white shadow ${fanLineupRatingBadgeClass(Number(stat.rating))}`}
           >
-            {rating.toFixed(1)}
+            {fanFormatRating(stat.rating)}
+            {isBest ? (
+              <Star size={10} className="ml-0.5 inline fill-current" />
+            ) : null}
           </span>
         ) : null}
-        {goals > 0 ? (
-          <span className="absolute -left-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-emerald-600 text-[9px] font-black text-white">
-            {goals}
-          </span>
-        ) : null}
-        {player?.is_captain ? (
-          <span className="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-[var(--team-primary)] text-[9px] font-black text-[var(--team-primary-text)]">
-            C
-          </span>
-        ) : null}
+        {meta ? <FanLineupEventIcons meta={meta} overlay /> : null}
       </div>
-      <span className="max-w-full truncate text-[11px] font-black text-white drop-shadow-sm">
-        {(person?.full_name ?? "Player").split(" ").slice(-1)[0]}
-      </span>
+      <div className="mt-1 flex items-center justify-center gap-1">
+        {meta?.injured ? (
+          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[12px] font-black leading-none text-red-600 shadow ring-1 ring-red-100">
+            +
+          </span>
+        ) : null}
+        {player.is_captain ? (
+          <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-white text-[10px] font-black lowercase text-slate-700 shadow">
+            c
+          </span>
+        ) : null}
+        <span className="truncate text-[13px] font-black text-white drop-shadow">
+          {registration?.shirt_number ?? player.shirt_number ?? "-"} {name}
+        </span>
+      </div>
+      <p className="text-[10px] font-bold uppercase tracking-wide text-white/80">
+        {player.display_role ?? displayRole}
+      </p>
     </button>
   );
 }
 
-// Formation pitch for one team. Uses the backend-provided slot coordinates so
-// starters sit where they actually played; away team is flipped vertically so
-// both sides attack the centre line.
-function LineupPitch({
+function FanLineupSideNodes({
   lineup,
+  side,
   statsByReg,
-  flip,
+  eventMetaByPlayer,
+  bestRatedPlayerId,
   onOpenPlayer,
 }: {
   lineup: any;
+  side: "HOME" | "AWAY";
   statsByReg: Map<string, any>;
-  flip: boolean;
+  eventMetaByPlayer: Map<string, FanPlayerEventMeta>;
+  bestRatedPlayerId: string | null;
   onOpenPlayer?: ((playerRegistrationId: string) => void) | undefined;
 }) {
   const slots: any[] = lineup?.formation_slots ?? [];
-  const players: any[] = lineup?.lineup_players ?? [];
-  const bySlot = new Map<string, any>(
-    players
-      .filter((lp) => lp.is_starter && lp.slot_key)
-      .map((lp) => [lp.slot_key as string, lp]),
+  const playerBySlot = new Map<string, any>(
+    (lineup?.lineup_players ?? [])
+      .filter((player: any) => player.is_starter && player.slot_key)
+      .map((player: any) => [player.slot_key as string, player]),
   );
-  const bench = players.filter((lp) => !lp.is_starter);
   return (
-    <div>
-      <div className="relative h-[420px] overflow-hidden rounded-2xl bg-[#0a8f4f] p-2 shadow-inner sm:h-[460px]">
-        <div className="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 bg-white/20" />
-        <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/20" />
-        <div className="absolute left-1/2 top-0 h-14 w-28 -translate-x-1/2 rounded-b-2xl border-x-2 border-b-2 border-white/20" />
-        <div className="absolute bottom-0 left-1/2 h-14 w-28 -translate-x-1/2 rounded-t-2xl border-x-2 border-t-2 border-white/20" />
-        {slots.map((slot) => {
-          const player = bySlot.get(slot.slotKey);
-          if (!player) return null;
-          const stat = statsByReg.get(player.player_registration_id);
-          const top = flip ? 100 - slot.y : slot.y;
-          return (
-            <div
-              key={slot.slotKey}
-              className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
-              style={{ left: `${slot.x}%`, top: `${top}%` }}
-            >
-              <PitchPlayer
-                player={player}
-                stat={stat}
-                onOpenPlayer={onOpenPlayer}
-              />
-            </div>
-          );
-        })}
-      </div>
-      {bench.length > 0 ? (
-        <div className="mt-3">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-500">
-            Bench
+    <>
+      {slots.map((slot) => {
+        const player = playerBySlot.get(slot.slotKey);
+        if (!player) return null;
+        const x = side === "HOME" ? (100 - slot.y) * 0.5 : 50 + slot.y * 0.5;
+        const y = side === "HOME" ? slot.x : 100 - slot.x;
+        const stat = statsByReg.get(player.player_registration_id);
+        const meta = eventMetaByPlayer.get(player.player_registration_id);
+        return (
+          <FanMatchPlayerNode
+            key={`${side}-${slot.slotKey}`}
+            player={player}
+            x={x}
+            y={y}
+            displayRole={slot.displayRole}
+            {...(stat ? { stat } : {})}
+            {...(meta ? { meta } : {})}
+            isBest={player.player_registration_id === bestRatedPlayerId}
+            onOpenPlayer={onOpenPlayer}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function FanMatchBenchColumn({
+  title,
+  players,
+  statsByReg,
+  eventMetaByPlayer,
+  bestRatedPlayerId,
+  onOpenPlayer,
+}: {
+  title: string;
+  players: any[];
+  statsByReg: Map<string, any>;
+  eventMetaByPlayer: Map<string, FanPlayerEventMeta>;
+  bestRatedPlayerId: string | null;
+  onOpenPlayer?: ((playerRegistrationId: string) => void) | undefined;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200">
+      <h4 className="border-b border-slate-100 py-3 text-center text-sm font-black">
+        {title}
+      </h4>
+      <div className="divide-y divide-slate-100">
+        {players.length ? (
+          players.map((player) => {
+            const registration = one<any>(
+              player.player_season_registrations,
+            );
+            const person = one<any>(registration?.players);
+            const name = person?.full_name ?? "Player";
+            const stat = statsByReg.get(player.player_registration_id);
+            const meta = eventMetaByPlayer.get(player.player_registration_id);
+            const registrationId =
+              registration?.id ?? player.player_registration_id;
+            const clickable = Boolean(onOpenPlayer && registrationId);
+            return (
+              <button
+                key={player.id}
+                type="button"
+                disabled={!clickable}
+                onClick={() => clickable && onOpenPlayer!(registrationId)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition enabled:hover:bg-slate-50"
+              >
+                <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-100 text-xs font-black text-indigo-700">
+                  {person?.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={person.avatar_url}
+                      alt={name}
+                      className="h-[118%] w-full object-cover object-top"
+                    />
+                  ) : (
+                    initials(name)
+                  )}
+                </div>
+                {stat ? (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-black text-white ${fanLineupRatingBadgeClass(Number(stat.rating))}`}
+                  >
+                    {fanFormatRating(stat.rating)}
+                    {player.player_registration_id === bestRatedPlayerId ? (
+                      <Star size={10} className="ml-0.5 inline fill-current" />
+                    ) : null}
+                  </span>
+                ) : null}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-black">{name}</p>
+                  <p className="text-xs font-semibold text-slate-500">
+                    #{registration?.shirt_number ?? player.shirt_number ?? "-"}{" "}
+                    ·{" "}
+                    {registration?.football_position ??
+                      player.football_position ??
+                      player.player_natural_position ??
+                      "POS"}
+                  </p>
+                </div>
+                {meta ? <FanLineupEventIcons meta={meta} dark /> : null}
+              </button>
+            );
+          })
+        ) : (
+          <p className="p-4 text-center text-sm font-semibold text-slate-500">
+            No substitutes listed.
           </p>
-          <div className="flex flex-wrap gap-2">
-            {bench.map((lp) => {
-              const reg = one<any>(lp.player_season_registrations);
-              const person = one<any>(reg?.players);
-              const stat = statsByReg.get(lp.player_registration_id);
-              const registrationId = reg?.id ?? lp.player_registration_id;
-              const clickable = Boolean(onOpenPlayer && registrationId);
-              return (
-                <button
-                  key={lp.id}
-                  type="button"
-                  disabled={!clickable}
-                  onClick={() => clickable && onOpenPlayer!(registrationId)}
-                  className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 transition enabled:hover:bg-purple-50 enabled:hover:text-[var(--team-primary)]"
-                >
-                  <span className="text-slate-400">
-                    {reg?.shirt_number ?? lp.shirt_number ?? "-"}
-                  </span>
-                  <span className="truncate">
-                    {person?.full_name ?? "Player"}
-                  </span>
-                  {stat?.rating != null ? (
-                    <span
-                      className={`rounded px-1 text-[10px] font-black text-white ${ratingTone(Number(stat.rating))}`}
-                    >
-                      {Number(stat.rating).toFixed(1)}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+        )}
+      </div>
     </div>
   );
 }
@@ -2427,6 +3126,8 @@ function LineupPitch({
 function MatchLineups({
   lineups,
   playerStats,
+  events,
+  substitutions,
   homeId,
   home,
   away,
@@ -2434,6 +3135,8 @@ function MatchLineups({
 }: {
   lineups: any[];
   playerStats: any[];
+  events: any[];
+  substitutions: any[];
   homeId: string | null;
   home: TeamRef["teams"] | null | undefined;
   away: TeamRef["teams"] | null | undefined;
@@ -2444,6 +3147,14 @@ function MatchLineups({
     for (const stat of playerStats) map.set(stat.player_registration_id, stat);
     return map;
   }, [playerStats]);
+  const eventMetaByPlayer = useMemo(
+    () => buildFanPlayerEventMeta(events, substitutions),
+    [events, substitutions],
+  );
+  const bestRatedPlayerId =
+    [...playerStats].sort(
+      (left, right) => Number(right.rating ?? 0) - Number(left.rating ?? 0),
+    )[0]?.player_registration_id ?? null;
 
   if (lineups.length === 0) {
     return <EmptyState label="No lineups were submitted for this match." />;
@@ -2453,33 +3164,83 @@ function MatchLineups({
     lineups.find((l) => l.team_registration_id === homeId) ?? lineups[0];
   const awayLineup =
     lineups.find((l) => l.team_registration_id !== homeId) ?? lineups[1];
-
-  const renderTeam = (
-    lineup: any,
-    team: TeamRef["teams"] | null | undefined,
-    flip: boolean,
-  ) =>
-    lineup ? (
-      <Panel title={teamName(team)}>
-        <p className="mb-3 text-xs font-black uppercase tracking-widest text-slate-500">
-          {lineup.formation ?? "Formation N/A"}
-          {lineup.playing_style
-            ? ` · ${String(lineup.playing_style).replaceAll("_", " ")}`
-            : ""}
-        </p>
-        <LineupPitch
-          lineup={lineup}
-          statsByReg={statsByReg}
-          flip={flip}
-          onOpenPlayer={onOpenPlayer}
-        />
-      </Panel>
-    ) : null;
+  const homeName = teamName(home);
+  const awayName = teamName(away);
+  const homeRating = averageFanLineupRating(homeLineup, statsByReg);
+  const awayRating = averageFanLineupRating(awayLineup, statsByReg);
+  const homeBench = (homeLineup?.lineup_players ?? []).filter(
+    (player: any) => !player.is_starter,
+  );
+  const awayBench = (awayLineup?.lineup_players ?? []).filter(
+    (player: any) => !player.is_starter,
+  );
 
   return (
-    <div className="space-y-4">
-      {renderTeam(homeLineup, home, false)}
-      {renderTeam(awayLineup, away, true)}
+    <div className="overflow-hidden rounded-3xl bg-[#05a967] text-white shadow-xl">
+      <div className="flex flex-col gap-3 bg-emerald-700/15 px-3 py-4 text-sm font-black sm:px-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs ${fanLineupRatingBadgeClass(homeRating)}`}
+          >
+            {homeRating ? fanFormatRating(homeRating) : "-"}
+          </span>
+          <FanTeamBadge name={homeName} logoUrl={home?.logo_url} />
+          <span>{homeName}</span>
+          <span>{homeLineup?.formation ?? "Formation N/A"}</span>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-3">
+          <span>{awayLineup?.formation ?? "Formation N/A"}</span>
+          <span>{awayName}</span>
+          <FanTeamBadge name={awayName} logoUrl={away?.logo_url} />
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs ${fanLineupRatingBadgeClass(awayRating)}`}
+          >
+            {awayRating ? fanFormatRating(awayRating) : "-"}
+          </span>
+        </div>
+      </div>
+      <div className="relative h-[560px] bg-[#06a766] sm:h-[620px]">
+        <div className="absolute inset-y-0 left-1/2 w-1 -translate-x-1/2 bg-white/10" />
+        <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2 rounded-full border-[5px] border-white/10" />
+        <div className="absolute left-0 top-1/2 h-48 w-20 -translate-y-1/2 rounded-r-3xl border-y-[5px] border-r-[5px] border-white/10" />
+        <div className="absolute right-0 top-1/2 h-48 w-20 -translate-y-1/2 rounded-l-3xl border-y-[5px] border-l-[5px] border-white/10" />
+        <div className="absolute inset-y-0 left-1/4 w-1 bg-white/5" />
+        <div className="absolute inset-y-0 right-1/4 w-1 bg-white/5" />
+        <FanLineupSideNodes
+          lineup={homeLineup}
+          side="HOME"
+          statsByReg={statsByReg}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onOpenPlayer={onOpenPlayer}
+        />
+        <FanLineupSideNodes
+          lineup={awayLineup}
+          side="AWAY"
+          statsByReg={statsByReg}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onOpenPlayer={onOpenPlayer}
+        />
+      </div>
+      <div className="grid gap-5 bg-white p-5 text-slate-950 lg:grid-cols-2">
+        <FanMatchBenchColumn
+          title={`${homeName} substitutes`}
+          players={homeBench}
+          statsByReg={statsByReg}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onOpenPlayer={onOpenPlayer}
+        />
+        <FanMatchBenchColumn
+          title={`${awayName} substitutes`}
+          players={awayBench}
+          statsByReg={statsByReg}
+          eventMetaByPlayer={eventMetaByPlayer}
+          bestRatedPlayerId={bestRatedPlayerId}
+          onOpenPlayer={onOpenPlayer}
+        />
+      </div>
     </div>
   );
 }

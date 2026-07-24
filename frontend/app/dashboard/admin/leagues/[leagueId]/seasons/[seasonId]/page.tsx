@@ -52,6 +52,7 @@ import { api, publicApi } from "@/lib/api";
 import { clearAuth } from "@/lib/auth";
 import { OwnGoalIcon } from "@/components/ui/own-goal-icon";
 import { PenaltyMissIcon } from "@/components/ui/penalty-miss-icon";
+import { PenaltySaveIcon } from "@/components/ui/penalty-save-icon";
 import { KnockoutBracket } from "@/components/knockout-bracket";
 
 type TabId =
@@ -108,8 +109,13 @@ interface FixtureRow {
 
 interface PlayerMatchPerformance {
   match: string;
+  homeTeam: string;
+  homeTeamLogoUrl: string | null;
+  awayTeam: string;
+  awayTeamLogoUrl: string | null;
   date: string;
   opponent: string;
+  opponentLogoUrl: string | null;
   result: string;
   minutes: number;
   goals: number;
@@ -908,7 +914,11 @@ function abilityOverall(row: PlayerRegistrationApiRow) {
 
 type PlayerProfileTeamRef = {
   id?: string | null;
-  teams?: { name?: string | null; short_name?: string | null } | null;
+  teams?: {
+    name?: string | null;
+    short_name?: string | null;
+    logo_url?: string | null;
+  } | null;
 } | null;
 
 type PlayerProfileMatchStatRow = {
@@ -969,6 +979,9 @@ function buildPlayerPerformances(
     const playerIsHome =
       fixture?.home_team_registration_id === playerTeamRegistrationId;
     const opponent = playerIsHome ? awayName : homeName;
+    const opponentLogoUrl = playerIsHome
+      ? (awayTeam?.teams?.logo_url ?? null)
+      : (homeTeam?.teams?.logo_url ?? null);
     const isFinal = fixture?.status === "FINAL";
     const outcomeLabel = fixture ? fixtureOutcomeLabel(fixture) : null;
     const result =
@@ -980,8 +993,13 @@ function buildPlayerPerformances(
     const cards = `${row.yellow_cards ?? 0}Y / ${row.red_cards ?? 0}R`;
     return {
       match: fixture ? `${homeName} vs ${awayName}` : "Match",
+      homeTeam: homeName,
+      homeTeamLogoUrl: homeTeam?.teams?.logo_url ?? null,
+      awayTeam: awayName,
+      awayTeamLogoUrl: awayTeam?.teams?.logo_url ?? null,
       date: safeDate(fixture?.kickoff_at),
       opponent,
+      opponentLogoUrl,
       result,
       minutes: row.minutes ?? 0,
       goals: row.goals ?? 0,
@@ -1379,13 +1397,6 @@ function buildAdminSeasonData(input: {
       status: statusLabel(fixture.status),
     }));
 
-  const sortedStats = [...input.playerStats].sort(
-    (a, b) => (b.goals ?? 0) - (a.goals ?? 0),
-  );
-  const topGoal = sortedStats[0];
-  const topAssist = [...input.playerStats].sort(
-    (a, b) => (b.assists ?? 0) - (a.assists ?? 0),
-  )[0];
   const topRated = [...input.playerStats]
     .filter((row) => row.average_rating)
     .sort(
@@ -1427,6 +1438,21 @@ function buildAdminSeasonData(input: {
       }
     }
   }
+  const reportLeader = (cardId: string) =>
+    input.statsReport.player_sections
+      .flatMap((section) => section.cards)
+      .find((card) => card.id === cardId)?.entries[0] ?? null;
+  const topGoalEntry = reportLeader("top_scorer");
+  const topAssistEntry = reportLeader("assists");
+  const statForReportEntry = (entry: StatEntry | null) =>
+    entry
+      ? input.playerStats.find(
+          (stat) => stat.player_registration_id === entry.id,
+        )
+      : undefined;
+  const topGoalStat = statForReportEntry(topGoalEntry);
+  const topAssistStat = statForReportEntry(topAssistEntry);
+
   const teamNameForStat = (stat?: PlayerSeasonStatApiRow | null) =>
     (stat ? reportTeamByPlayer.get(stat.player_registration_id)?.name : null) ??
     teamForStat(stat)?.teams?.name ??
@@ -1452,34 +1478,25 @@ function buildAdminSeasonData(input: {
       (fixture) => fixture.status === FixtureStatus.LINEUPS_SUBMITTED,
     ).length,
     topScorer:
-      topGoal && (topGoal.appearances ?? 0) > 0
+      topGoalEntry
         ? {
-            name:
-              topGoal.player_season_registrations?.players?.full_name ??
-              "Unnamed player",
-            team: teamNameForStat(topGoal),
-            teamLogoUrl: teamLogoForStat(topGoal),
-            avatarUrl:
-              topGoal.player_season_registrations?.players?.avatar_url ?? null,
-            goals: topGoal.goals ?? 0,
-            matches: topGoal.appearances ?? 0,
+            name: topGoalEntry.name,
+            team: topGoalEntry.subLabel,
+            teamLogoUrl: topGoalEntry.teamLogoUrl ?? null,
+            avatarUrl: topGoalEntry.logoUrl ?? null,
+            goals: Math.round(topGoalEntry.numericValue),
+            matches: topGoalStat?.appearances ?? 0,
           }
         : null,
     topAssist:
-      topAssist &&
-      (topAssist.appearances ?? 0) > 0 &&
-      (topAssist.assists ?? 0) > 0
+      topAssistEntry
         ? {
-            name:
-              topAssist.player_season_registrations?.players?.full_name ??
-              "Unnamed player",
-            team: teamNameForStat(topAssist),
-            teamLogoUrl: teamLogoForStat(topAssist),
-            avatarUrl:
-              topAssist.player_season_registrations?.players?.avatar_url ??
-              null,
-            assists: topAssist.assists ?? 0,
-            matches: topAssist.appearances ?? 0,
+            name: topAssistEntry.name,
+            team: topAssistEntry.subLabel,
+            teamLogoUrl: topAssistEntry.teamLogoUrl ?? null,
+            avatarUrl: topAssistEntry.logoUrl ?? null,
+            assists: Math.round(topAssistEntry.numericValue),
+            matches: topAssistStat?.appearances ?? 0,
           }
         : null,
     topRated:
@@ -1736,10 +1753,10 @@ function LineupEventIcons({
           </span>
         ) : meta.penaltySaved ? (
           <span
-            className={`${badgeBase} absolute -right-1 bottom-5 bg-white text-slate-950`}
+            className="absolute -right-1 bottom-5 drop-shadow"
             title="Penalty saved"
           >
-            ⊗
+            <PenaltySaveIcon />
           </span>
         ) : null}
       </div>
@@ -1787,12 +1804,9 @@ function LineupEventIcons({
         <span title="Penalty missed">
           <PenaltyMissIcon className="h-4 w-4" />
         </span>
-      ) : meta.penaltySaved ? (
-        <span
-          className={`${badgeBase} bg-white text-slate-950`}
-          title="Penalty saved"
-        >
-          ⊗
+        ) : meta.penaltySaved ? (
+        <span title="Penalty saved">
+          <PenaltySaveIcon />
         </span>
       ) : null}
       {meta.injured ? (
@@ -4178,9 +4192,34 @@ function PlayerLeagueStats({ player }: { player: AdminPlayer }) {
                     key={`${row.date}-${row.match}`}
                     className="hover:bg-slate-50"
                   >
-                    <td className="px-4 py-3 font-bold">{row.match}</td>
+                    <td className="px-4 py-3 font-bold">
+                      <div className="flex min-w-[240px] items-center gap-3">
+                        <div className="flex shrink-0 -space-x-2">
+                          <TeamBadge
+                            name={row.homeTeam}
+                            logoUrl={row.homeTeamLogoUrl}
+                            size="sm"
+                          />
+                          <TeamBadge
+                            name={row.awayTeam}
+                            logoUrl={row.awayTeamLogoUrl}
+                            size="sm"
+                          />
+                        </div>
+                        <span>{row.match}</span>
+                      </div>
+                    </td>
                     <td className="px-4 py-3">{row.date}</td>
-                    <td className="px-4 py-3">{row.opponent}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex min-w-[160px] items-center gap-2">
+                        <TeamBadge
+                          name={row.opponent}
+                          logoUrl={row.opponentLogoUrl}
+                          size="sm"
+                        />
+                        <span>{row.opponent}</span>
+                      </div>
+                    </td>
                     <td className="px-4 py-3 font-black text-indigo-700">
                       {row.result}
                     </td>
